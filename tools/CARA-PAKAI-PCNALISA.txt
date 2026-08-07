@@ -1,0 +1,49 @@
+Cara Pakai PcNalisa
+===================
+
+Tujuan:
+PcNalisa dipakai untuk membaca informasi PC Windows, lalu mengirim hasil analisa ke PcConnect.
+
+Cara paling mudah:
+1. Login PcConnect sebagai admin.
+2. Buka menu PC.
+3. Klik Detail pada PC yang ingin dianalisa.
+4. Klik Download PcNalisa PC ini.
+   File yang didownload biasanya bernama seperti:
+   PcNalisa-PC000001.ps1
+5. Simpan file tersebut di satu folder bersama:
+   PcNalisa-Run.cmd
+6. Di PC Windows yang akan dianalisa, klik kanan:
+   PcNalisa-Run.cmd
+   lalu pilih:
+   Run as administrator
+7. Tunggu sampai proses selesai.
+8. Jika berhasil, data analisa akan otomatis masuk ke PcConnect.
+
+Perintah manual PowerShell untuk file per PC:
+1. Buka PowerShell sebagai Administrator.
+2. Masuk ke folder tempat file PcNalisa disimpan, contoh:
+   cd "C:\PcNalisa"
+3. Jalankan:
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\PcNalisa-PC000001.ps1"
+
+Opsi stress test offline:
+- Gunakan jika ingin uji beban CPU, RAM, dan storage lokal.
+- Tutup aplikasi penting dulu karena test ini lebih berat dari analisa normal.
+- Cara mudah: jalankan PcNalisa-Run-Stress.cmd sebagai Administrator.
+- Perintah manual:
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\PcNalisa-PC000001.ps1" -StressTest -StressSeconds 30
+
+Perintah manual untuk PcNalisa-Agent.ps1 umum:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\PcNalisa-Agent.ps1" -PcID "PC000001" -Owner "Nama User" -ServerUrl "http://server/PcConnect/public/index.php?route=api_ingest" -Token "agent_token_di_config"
+
+Catatan:
+- File per PC dari tombol "Download PcNalisa PC ini" lebih disarankan karena sudah otomatis berisi PcID, owner, server URL, dan token.
+- Jika sebelumnya muncul URL dobel seperti index.phpindex.php, upload paket PcConnect terbaru lalu download ulang file PcNalisa dari Detail PC.
+- Jika memakai HTTPS QNAP self-signed pada IP lokal, agent terbaru akan mencoba upload ulang dengan bypass validasi certificate khusus alamat lokal. Untuk produksi/internet tetap gunakan sertifikat SSL terpercaya.
+- Jalankan sebagai Administrator agar PcNalisa bisa membaca informasi hardware/software lebih lengkap.
+- Versi terbaru menambahkan analisa startup dan driver berbasis risk score offline: High/Medium/Low, alasan, publisher/signature, dan saran tindakan. Ini membantu prioritas review, tetapi tetap perlu validasi admin sebelum disable/update.
+- Jika upload otomatis gagal, PcNalisa akan membuat file JSON fallback di folder yang sama.
+- Upload file JSON fallback tersebut melalui menu PcConnect:
+  PC > Detail PC > Upload JSON Analisa
+  atau menu Download PcNalisa > Upload Analisa JSON.

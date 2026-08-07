@@ -1,0 +1,59 @@
+EMPLOYEE MARIADB PORTAL UNTUK PCCONNECT
+
+Tujuan:
+PcConnect mengambil data karyawan dari MariaDB portal, lalu menyimpannya ke cache lokal PcConnect.
+Add/Edit PC membaca dari cache lokal agar tetap bisa dipakai walaupun koneksi portal sedang lambat/offline.
+
+Menu:
+PcConnect > Employee Portal
+
+Field yang perlu diisi:
+- Aktifkan sinkronisasi karyawan dari MariaDB portal: centang
+- IP / Host MariaDB Portal: host database portal, contoh portal-db.domain.com atau 192.168.1.10
+- Port: umumnya 3306
+- Database: nama database portal
+- Username: user MariaDB portal
+- Password: password MariaDB portal
+- Limit Row: jumlah maksimal data karyawan yang ditarik
+- Table / View: nama table atau view, contoh employees atau hrd.karyawan
+- Field NIK: nama kolom kode unik karyawan
+- Field Nama: nama kolom nama karyawan
+- Field Departemen: opsional, boleh kosong
+
+Tombol:
+- Simpan Setup: simpan setting saja
+- Simpan & Test Koneksi: test baca sample langsung dari MariaDB portal
+- Simpan & Sync Karyawan: tarik data dari portal dan simpan ke cache lokal PcConnect
+
+Setelah Sync:
+- Add/Edit PC bisa mencari karyawan berdasarkan nama, NIK, atau departemen.
+- Menu Teknisi bisa mengambil nama teknisi dari cache Employee Portal.
+- Menu Users juga bisa mengambil nama dari cache Employee Portal saat membuat user.
+
+Saran database portal:
+- Lebih aman buat VIEW khusus untuk PcConnect, misalnya v_pcconnect_karyawan.
+- View cukup berisi NIK, nama, dan departemen/status yang diperlukan.
+- Buat user MariaDB khusus read-only untuk PcConnect.
+- Batasi akses user tersebut hanya dari IP QNAP/NAS bila memungkinkan.
+
+Contoh view di MariaDB portal:
+
+CREATE OR REPLACE VIEW v_pcconnect_karyawan AS
+SELECT
+    m_nik AS nik,
+    m_nama AS nama,
+    department AS department
+FROM mskaryawan_personalia
+WHERE m_nik IS NOT NULL
+  AND m_nama IS NOT NULL;
+
+Jika memakai view di atas, setup PcConnect:
+- Table / View: v_pcconnect_karyawan
+- Field NIK: nik
+- Field Nama: nama
+- Field Departemen: department
+
+Catatan:
+- Jika MariaDB portal berada di hosting luar, pastikan remote MySQL/MariaDB mengizinkan koneksi dari IP publik QNAP.
+- Jika portal berada di LAN, pastikan firewall server portal membuka port MariaDB untuk QNAP.
+- Jangan gunakan user root database portal.

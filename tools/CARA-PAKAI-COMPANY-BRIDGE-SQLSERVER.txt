@@ -1,0 +1,69 @@
+PcConnect Company Bridge API Windows
+====================================
+
+Tujuan:
+PcConnect di QNAP tidak perlu pdo_sqlsrv. Bridge ini dijalankan di Windows yang bisa akses SQL Server 2019.
+
+Alur:
+PcConnect QNAP -> http://IP-WINDOWS:8788/companies -> SQL Server 2019
+
+File:
+- tools/CompanyBridgeApi.ps1
+- tools/CompanyBridgeApi-Config.json dibuat otomatis saat pertama dijalankan
+
+Cara pakai di Windows
+---------------------
+1. Buka PowerShell sebagai Administrator.
+2. Masuk ke folder tools PcConnect.
+3. Jalankan:
+
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\CompanyBridgeApi.ps1
+
+4. Isi setup:
+   - Listen URL: http://+:8788/
+   - API Token: isi token rahasia, contoh CompanyBridge2026
+   - SQL Server IP / Host: 192.168.1.107
+   - SQL Port: 1433
+   - Database: nama database yang berisi dbo.mst_pt
+   - Username: sa
+   - Password: password sa
+   - Table / View: dbo.mst_pt
+   - Field ID: pt_id
+   - Field Nama Unit Usaha: pt_name
+   - Trust SQL Server Certificate: centang bila pakai certificate self-signed/internal
+
+5. Klik Simpan Config.
+6. Klik Buka Firewall.
+7. Klik Start Bridge.
+8. Test dari browser di Windows:
+
+   http://127.0.0.1:8788/health?token=TOKEN_ANDA
+   http://127.0.0.1:8788/companies?limit=5&token=TOKEN_ANDA
+
+Jika dari QNAP/PcConnect
+------------------------
+Di menu Setup -> Employee & Company Source:
+- Aktifkan sinkronisasi company
+- Mode Koneksi: Bridge API Windows
+- Bridge API URL: http://IP-WINDOWS:8788
+- Bridge API Token: token yang sama dengan bridge
+- SQL credential/mapping tetap isi sebagai catatan agar sama dengan bridge:
+  - IP / Host SQL Server: 192.168.1.107
+  - Port: 1433
+  - Database: nama database SQL Server
+  - Table / View: dbo.mst_pt
+  - Field ID: pt_id
+  - Field Nama Unit Usaha: pt_name
+
+Catatan:
+- Komputer/Windows yang menjalankan bridge harus menyala selama PcConnect perlu sync company.
+- SQL Server IP bukan Bridge URL. Bridge URL adalah IP komputer Windows yang menjalankan CompanyBridgeApi.ps1.
+- Kalau IP bridge berubah, ubah Bridge API URL di PcConnect.
+
+Perintah manual jika URL reservation dibutuhkan:
+------------------------------------------------
+Jalankan di PowerShell Administrator:
+
+netsh http add urlacl url=http://+:8788/ user=Everyone
+New-NetFirewallRule -DisplayName "PcConnect Company Bridge 8788" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8788
+
