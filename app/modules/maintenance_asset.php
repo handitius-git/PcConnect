@@ -242,7 +242,7 @@ function maintenance_asset_form_html(PDO $pdo, array $asset, bool $editing): str
     // Preload current linked asset item if exists
     $curAssetItem = null;
     if ($selectedAssetItemId > 0) {
-        $caiStmt = $pdo->prepare('SELECT ai.*, c.company_name, p.pc_id, p.computer_name, prn.prn_id 
+        $caiStmt = $pdo->prepare('SELECT ai.*, c.company_name, p.pc_id, p.computer_name, p.owner_name AS pc_owner_name, p.employee_nik AS pc_employee_nik, prn.prn_id 
                                   FROM asset_items ai 
                                   LEFT JOIN asset_companies c ON c.id=ai.company_id 
                                   LEFT JOIN pcs p ON (p.asset_item_id=ai.id OR (ai.source_pc_id IS NOT NULL AND ai.source_pc_id != "" AND p.pc_id COLLATE utf8mb4_unicode_ci = ai.source_pc_id COLLATE utf8mb4_unicode_ci)) 
@@ -256,6 +256,12 @@ function maintenance_asset_form_html(PDO $pdo, array $asset, bool $editing): str
             }
             if ($selectedTypeId <= 0 && !empty($curAssetItem['asset_type_id'])) {
                 $selectedTypeId = (int)$curAssetItem['asset_type_id'];
+            }
+            if (empty($asset['owner_name'])) {
+                $asset['owner_name'] = trim((string)($curAssetItem['custodian_name'] ?: ($curAssetItem['pc_owner_name'] ?? '')));
+            }
+            if (empty($asset['employee_nik'])) {
+                $asset['employee_nik'] = trim((string)($curAssetItem['custodian_nik'] ?: ($curAssetItem['pc_employee_nik'] ?? '')));
             }
         }
     }
@@ -320,6 +326,7 @@ function maintenance_asset_form_html(PDO $pdo, array $asset, bool $editing): str
         . '<label>Status *<select name="status">' . $statusOptions . '</select></label>'
         . '</div>'
         . '<h2>4. Lokasi, Perusahaan & Pengguna (Custodian)</h2>'
+        . '<div id="maintCustodianBadge" style="' . (!empty($asset['owner_name']) ? 'display:block;' : 'display:none;') . 'background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:8px 12px;margin-bottom:12px;color:#166534;font-size:13px;">' . (!empty($asset['owner_name']) ? ('👤 <strong>Pengguna:</strong> ' . e($asset['owner_name']) . (!empty($asset['employee_nik']) ? ' (NIK: ' . e($asset['employee_nik']) . ')' : '') . ' • <span style="color:#059669;font-weight:600;">Otomatis disinkronkan dari Unit Aset / Data PC</span>') : '') . '</div>'
         . '<div class="grid three">'
         . '<label>Company *<select id="maintCompanyId" name="company_id">' . company_options($pdo, (int)($asset['company_id'] ?? 0)) . '</select></label>'
         . '<label>Nama / Titik Lokasi<input id="maintLocationLabel" name="location_label" list="savedLocationGroups" value="' . e($asset['location_label'] ?? '') . '" placeholder="Gedung / Lantai / Ruangan"></label>'
@@ -481,11 +488,52 @@ function maintenance_asset_form_html(PDO $pdo, array $asset, bool $editing): str
         if(it.location_label && locInp && (isUserTriggered || !locInp.value)){
             locInp.value = it.location_label;
         }
-        if(it.custodian_nik && nikInp && (isUserTriggered || !nikInp.value)){
-            nikInp.value = it.custodian_nik;
-        }
-        if(it.custodian_name && ownerInp && (isUserTriggered || !ownerInp.value)){
-            ownerInp.value = it.custodian_name;
+        var effOwnerInp = document.getElementById("ownerNameInput") || document.querySelector("input[name=\"owner_name\"]");
+        var effNikInp = document.getElementById("employeeNik") || document.querySelector("input[name=\"employee_nik\"]");
+        var empList = document.getElementById("employeePortalList");
+        var empSearch = document.getElementById("employeePortalSearch");
+        var custBadge = document.getElementById("maintCustodianBadge");
+
+        if(it.custodian_name || it.custodian_nik){
+            if(effOwnerInp && (isUserTriggered || !effOwnerInp.value)){
+                effOwnerInp.value = it.custodian_name || "";
+            }
+            if(effNikInp && (isUserTriggered || !effNikInp.value)){
+                effNikInp.value = it.custodian_nik || "";
+            }
+            if(empSearch && it.custodian_name && (isUserTriggered || !empSearch.value)){
+                empSearch.value = it.custodian_name;
+            }
+            if(empList){
+                var found = false;
+                for(var eIdx = 0; eIdx < empList.options.length; eIdx++){
+                    var oVal = empList.options[eIdx].value;
+                    var oTxt = empList.options[eIdx].textContent.toLowerCase();
+                    if((it.custodian_nik && oVal === it.custodian_nik) || 
+                       (it.custodian_name && oTxt.indexOf(it.custodian_name.toLowerCase()) !== -1)){
+                        empList.selectedIndex = eIdx;
+                        found = true;
+                        break;
+                    }
+                }
+                if(!found && isUserTriggered){
+                    empList.selectedIndex = -1;
+                }
+            }
+            if(custBadge){
+                var badgeInfo = "👤 <strong>Pengguna:</strong> " + escapeHtml(it.custodian_name || "-");
+                if(it.custodian_nik){
+                    badgeInfo += " (NIK: " + escapeHtml(it.custodian_nik) + ")";
+                }
+                badgeInfo += " • <span style=\"color:#059669;font-weight:600;\">Otomatis disinkronkan dari Unit Aset / Data PC</span>";
+                custBadge.innerHTML = badgeInfo;
+                custBadge.style.display = "block";
+            }
+        } else {
+            if(custBadge && isUserTriggered){
+                custBadge.style.display = "none";
+                custBadge.innerHTML = "";
+            }
         }
 
         // Auto infer maintenance type
@@ -688,12 +736,23 @@ function handle_route_maintenance_asset_form(PDO $pdo): void
         }
 
         try {
-            $chkStmt = $pdo->prepare('SELECT id, asset_code, asset_name, asset_mode FROM asset_items WHERE id=?');
+            $chkStmt = $pdo->prepare('SELECT ai.id, ai.asset_code, ai.asset_name, ai.asset_mode, ai.custodian_name, ai.custodian_nik, ai.source_pc_id, p.pc_id, p.owner_name AS pc_owner_name, p.employee_nik AS pc_employee_nik 
+                                      FROM asset_items ai 
+                                      LEFT JOIN pcs p ON (p.asset_item_id = ai.id OR (ai.source_pc_id IS NOT NULL AND ai.source_pc_id != "" AND p.pc_id COLLATE utf8mb4_unicode_ci = ai.source_pc_id COLLATE utf8mb4_unicode_ci)) 
+                                      WHERE ai.id=? LIMIT 1');
             $chkStmt->execute([(int)$data['asset_item_id']]);
             $chkItem = $chkStmt->fetch(PDO::FETCH_ASSOC);
             if (!$chkItem) {
                 flash('Unit Aset fisik tidak ditemukan.', 'err');
                 redirect_to('maintenance_asset_form', $id > 0 ? ['id' => $id] : []);
+            }
+            $effOwner = trim((string)($chkItem['custodian_name'] ?: ($chkItem['pc_owner_name'] ?? '')));
+            $effNik = trim((string)($chkItem['custodian_nik'] ?: ($chkItem['pc_employee_nik'] ?? '')));
+            if (empty($data['owner_name']) && $effOwner !== '') {
+                $data['owner_name'] = $effOwner;
+            }
+            if (empty($data['employee_nik']) && $effNik !== '') {
+                $data['employee_nik'] = $effNik;
             }
             if (($chkItem['asset_mode'] ?? '') === 'child') {
                 flash('Unit Aset dengan status Bundle (Child Asset) tidak boleh dijadikan Maintenance Asset.', 'err');
@@ -724,6 +783,11 @@ function handle_route_maintenance_asset_form(PDO $pdo): void
                 $pdo->prepare('INSERT INTO maintenance_assets (maintenance_asset_code, security_code, maintenance_type, asset_group_id, asset_type_id, asset_item_id, job_desk_name, name, company_id, employee_nik, owner_name, location_label, latitude, longitude, location_radius_m, status, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute(array_values($data));
                 $id = (int)$pdo->lastInsertId();
                 flash('Maintenance asset berhasil ditambahkan.');
+            }
+
+            $linkedPc = $chkItem['source_pc_id'] ?: ($chkItem['pc_id'] ?? null);
+            if ($linkedPc && db_column_exists($pdo, 'maintenance_assets', 'pc_id')) {
+                $pdo->prepare('UPDATE maintenance_assets SET pc_id = ? WHERE id = ?')->execute([$linkedPc, $id]);
             }
 
             // Otomatis tautkan unit aset fisik utama ke maintenance_asset_items

@@ -106,7 +106,7 @@ function ensure_pc_maintenance_asset(PDO $pdo, array $pc): ?array
 
     if (!$row) {
         $assetItem = null;
-        $itemStmt = $pdo->prepare('SELECT asset_name, asset_code, company_id, custodian_name, location_label FROM asset_items WHERE id=?');
+        $itemStmt = $pdo->prepare('SELECT asset_name, asset_code, company_id, custodian_name, custodian_nik, location_label FROM asset_items WHERE id=?');
         $itemStmt->execute([(int)$pc['asset_item_id']]);
         $assetItem = $itemStmt->fetch() ?: null;
 
@@ -120,6 +120,10 @@ function ensure_pc_maintenance_asset(PDO $pdo, array $pc): ?array
             if ($ownerName === '') {
                 $ownerName = trim((string)($pc['owner_name'] ?? ''));
             }
+            $employeeNik = trim((string)($assetItem['custodian_nik'] ?? ''));
+            if ($employeeNik === '') {
+                $employeeNik = trim((string)($pc['employee_nik'] ?? ''));
+            }
             $locationLabel = trim((string)($assetItem['location_label'] ?? ''));
             if ($locationLabel === '') {
                 $locationLabel = trim((string)($pc['location_label'] ?? ''));
@@ -129,19 +133,21 @@ function ensure_pc_maintenance_asset(PDO $pdo, array $pc): ?array
             $name = $pcId;
             $companyId = null;
             $ownerName = $pc['owner_name'] ?? null;
+            $employeeNik = $pc['employee_nik'] ?? null;
             $locationLabel = trim((string)($pc['location_label'] ?? ''));
             $notes = 'Auto dibuat dari data PC.';
         }
 
         $code = unique_maintenance_asset_code($pdo, maintenance_asset_code_seed('MNT', $pcId));
-        $pdo->prepare('INSERT INTO maintenance_assets (maintenance_asset_code, security_code, maintenance_type, name, pc_id, company_id, employee_nik, owner_name, location_label, latitude, longitude, location_radius_m, status, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([
+        $pdo->prepare('INSERT INTO maintenance_assets (maintenance_asset_code, security_code, maintenance_type, asset_item_id, name, pc_id, company_id, employee_nik, owner_name, location_label, latitude, longitude, location_radius_m, status, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute([
             $code,
             (string)($pc['security_code'] ?? pc_security_code_random()),
             'pc_set',
+            !empty($pc['asset_item_id']) ? (int)$pc['asset_item_id'] : null,
             $name,
             $pcId,
             $companyId,
-            $pc['employee_nik'] ?? null,
+            $employeeNik !== '' ? $employeeNik : null,
             $ownerName,
             $locationLabel !== '' ? $locationLabel : null,
             $pc['latitude'] ?? null,
@@ -205,7 +211,7 @@ function sync_pc_maintenance_asset(PDO $pdo, string $pcId): void
     if (!$asset) {
         return;
     }
-    $itemStmt = $pdo->prepare('SELECT asset_name, asset_code, company_id, custodian_name, location_label FROM asset_items WHERE id=?');
+    $itemStmt = $pdo->prepare('SELECT asset_name, asset_code, company_id, custodian_name, custodian_nik, location_label FROM asset_items WHERE id=?');
     $itemStmt->execute([(int)$pc['asset_item_id']]);
     $assetItem = $itemStmt->fetch() ?: null;
     if ($assetItem) {
@@ -218,6 +224,10 @@ function sync_pc_maintenance_asset(PDO $pdo, string $pcId): void
         if ($ownerName === '') {
             $ownerName = trim((string)($pc['owner_name'] ?? ''));
         }
+        $employeeNik = trim((string)($assetItem['custodian_nik'] ?? ''));
+        if ($employeeNik === '') {
+            $employeeNik = trim((string)($pc['employee_nik'] ?? ''));
+        }
         $locationLabel = trim((string)($assetItem['location_label'] ?? ''));
         if ($locationLabel === '') {
             $locationLabel = trim((string)($pc['location_label'] ?? ''));
@@ -226,18 +236,20 @@ function sync_pc_maintenance_asset(PDO $pdo, string $pcId): void
         $name = $pcId;
         $companyId = null;
         $ownerName = $pc['owner_name'] ?? null;
+        $employeeNik = $pc['employee_nik'] ?? null;
         $locationLabel = trim((string)($pc['location_label'] ?? ''));
     }
-    $pdo->prepare('UPDATE maintenance_assets SET security_code=?, name=?, company_id=?, employee_nik=?, owner_name=?, location_label=?, latitude=?, longitude=?, location_radius_m=? WHERE id=?')->execute([
+    $pdo->prepare('UPDATE maintenance_assets SET security_code=?, name=?, company_id=?, employee_nik=?, owner_name=?, location_label=?, latitude=?, longitude=?, location_radius_m=?, asset_item_id=COALESCE(asset_item_id, ?) WHERE id=?')->execute([
         (string)$pc['security_code'],
         $name,
         $companyId,
-        $pc['employee_nik'] ?? null,
+        $employeeNik !== '' ? $employeeNik : null,
         $ownerName,
         $locationLabel !== '' ? $locationLabel : null,
         $pc['latitude'] ?? null,
         $pc['longitude'] ?? null,
         max(1, (int)($pc['location_radius_m'] ?? 5)),
+        !empty($pc['asset_item_id']) ? (int)$pc['asset_item_id'] : null,
         (int)$asset['id'],
     ]);
     if (function_exists('link_maintenance_asset_item')) {

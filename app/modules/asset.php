@@ -986,6 +986,19 @@ window.selectPcForImport = async function(pcId){
         var cName = document.getElementById("assetCustodianName");
         if(cNik) cNik.value = res.custodian_nik || "";
         if(cName) cName.value = res.custodian_name || "";
+        var acSearch = document.getElementById("assetCustodianEmployeeSearch");
+        var acSelect = document.getElementById("assetCustodianEmployeeSelect");
+        if(acSearch && res.custodian_name) acSearch.value = res.custodian_name;
+        if(acSelect){
+            for(var sIdx=0; sIdx<acSelect.options.length; sIdx++){
+                var oVal = acSelect.options[sIdx].value;
+                var oTxt = acSelect.options[sIdx].textContent.toLowerCase();
+                if((res.custodian_nik && oVal === res.custodian_nik) || (res.custodian_name && oTxt.indexOf(res.custodian_name.toLowerCase()) !== -1)){
+                    acSelect.selectedIndex = sIdx;
+                    break;
+                }
+            }
+        }
 
         // Populate Location
         var locLabel = document.getElementById("assetLocationLabel");
@@ -1365,6 +1378,27 @@ function save_asset_master_item(PDO $pdo, int $id, array $post): int
     $custodianName = trim((string)($post['custodian_name'] ?? ''));
     $custodianNik = trim((string)($post['custodian_nik'] ?? ''));
     $sourcePcId = trim((string)($post['source_pc_id'] ?? ($post['linked_pc_id'] ?? ''))) ?: null;
+    if (empty($sourcePcId) && $id > 0) {
+        $existPc = $pdo->query("SELECT source_pc_id FROM asset_items WHERE id = " . (int)$id)->fetchColumn();
+        if (!empty($existPc)) {
+            $sourcePcId = $existPc;
+        }
+    }
+    // Jika custodian kosong namun PC terhubung, ambil data custodian dari PC
+    $effectivePc = $sourcePcId ?: trim((string)($post['linked_pc_id'] ?? ''));
+    if (!empty($effectivePc) && db_table_exists($pdo, 'pcs')) {
+        $stmtPcOwner = $pdo->prepare('SELECT owner_name, employee_nik FROM pcs WHERE pc_id = ? LIMIT 1');
+        $stmtPcOwner->execute([$effectivePc]);
+        $pcOwnerRow = $stmtPcOwner->fetch(PDO::FETCH_ASSOC);
+        if ($pcOwnerRow) {
+            if ($custodianName === '' && !empty($pcOwnerRow['owner_name'])) {
+                $custodianName = trim((string)$pcOwnerRow['owner_name']);
+            }
+            if ($custodianNik === '' && !empty($pcOwnerRow['employee_nik'])) {
+                $custodianNik = trim((string)$pcOwnerRow['employee_nik']);
+            }
+        }
+    }
     $p = [
         $masterItemId,
         $brandId,
@@ -1446,6 +1480,9 @@ function save_asset_master_item(PDO $pdo, int $id, array $post): int
     $effectivePc = $sourcePcId ?: trim((string)($post['linked_pc_id'] ?? ''));
     if (!empty($effectivePc) && db_table_exists($pdo, 'pcs')) {
         $pdo->prepare('UPDATE pcs SET asset_item_id = ? WHERE pc_id = ?')->execute([$id, $effectivePc]);
+        if ($custodianName !== '') {
+            $pdo->prepare('UPDATE pcs SET owner_name = COALESCE(NULLIF(owner_name, ""), ?), employee_nik = COALESCE(NULLIF(employee_nik, ""), ?) WHERE pc_id = ?')->execute([$custodianName, $custodianNik ?: null, $effectivePc]);
+        }
         if (function_exists('sync_pc_maintenance_asset')) {
             sync_pc_maintenance_asset($pdo, $effectivePc);
         }

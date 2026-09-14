@@ -896,11 +896,20 @@ function ensure_maintenance_asset_schema(PDO $pdo): void
             if (db_table_exists($pdo, 'pcs')) {
                 $pdo->exec("UPDATE maintenance_assets ma JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci SET ma.asset_item_id = p.asset_item_id WHERE ma.asset_item_id IS NULL AND p.asset_item_id IS NOT NULL AND p.asset_item_id > 0");
                 $pdo->exec("UPDATE asset_items ai JOIN pcs p ON p.asset_item_id = ai.id SET ai.source_pc_id = p.pc_id WHERE (ai.source_pc_id IS NULL OR ai.source_pc_id = '') AND p.pc_id IS NOT NULL AND p.pc_id != ''");
+                $pdo->exec("UPDATE pcs p JOIN asset_items ai ON ai.source_pc_id COLLATE utf8mb4_unicode_ci = p.pc_id COLLATE utf8mb4_unicode_ci SET p.asset_item_id = ai.id WHERE p.asset_item_id IS NULL");
+                // Sync custodian between pcs and asset_items
+                $pdo->exec("UPDATE asset_items ai JOIN pcs p ON (p.asset_item_id = ai.id OR p.pc_id COLLATE utf8mb4_unicode_ci = ai.source_pc_id COLLATE utf8mb4_unicode_ci) SET ai.custodian_name = p.owner_name WHERE (ai.custodian_name IS NULL OR ai.custodian_name = '') AND p.owner_name IS NOT NULL AND p.owner_name != ''");
+                $pdo->exec("UPDATE asset_items ai JOIN pcs p ON (p.asset_item_id = ai.id OR p.pc_id COLLATE utf8mb4_unicode_ci = ai.source_pc_id COLLATE utf8mb4_unicode_ci) SET ai.custodian_nik = p.employee_nik WHERE (ai.custodian_nik IS NULL OR ai.custodian_nik = '') AND p.employee_nik IS NOT NULL AND p.employee_nik != ''");
+                $pdo->exec("UPDATE pcs p JOIN asset_items ai ON (ai.id = p.asset_item_id OR ai.source_pc_id COLLATE utf8mb4_unicode_ci = p.pc_id COLLATE utf8mb4_unicode_ci) SET p.owner_name = ai.custodian_name WHERE (p.owner_name IS NULL OR p.owner_name = '') AND ai.custodian_name IS NOT NULL AND ai.custodian_name != ''");
+                $pdo->exec("UPDATE pcs p JOIN asset_items ai ON (ai.id = p.asset_item_id OR ai.source_pc_id COLLATE utf8mb4_unicode_ci = p.pc_id COLLATE utf8mb4_unicode_ci) SET p.employee_nik = ai.custodian_nik WHERE (p.employee_nik IS NULL OR p.employee_nik = '') AND ai.custodian_nik IS NOT NULL AND ai.custodian_nik != ''");
             }
             if (db_table_exists($pdo, 'printers')) {
                 $pdo->exec("UPDATE maintenance_assets ma JOIN printers pr ON pr.prn_id COLLATE utf8mb4_unicode_ci = ma.printer_id COLLATE utf8mb4_unicode_ci SET ma.asset_item_id = pr.asset_item_id WHERE ma.asset_item_id IS NULL AND pr.asset_item_id IS NOT NULL AND pr.asset_item_id > 0");
             }
             $pdo->exec("UPDATE maintenance_assets ma JOIN maintenance_asset_items mai ON mai.maintenance_asset_id = ma.id AND mai.detached_at IS NULL SET ma.asset_item_id = mai.asset_item_id WHERE ma.asset_item_id IS NULL");
+            // Sync custodian into maintenance_assets
+            $pdo->exec("UPDATE maintenance_assets ma JOIN asset_items ai ON ai.id = ma.asset_item_id SET ma.owner_name = ai.custodian_name WHERE (ma.owner_name IS NULL OR ma.owner_name = '') AND ai.custodian_name IS NOT NULL AND ai.custodian_name != ''");
+            $pdo->exec("UPDATE maintenance_assets ma JOIN asset_items ai ON ai.id = ma.asset_item_id SET ma.employee_nik = ai.custodian_nik WHERE (ma.employee_nik IS NULL OR ma.employee_nik = '') AND ai.custodian_nik IS NOT NULL AND ai.custodian_nik != ''");
         } catch (Throwable $ignored) {}
         try {
             $itGroupId = (int)$pdo->query("SELECT id FROM asset_groups WHERE group_code='IT' LIMIT 1")->fetchColumn();

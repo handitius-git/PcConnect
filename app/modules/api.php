@@ -445,7 +445,9 @@ function handle_route_api_eligible_maintenance_asset_items(PDO $pdo): void
     $params[] = $maintId;
 
     $sql = "SELECT ai.id, ai.asset_code, ai.asset_name, ai.asset_type, ai.asset_category, ai.asset_mode, ai.brand, ai.model, ai.serial_number,
-                   ai.company_id, ac.company_name, ai.location_id, ai.location_label, ai.custodian_name, ai.custodian_nik,
+                   ai.company_id, ac.company_name, ai.location_id, ai.location_label,
+                   COALESCE(NULLIF(ai.custodian_name, ''), p.owner_name, '') AS custodian_name,
+                   COALESCE(NULLIF(ai.custodian_nik, ''), p.employee_nik, '') AS custodian_nik,
                    ai.source_pc_id, COALESCE(NULLIF(ai.source_pc_id, ''), p.pc_id) AS pc_id, p.computer_name, prn.prn_id
             FROM asset_items ai
             LEFT JOIN asset_companies ac ON ac.id = ai.company_id
