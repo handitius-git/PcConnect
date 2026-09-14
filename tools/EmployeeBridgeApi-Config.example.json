@@ -1,0 +1,15 @@
+{
+  "ListenUrl": "http://+:8787/",
+  "ApiToken": "ganti-token-ini",
+  "SqlServer": "192.168.1.10",
+  "SqlPort": 1433,
+  "Database": "HRD",
+  "Username": "sa",
+  "Password": "ganti-password-sa",
+  "TableName": "dbo.Employee",
+  "NikField": "NIK",
+  "NameField": "Nama",
+  "DepartmentField": "Department",
+  "LimitRows": 500,
+  "TrustServerCertificate": true
+}

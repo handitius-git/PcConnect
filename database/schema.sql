@@ -1,14 +1,14 @@
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(120) NOT NULL,
     username VARCHAR(80) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
-    role ENUM('admin','maintenance_admin','technician') NOT NULL DEFAULT 'technician',
+    role ENUM('admin','maintenance_admin','technician','corrective_maintenance') NOT NULL DEFAULT 'technician',
     is_active TINYINT(1) NOT NULL DEFAULT 1,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE mobile_api_tokens (
+CREATE TABLE IF NOT EXISTS mobile_api_tokens (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
     token_hash CHAR(64) NOT NULL UNIQUE,
@@ -20,7 +20,7 @@ CREATE TABLE mobile_api_tokens (
     CONSTRAINT fk_mobile_token_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE pcs (
+CREATE TABLE IF NOT EXISTS pcs (
     pc_id VARCHAR(60) PRIMARY KEY,
     security_code VARCHAR(12) NOT NULL,
     employee_nik VARCHAR(80) NULL,
@@ -48,19 +48,19 @@ CREATE TABLE pcs (
     INDEX idx_pcs_maintenance_asset (maintenance_asset_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE company_source_config (
+CREATE TABLE IF NOT EXISTS company_source_config (
     config_key VARCHAR(80) PRIMARY KEY,
     config_value TEXT NULL,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE employee_source_config (
+CREATE TABLE IF NOT EXISTS employee_source_config (
     config_key VARCHAR(80) PRIMARY KEY,
     config_value TEXT NULL,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE employee_directory (
+CREATE TABLE IF NOT EXISTS employee_directory (
     nik VARCHAR(80) PRIMARY KEY,
     employee_name VARCHAR(200) NOT NULL,
     department VARCHAR(200) NULL,
@@ -71,7 +71,7 @@ CREATE TABLE employee_directory (
     INDEX idx_employee_active (is_active)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE printers (
+CREATE TABLE IF NOT EXISTS printers (
     prn_id VARCHAR(60) PRIMARY KEY,
     security_code VARCHAR(12) NOT NULL,
     printer_name VARCHAR(160) NOT NULL,
@@ -91,7 +91,7 @@ CREATE TABLE printers (
     INDEX idx_printers_asset_item (asset_item_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE asset_companies (
+CREATE TABLE IF NOT EXISTS asset_companies (
     id INT AUTO_INCREMENT PRIMARY KEY,
     company_code VARCHAR(40) NOT NULL UNIQUE,
     external_company_id VARCHAR(80) NULL,
@@ -104,12 +104,52 @@ CREATE TABLE asset_companies (
     INDEX idx_asset_company_external (external_company_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE asset_items (
+CREATE TABLE IF NOT EXISTS asset_categories (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    category_name VARCHAR(60) NOT NULL UNIQUE,
+    is_system TINYINT(1) NOT NULL DEFAULT 0,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS asset_brands (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    brand_code VARCHAR(40) NULL,
+    brand_name VARCHAR(120) NOT NULL UNIQUE,
+    description TEXT NULL,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_ab_active(is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS asset_master_items (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    item_code VARCHAR(80) NULL UNIQUE,
+    item_name VARCHAR(180) NOT NULL,
+    asset_group_id INT NOT NULL,
+    asset_type_id INT NOT NULL,
+    brand_id INT NULL,
+    model_name VARCHAR(160) NULL,
+    specifications TEXT NULL,
+    description TEXT NULL,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_ami_group(asset_group_id),
+    INDEX idx_ami_type(asset_type_id),
+    INDEX idx_ami_brand(brand_id),
+    INDEX idx_ami_active(is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS asset_items (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     asset_code VARCHAR(80) NOT NULL UNIQUE,
+    master_item_id BIGINT NULL,
+    brand_id INT NULL,
     company_id INT NULL,
     asset_mode VARCHAR(20) NOT NULL DEFAULT 'standalone',
     asset_type VARCHAR(60) NOT NULL,
+    asset_category VARCHAR(60) NOT NULL,
     asset_name VARCHAR(180) NOT NULL,
     brand VARCHAR(120) NULL,
     model VARCHAR(160) NULL,
@@ -127,11 +167,14 @@ CREATE TABLE asset_items (
     INDEX idx_asset_item_company (company_id),
     INDEX idx_asset_item_mode (asset_mode),
     INDEX idx_asset_item_type (asset_type),
+    INDEX idx_asset_item_category (asset_category),
     INDEX idx_asset_item_status (status),
+    INDEX idx_asset_item_master (master_item_id),
+    INDEX idx_asset_item_brand (brand_id),
     CONSTRAINT fk_asset_item_company FOREIGN KEY (company_id) REFERENCES asset_companies(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE asset_item_members (
+CREATE TABLE IF NOT EXISTS asset_item_members (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     parent_asset_item_id BIGINT NOT NULL,
     child_asset_item_id BIGINT NOT NULL,
@@ -146,7 +189,7 @@ CREATE TABLE asset_item_members (
     CONSTRAINT fk_asset_item_member_child FOREIGN KEY (child_asset_item_id) REFERENCES asset_items(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE asset_bundles (
+CREATE TABLE IF NOT EXISTS asset_bundles (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     maintenance_asset_code VARCHAR(80) NOT NULL UNIQUE,
     company_id INT NULL,
@@ -167,7 +210,7 @@ CREATE TABLE asset_bundles (
     CONSTRAINT fk_asset_bundle_company FOREIGN KEY (company_id) REFERENCES asset_companies(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE asset_bundle_members (
+CREATE TABLE IF NOT EXISTS asset_bundle_members (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     bundle_id BIGINT NOT NULL,
     asset_item_id BIGINT NOT NULL,
@@ -182,7 +225,7 @@ CREATE TABLE asset_bundle_members (
     CONSTRAINT fk_bundle_member_item FOREIGN KEY (asset_item_id) REFERENCES asset_items(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE asset_movements (
+CREATE TABLE IF NOT EXISTS asset_movements (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     asset_item_id BIGINT NOT NULL,
     from_bundle_id BIGINT NULL,
@@ -201,7 +244,7 @@ CREATE TABLE asset_movements (
     CONSTRAINT fk_movement_item FOREIGN KEY (asset_item_id) REFERENCES asset_items(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE asset_repairs (
+CREATE TABLE IF NOT EXISTS asset_repairs (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     asset_item_id BIGINT NOT NULL,
     bundle_id BIGINT NULL,
@@ -223,7 +266,7 @@ CREATE TABLE asset_repairs (
     CONSTRAINT fk_repair_bundle FOREIGN KEY (bundle_id) REFERENCES asset_bundles(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE asset_repair_parts (
+CREATE TABLE IF NOT EXISTS asset_repair_parts (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     repair_id BIGINT NOT NULL,
     part_name VARCHAR(180) NOT NULL,
@@ -237,7 +280,7 @@ CREATE TABLE asset_repair_parts (
     CONSTRAINT fk_repair_part_repair FOREIGN KEY (repair_id) REFERENCES asset_repairs(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE maintenance_assets (
+CREATE TABLE IF NOT EXISTS maintenance_assets (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     maintenance_asset_code VARCHAR(80) NOT NULL UNIQUE,
     security_code VARCHAR(12) NOT NULL,
@@ -265,7 +308,7 @@ CREATE TABLE maintenance_assets (
     CONSTRAINT fk_maintenance_asset_company FOREIGN KEY (company_id) REFERENCES asset_companies(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE maintenance_asset_items (
+CREATE TABLE IF NOT EXISTS maintenance_asset_items (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     maintenance_asset_id BIGINT NOT NULL,
     asset_item_id BIGINT NOT NULL,
@@ -280,7 +323,7 @@ CREATE TABLE maintenance_asset_items (
     CONSTRAINT fk_maint_asset_item_item FOREIGN KEY (asset_item_id) REFERENCES asset_items(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE analysis_runs (
+CREATE TABLE IF NOT EXISTS analysis_runs (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     pc_id VARCHAR(60) NOT NULL,
     payload LONGTEXT NOT NULL,
@@ -295,19 +338,31 @@ CREATE TABLE analysis_runs (
     CONSTRAINT fk_analysis_pc FOREIGN KEY (pc_id) REFERENCES pcs(pc_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE maintenance_jobs (
+CREATE TABLE IF NOT EXISTS maintenance_categories (
     id INT AUTO_INCREMENT PRIMARY KEY,
     title VARCHAR(160) NOT NULL,
     description TEXT NULL,
-    estimated_minutes INT NOT NULL DEFAULT 5,
     is_active TINYINT(1) NOT NULL DEFAULT 1,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE maintenance_schedules (
+CREATE TABLE IF NOT EXISTS maintenance_jobs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(160) NOT NULL,
+    description TEXT NULL,
+    maintenance_category_id INT NULL,
+    estimated_minutes INT NOT NULL DEFAULT 5,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_jobs_category (maintenance_category_id),
+    CONSTRAINT fk_jobs_category FOREIGN KEY (maintenance_category_id) REFERENCES maintenance_categories(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS maintenance_schedules (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     asset_type ENUM('pc','printer') NOT NULL DEFAULT 'pc',
     maintenance_asset_id BIGINT NULL,
+    maintenance_category_id INT NULL,
     pc_id VARCHAR(60) NULL,
     printer_id VARCHAR(60) NULL,
     technician_id INT NULL,
@@ -331,13 +386,15 @@ CREATE TABLE maintenance_schedules (
     INDEX idx_schedule_pc (pc_id),
     INDEX idx_schedule_printer (printer_id),
     INDEX idx_schedule_maintenance_asset (maintenance_asset_id),
+    INDEX idx_schedule_category (maintenance_category_id),
     INDEX idx_schedule_tech (technician_id),
     CONSTRAINT fk_schedule_pc FOREIGN KEY (pc_id) REFERENCES pcs(pc_id) ON DELETE CASCADE,
+    CONSTRAINT fk_schedule_category FOREIGN KEY (maintenance_category_id) REFERENCES maintenance_categories(id) ON DELETE SET NULL,
     CONSTRAINT fk_schedule_tech FOREIGN KEY (technician_id) REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT fk_schedule_unlock_user FOREIGN KEY (unlocked_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE schedule_jobs (
+CREATE TABLE IF NOT EXISTS schedule_jobs (
     schedule_id BIGINT NOT NULL,
     job_id INT NOT NULL,
     is_done TINYINT(1) NOT NULL DEFAULT 0,
@@ -348,7 +405,7 @@ CREATE TABLE schedule_jobs (
     CONSTRAINT fk_schedule_jobs_job FOREIGN KEY (job_id) REFERENCES maintenance_jobs(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE maintenance_reports (
+CREATE TABLE IF NOT EXISTS maintenance_reports (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     schedule_id BIGINT NOT NULL,
     technician_id INT NOT NULL,
@@ -371,7 +428,7 @@ CREATE TABLE maintenance_reports (
     CONSTRAINT fk_report_tech FOREIGN KEY (technician_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE maintenance_timeline (
+CREATE TABLE IF NOT EXISTS maintenance_timeline (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     schedule_id BIGINT NOT NULL,
     event_type VARCHAR(60) NOT NULL,
@@ -383,19 +440,136 @@ CREATE TABLE maintenance_timeline (
     CONSTRAINT fk_timeline_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-INSERT INTO users (name, username, password_hash, role) VALUES
-('Administrator', 'admin', '$2y$10$ohXX2wLvip21SWVCAEzQXOsym9nYYZNG2BffWfsQFeJVBglYbR2iy', 'admin');
+INSERT INTO users (name, username, password_hash, role)
+SELECT 'Administrator', 'admin', '$2y$10$ohXX2wLvip21SWVCAEzQXOsym9nYYZNG2BffWfsQFeJVBglYbR2iy', 'admin'
+WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = 'admin');
 
-INSERT INTO maintenance_jobs (title, description) VALUES
-('Bersihkan Fan', 'Bersihkan fan casing, CPU, dan area airflow.'),
-('Bersihkan RAM', 'Lepas dan bersihkan area RAM bila diperlukan.'),
-('Bersihkan Motherboard', 'Bersihkan debu motherboard dengan aman.'),
-('Cek SMART SSD', 'Cek health storage dan kapasitas kosong.'),
-('Update Windows', 'Pastikan patch Windows penting sudah berjalan.'),
-('Update Antivirus', 'Cek status antivirus dan update definisi.'),
-('Test Benchmark', 'Jalankan PcNalisa atau benchmark ringan.'),
-('Rapikan Kabel', 'Rapikan kabel power, LAN, dan peripheral.'),
-('Bersihkan Keyboard', 'Bersihkan keyboard user.'),
-('Bersihkan Monitor', 'Bersihkan monitor dan cek tampilan.'),
-('Test LAN', 'Cek koneksi LAN/Wi-Fi.'),
-('Test Printer', 'Cek printer bila digunakan user.');
+INSERT INTO maintenance_jobs (title, description)
+SELECT 'Bersihkan Fan', 'Bersihkan fan casing, CPU, dan area airflow.' WHERE NOT EXISTS (SELECT 1 FROM maintenance_jobs WHERE title = 'Bersihkan Fan')
+UNION ALL SELECT 'Bersihkan RAM', 'Lepas dan bersihkan area RAM bila diperlukan.' WHERE NOT EXISTS (SELECT 1 FROM maintenance_jobs WHERE title = 'Bersihkan RAM')
+UNION ALL SELECT 'Bersihkan Motherboard', 'Bersihkan debu motherboard dengan aman.' WHERE NOT EXISTS (SELECT 1 FROM maintenance_jobs WHERE title = 'Bersihkan Motherboard')
+UNION ALL SELECT 'Cek SMART SSD', 'Cek health storage dan kapasitas kosong.' WHERE NOT EXISTS (SELECT 1 FROM maintenance_jobs WHERE title = 'Cek SMART SSD')
+UNION ALL SELECT 'Update Windows', 'Pastikan patch Windows penting sudah berjalan.' WHERE NOT EXISTS (SELECT 1 FROM maintenance_jobs WHERE title = 'Update Windows')
+UNION ALL SELECT 'Update Antivirus', 'Cek status antivirus dan update definisi.' WHERE NOT EXISTS (SELECT 1 FROM maintenance_jobs WHERE title = 'Update Antivirus')
+UNION ALL SELECT 'Test Benchmark', 'Jalankan PcNalisa atau benchmark ringan.' WHERE NOT EXISTS (SELECT 1 FROM maintenance_jobs WHERE title = 'Test Benchmark')
+UNION ALL SELECT 'Rapikan Kabel', 'Rapikan kabel power, LAN, dan peripheral.' WHERE NOT EXISTS (SELECT 1 FROM maintenance_jobs WHERE title = 'Rapikan Kabel')
+UNION ALL SELECT 'Bersihkan Keyboard', 'Bersihkan keyboard user.' WHERE NOT EXISTS (SELECT 1 FROM maintenance_jobs WHERE title = 'Bersihkan Keyboard')
+UNION ALL SELECT 'Bersihkan Monitor', 'Bersihkan monitor dan cek tampilan.' WHERE NOT EXISTS (SELECT 1 FROM maintenance_jobs WHERE title = 'Bersihkan Monitor')
+UNION ALL SELECT 'Test LAN', 'Cek koneksi LAN/Wi-Fi.' WHERE NOT EXISTS (SELECT 1 FROM maintenance_jobs WHERE title = 'Test LAN')
+UNION ALL SELECT 'Test Printer', 'Cek printer bila digunakan user.' WHERE NOT EXISTS (SELECT 1 FROM maintenance_jobs WHERE title = 'Test Printer');
+
+CREATE TABLE IF NOT EXISTS corrective_tickets (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    ticket_code VARCHAR(40) NOT NULL UNIQUE,
+    asset_category VARCHAR(40) NOT NULL DEFAULT 'pc',
+    asset_item_id BIGINT NULL,
+    maintenance_asset_id BIGINT NULL,
+    pc_id VARCHAR(60) NULL,
+    company_id INT NULL,
+    location_label VARCHAR(150) NULL,
+    vehicle_odometer_km INT NULL,
+    reporter_name VARCHAR(120) NOT NULL,
+    reporter_nik VARCHAR(60) NULL,
+    reporter_contact VARCHAR(100) NULL,
+    issue_category VARCHAR(60) NOT NULL DEFAULT 'hardware',
+    priority VARCHAR(20) NOT NULL DEFAULT 'medium',
+    subject VARCHAR(200) NOT NULL,
+    description TEXT NULL,
+    photo_before VARCHAR(255) NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'open',
+    assigned_technician_name VARCHAR(120) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at DATETIME NULL,
+    closed_at DATETIME NULL,
+    INDEX idx_ct_status(status),
+    INDEX idx_ct_asset(asset_item_id),
+    INDEX idx_ct_pc(pc_id),
+    INDEX idx_ct_created(created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS corrective_repairs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    ticket_id BIGINT NOT NULL,
+    technician_name VARCHAR(120) NOT NULL,
+    action_type VARCHAR(60) NOT NULL DEFAULT 'hardware_repair',
+    root_cause_analysis TEXT NULL,
+    solution_details TEXT NOT NULL,
+    vendor_name VARCHAR(150) NULL,
+    vendor_invoice_no VARCHAR(100) NULL,
+    repair_cost DECIMAL(15,2) NOT NULL DEFAULT 0,
+    photo_after VARCHAR(255) NULL,
+    repaired_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_cr_ticket(ticket_id),
+    INDEX idx_cr_date(repaired_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS corrective_repair_parts (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    repair_id BIGINT NOT NULL,
+    old_part_name VARCHAR(150) NULL,
+    old_part_serial VARCHAR(100) NULL,
+    old_part_condition VARCHAR(100) NULL,
+    new_part_name VARCHAR(150) NOT NULL,
+    new_part_serial VARCHAR(100) NULL,
+    part_cost DECIMAL(15,2) NOT NULL DEFAULT 0,
+    part_warranty_until DATE NULL,
+    vendor_supplier VARCHAR(150) NULL,
+    notes TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_crp_repair(repair_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS asset_walkarounds (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    walkaround_code VARCHAR(40) NOT NULL UNIQUE,
+    asset_item_id BIGINT NULL,
+    maintenance_asset_id BIGINT NULL,
+    pc_id VARCHAR(60) NULL,
+    prn_id VARCHAR(60) NULL,
+    inspector_name VARCHAR(120) NOT NULL,
+    inspector_nik VARCHAR(60) NULL,
+    inspection_date DATE NOT NULL,
+    location_label VARCHAR(150) NULL,
+    odometer_km INT NULL,
+    overall_condition VARCHAR(30) NOT NULL DEFAULT 'good',
+    notes TEXT NULL,
+    photo VARCHAR(255) NULL,
+    ticket_id BIGINT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_aw_asset(asset_item_id),
+    INDEX idx_aw_date(inspection_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS corrective_job_desks (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    job_desk_code VARCHAR(40) NULL,
+    job_desk_name VARCHAR(160) NOT NULL UNIQUE,
+    asset_group_id INT NULL,
+    asset_type_id INT NULL,
+    description TEXT NULL,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_cjd_group (asset_group_id),
+    INDEX idx_cjd_type (asset_type_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS corrective_action_types (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    action_code VARCHAR(60) NOT NULL UNIQUE,
+    action_name VARCHAR(120) NOT NULL,
+    job_desk_name VARCHAR(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
+    asset_group_id INT NULL,
+    asset_type_id INT NULL,
+    estimated_minutes INT NOT NULL DEFAULT 15,
+    description VARCHAR(255) NULL,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_cat_active(is_active),
+    INDEX idx_cat_order(sort_order),
+    INDEX idx_cat_desk(job_desk_name),
+    INDEX idx_cat_group(asset_group_id),
+    INDEX idx_cat_type(asset_type_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+

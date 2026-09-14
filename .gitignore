@@ -1,0 +1,12 @@
+# IDE
+.vscode/
+.idea/
+
+# Uploads
+uploads/
+/public/verify-output.txt
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store

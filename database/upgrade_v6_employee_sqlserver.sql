@@ -1,8 +1,0 @@
-ALTER TABLE pcs
-    ADD COLUMN employee_nik VARCHAR(80) NULL AFTER security_code;
-
-CREATE TABLE IF NOT EXISTS employee_source_config (
-    config_key VARCHAR(80) PRIMARY KEY,
-    config_value TEXT NULL,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

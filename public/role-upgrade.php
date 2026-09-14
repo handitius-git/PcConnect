@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 session_start();
-require_once dirname(__DIR__) . '/app/lib/helpers.php';
+require_once dirname(__DIR__) . '/app/lib/bootstrap.php';
 
 function role_upgrade_e(mixed $value): string
 {

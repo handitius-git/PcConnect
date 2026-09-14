@@ -3,7 +3,8 @@ PcConnect
 
 Isi paket:
 - public/index.php: aplikasi web utama.
-- app/lib/helpers.php: koneksi database, auth, layout, dan analitik.
+- app/lib/bootstrap.php: core framework (database, auth, session, layout/navbar, routing helper).
+- app/lib/helpers.php: backward compatibility wrapper untuk bootstrap.php.
 - tools/PcNalisa-Agent.ps1: agent analisa PC Windows.
 - tools/PcNalisa-Run.cmd: launcher agent.
 - tools/CARA-PAKAI-PCNALISA.txt: panduan menjalankan agent.
@@ -33,11 +34,6 @@ Instalasi singkat:
    - username: admin
    - password: admin12345
 6. Segera ganti password admin lewat database atau buat admin baru sesuai kebutuhan.
-
-Upgrade role Admin Maintenance:
-- Untuk database existing, import database/upgrade_v3_roles.sql satu kali.
-- Setelah itu buka menu Users, tambah user dengan role Admin Maintenance.
-- Role Admin Maintenance hanya punya akses ke menu Preventive Maintenance.
 
 Catatan:
 - Untuk agent per PC, buka Detail PC lalu klik Download PcNalisa PC ini.
