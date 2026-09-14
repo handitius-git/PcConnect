@@ -638,7 +638,7 @@ function asset_item_options(PDO $pdo, ?int $selected = null, ?string $onlyUnsync
 
     // Filter agar asset dengan Mode 'Bundle (Child Asset)' tidak muncul untuk sinkronisasi PC/Printer/Maintenance
     if (!$allowChildAssets) {
-        $where[] = '(ai.asset_mode <> "child" OR ai.id = ?)';
+        $where[] = '((ai.asset_mode IS NULL OR ai.asset_mode <> "child") AND NOT EXISTS (SELECT 1 FROM asset_item_members aim WHERE aim.child_asset_item_id = ai.id AND aim.detached_at IS NULL) OR ai.id = ?)';
         $params[] = (int)$selected;
     }
 

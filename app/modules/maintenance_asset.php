@@ -68,7 +68,8 @@ function maintenance_asset_options(PDO $pdo, ?int $selected = null): string
         $sql = 'SELECT ma.id, ma.maintenance_asset_code, ma.name, ma.maintenance_type 
                 FROM maintenance_assets ma 
                 LEFT JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci 
-                WHERE (ma.pc_id IS NULL OR ma.pc_id = "" OR (p.asset_item_id IS NOT NULL AND p.asset_item_id > 0))
+                LEFT JOIN asset_items ai_pc ON ai_pc.id = p.asset_item_id
+                WHERE (ma.pc_id IS NULL OR ma.pc_id = "" OR (p.asset_item_id IS NOT NULL AND p.asset_item_id > 0 AND (ai_pc.asset_mode IS NULL OR ai_pc.asset_mode <> "child") AND NOT EXISTS (SELECT 1 FROM asset_item_members aim WHERE aim.child_asset_item_id = ai_pc.id AND aim.detached_at IS NULL)))
                 ORDER BY ma.maintenance_asset_code';
     } else {
         $sql = 'SELECT id, maintenance_asset_code, name, maintenance_type FROM maintenance_assets ORDER BY maintenance_asset_code';
@@ -83,7 +84,7 @@ function maintenance_asset_options(PDO $pdo, ?int $selected = null): string
 
 /**
  * Mengambil daftar maintenance asset.
- * SYARAT: PC yang belum disinkronkan dengan asset item (p.asset_item_id IS NULL / 0) TIDAK AKAN MUNCUL!
+ * SYARAT: PC yang belum disinkronkan dengan asset item (p.asset_item_id IS NULL / 0) atau asset child TIDAK AKAN MUNCUL!
  */
 function maintenance_asset_rows(PDO $pdo): array
 {
@@ -103,7 +104,7 @@ function maintenance_asset_rows(PDO $pdo): array
             ' . ($hasPcs ? 'LEFT JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci LEFT JOIN asset_items ai_pc ON ai_pc.id = p.asset_item_id ' : '') . '
             LEFT JOIN asset_companies c ON c.id=ma.company_id 
             LEFT JOIN maintenance_asset_items mi ON mi.maintenance_asset_id=ma.id AND mi.detached_at IS NULL 
-            ' . ($hasPcs ? 'WHERE (ma.pc_id IS NULL OR ma.pc_id = "" OR (p.asset_item_id IS NOT NULL AND p.asset_item_id > 0 AND (ai_pc.asset_mode IS NULL OR ai_pc.asset_mode <> "child"))) ' : '') . '
+            ' . ($hasPcs ? 'WHERE (ma.pc_id IS NULL OR ma.pc_id = "" OR (p.asset_item_id IS NOT NULL AND p.asset_item_id > 0 AND (ai_pc.asset_mode IS NULL OR ai_pc.asset_mode <> "child") AND NOT EXISTS (SELECT 1 FROM asset_item_members aim WHERE aim.child_asset_item_id = ai_pc.id AND aim.detached_at IS NULL))) ' : '') . '
             GROUP BY ma.id 
             ORDER BY ma.updated_at DESC, ma.maintenance_asset_code';
     return $pdo->query($sql)->fetchAll();
@@ -165,6 +166,44 @@ function maintenance_asset_post_data(PDO $pdo, int $id = 0): array
         'status' => trim((string)($_POST['status'] ?? 'active')),
         'notes' => null_if_empty((string)($_POST['notes'] ?? '')),
     ];
+}
+
+function maintenance_job_desks_by_asset(PDO $pdo, ?int $groupId, ?int $typeId): array
+{
+    if (!db_table_exists($pdo, 'preventive_job_desks') && !db_table_exists($pdo, 'maintenance_jobs')) {
+        return [];
+    }
+    $sources = [];
+    if (db_table_exists($pdo, 'preventive_job_desks')) {
+        $sources[] = 'SELECT job_desk_name, asset_group_id, asset_type_id FROM preventive_job_desks WHERE is_active=1';
+    }
+    if (db_table_exists($pdo, 'maintenance_jobs')) {
+        $sources[] = 'SELECT job_desk_name, asset_group_id, asset_type_id FROM maintenance_jobs WHERE is_active=1';
+    }
+    if (empty($sources)) {
+        return [];
+    }
+    $sql = 'SELECT DISTINCT job_desk_name 
+            FROM (' . implode(' UNION ', $sources) . ') t 
+            WHERE job_desk_name IS NOT NULL AND job_desk_name != ""';
+    $params = [];
+    if ($groupId !== null && $groupId > 0) {
+        $sql .= ' AND (asset_group_id = ? OR asset_group_id IS NULL)';
+        $params[] = $groupId;
+    }
+    if ($typeId !== null && $typeId > 0) {
+        $sql .= ' AND (asset_type_id = ? OR asset_type_id IS NULL)';
+        $params[] = $typeId;
+    }
+    $sql .= ' ORDER BY job_desk_name';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+}
+
+function maintenance_all_job_desks(PDO $pdo): array
+{
+    return maintenance_job_desks_by_asset($pdo, null, null);
 }
 
 function maintenance_asset_form_html(PDO $pdo, array $asset, bool $editing): string
@@ -449,6 +488,25 @@ function handle_route_maintenance_asset_item_action(PDO $pdo): void
     if ($action === 'attach') {
         $assetItemId = (int)($_POST['asset_item_id'] ?? 0);
         if ($assetItemId > 0) {
+            $stmtCheck = $pdo->prepare('SELECT asset_code, asset_mode FROM asset_items WHERE id=?');
+            $stmtCheck->execute([$assetItemId]);
+            $itemInfo = $stmtCheck->fetch(PDO::FETCH_ASSOC);
+            $isChild = false;
+            if ($itemInfo && ($itemInfo['asset_mode'] === 'child')) {
+                $isChild = true;
+            }
+            if (!$isChild && db_table_exists($pdo, 'asset_item_members')) {
+                $stmtMem = $pdo->prepare('SELECT 1 FROM asset_item_members WHERE child_asset_item_id=? AND detached_at IS NULL LIMIT 1');
+                $stmtMem->execute([$assetItemId]);
+                if ($stmtMem->fetchColumn()) {
+                    $isChild = true;
+                }
+            }
+            if ($isChild) {
+                flash('Unit aset dengan status Bundle (Child Asset) tidak dapat dimasukkan ke Maintenance Asset.', 'err');
+                redirect_to('maintenance_asset_form', ['id' => $maintenanceAssetId]);
+            }
+
             $oldParent = active_parent_asset_item($pdo, $assetItemId);
             if ($oldParent) {
                 $attachedAt = normalize_date_input((string)($_POST['attached_at'] ?? date('Y-m-d')));

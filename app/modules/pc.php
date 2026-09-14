@@ -76,6 +76,21 @@ function ensure_pc_maintenance_asset(PDO $pdo, array $pc): ?array
         return null;
     }
 
+    // Unit aset child bundle TIDAK boleh masuk / dibuatkan Maintenance Asset
+    $aiStmt = $pdo->prepare('SELECT asset_mode FROM asset_items WHERE id=?');
+    $aiStmt->execute([(int)$pc['asset_item_id']]);
+    $aiMode = (string)$aiStmt->fetchColumn();
+    if ($aiMode === 'child') {
+        return null;
+    }
+    if (db_table_exists($pdo, 'asset_item_members')) {
+        $chkMem = $pdo->prepare('SELECT 1 FROM asset_item_members WHERE child_asset_item_id=? AND detached_at IS NULL LIMIT 1');
+        $chkMem->execute([(int)$pc['asset_item_id']]);
+        if ($chkMem->fetchColumn()) {
+            return null;
+        }
+    }
+
     if (!empty($pc['maintenance_asset_id'])) {
         $stmt = $pdo->prepare('SELECT * FROM maintenance_assets WHERE id=?');
         $stmt->execute([(int)$pc['maintenance_asset_id']]);
@@ -159,8 +174,24 @@ function sync_pc_maintenance_asset(PDO $pdo, string $pcId): void
         return;
     }
 
-    // Jika PC tidak memiliki asset_item_id, bersihkan maintenance_asset_id
-    if (empty($pc['asset_item_id'])) {
+    // Jika PC tidak memiliki asset_item_id atau unit asetnya adalah child bundle, bersihkan maintenance_asset_id
+    $isChildAsset = false;
+    if (!empty($pc['asset_item_id'])) {
+        $aiStmt = $pdo->prepare('SELECT asset_mode FROM asset_items WHERE id=?');
+        $aiStmt->execute([(int)$pc['asset_item_id']]);
+        $aiMode = (string)$aiStmt->fetchColumn();
+        if ($aiMode === 'child') {
+            $isChildAsset = true;
+        } elseif (db_table_exists($pdo, 'asset_item_members')) {
+            $chkMem = $pdo->prepare('SELECT 1 FROM asset_item_members WHERE child_asset_item_id=? AND detached_at IS NULL LIMIT 1');
+            $chkMem->execute([(int)$pc['asset_item_id']]);
+            if ($chkMem->fetchColumn()) {
+                $isChildAsset = true;
+            }
+        }
+    }
+
+    if (empty($pc['asset_item_id']) || $isChildAsset) {
         if (!empty($pc['maintenance_asset_id'])) {
             $oldMntId = (int)$pc['maintenance_asset_id'];
             $pdo->prepare('UPDATE pcs SET maintenance_asset_id=NULL WHERE pc_id=?')->execute([$pcId]);

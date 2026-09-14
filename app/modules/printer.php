@@ -120,6 +120,18 @@ function ensure_printer_maintenance_asset(PDO $pdo, array $printer): ?array
         if (empty($printer['asset_item_id'])) {
             return null;
         }
+        $cStmt = $pdo->prepare('SELECT asset_mode FROM asset_items WHERE id=?');
+        $cStmt->execute([(int)$printer['asset_item_id']]);
+        if ($cStmt->fetchColumn() === 'child') {
+            return null;
+        }
+        if (db_table_exists($pdo, 'asset_item_members')) {
+            $chkMem = $pdo->prepare('SELECT 1 FROM asset_item_members WHERE child_asset_item_id=? AND detached_at IS NULL LIMIT 1');
+            $chkMem->execute([(int)$printer['asset_item_id']]);
+            if ($chkMem->fetchColumn()) {
+                return null;
+            }
+        }
         $name = trim((string)($printer['printer_name'] ?? ''));
         if ($name === '') {
             $name = $prnId;
@@ -163,6 +175,33 @@ function sync_printer_maintenance_asset(PDO $pdo, string $prnId): void
     if (!$printer) {
         return;
     }
+
+    // Jika Printer tidak memiliki asset_item_id atau unit asetnya adalah child bundle, bersihkan maintenance_asset_id
+    $isChildAsset = false;
+    if (!empty($printer['asset_item_id'])) {
+        $cStmt = $pdo->prepare('SELECT asset_mode FROM asset_items WHERE id=?');
+        $cStmt->execute([(int)$printer['asset_item_id']]);
+        if ($cStmt->fetchColumn() === 'child') {
+            $isChildAsset = true;
+        } elseif (db_table_exists($pdo, 'asset_item_members')) {
+            $chkMem = $pdo->prepare('SELECT 1 FROM asset_item_members WHERE child_asset_item_id=? AND detached_at IS NULL LIMIT 1');
+            $chkMem->execute([(int)$printer['asset_item_id']]);
+            if ($chkMem->fetchColumn()) {
+                $isChildAsset = true;
+            }
+        }
+    }
+
+    if (empty($printer['asset_item_id']) || $isChildAsset) {
+        if (!empty($printer['maintenance_asset_id'])) {
+            $oldMntId = (int)$printer['maintenance_asset_id'];
+            $pdo->prepare('UPDATE printers SET maintenance_asset_id=NULL WHERE prn_id=?')->execute([$prnId]);
+            $pdo->prepare('DELETE FROM maintenance_asset_items WHERE maintenance_asset_id=?')->execute([$oldMntId]);
+            $pdo->prepare('DELETE FROM maintenance_assets WHERE id=?')->execute([$oldMntId]);
+        }
+        return;
+    }
+
     $asset = ensure_printer_maintenance_asset($pdo, $printer);
     if (!$asset) {
         return;
