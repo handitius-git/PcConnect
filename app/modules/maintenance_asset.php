@@ -43,6 +43,7 @@ function maintenance_asset_defaults(): array
         'maintenance_type' => 'equipment',
         'asset_group_id' => '',
         'asset_type_id' => '',
+        'asset_item_id' => 0,
         'job_desk_name' => '',
         'name' => '',
         'company_id' => '',
@@ -64,16 +65,16 @@ function maintenance_asset_options(PDO $pdo, ?int $selected = null): string
         return $html;
     }
     $hasPcs = db_table_exists($pdo, 'pcs');
-    if ($hasPcs) {
-        $sql = 'SELECT ma.id, ma.maintenance_asset_code, ma.name, ma.maintenance_type 
-                FROM maintenance_assets ma 
-                LEFT JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci 
-                LEFT JOIN asset_items ai_pc ON ai_pc.id = p.asset_item_id
-                WHERE (ma.pc_id IS NULL OR ma.pc_id = "" OR (p.asset_item_id IS NOT NULL AND p.asset_item_id > 0 AND (ai_pc.asset_mode IS NULL OR ai_pc.asset_mode <> "child") AND NOT EXISTS (SELECT 1 FROM asset_item_members aim WHERE aim.child_asset_item_id = ai_pc.id AND aim.detached_at IS NULL)))
-                ORDER BY ma.maintenance_asset_code';
-    } else {
-        $sql = 'SELECT id, maintenance_asset_code, name, maintenance_type FROM maintenance_assets ORDER BY maintenance_asset_code';
-    }
+    $sql = 'SELECT ma.id, ma.maintenance_asset_code, ma.name, ma.maintenance_type 
+            FROM maintenance_assets ma 
+            LEFT JOIN asset_items ai ON ai.id = ma.asset_item_id
+            ' . ($hasPcs ? 'LEFT JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci LEFT JOIN asset_items ai_pc ON ai_pc.id = p.asset_item_id ' : '') . '
+            WHERE ma.status <> "inactive"
+              AND (
+                  (ma.asset_item_id IS NOT NULL AND ma.asset_item_id > 0 AND (ai.asset_mode IS NULL OR ai.asset_mode <> "child") AND NOT EXISTS (SELECT 1 FROM asset_item_members aim WHERE aim.child_asset_item_id = ai.id AND aim.detached_at IS NULL))
+                  ' . ($hasPcs ? 'OR (ma.asset_item_id IS NULL AND (ma.pc_id IS NULL OR ma.pc_id = "" OR (p.asset_item_id IS NOT NULL AND p.asset_item_id > 0 AND (ai_pc.asset_mode IS NULL OR ai_pc.asset_mode <> "child") AND NOT EXISTS (SELECT 1 FROM asset_item_members aim2 WHERE aim2.child_asset_item_id = ai_pc.id AND aim2.detached_at IS NULL))))' : '') . '
+              )
+            ORDER BY ma.maintenance_asset_code';
     foreach ($pdo->query($sql) as $row) {
         $sel = (int)$row['id'] === (int)$selected ? ' selected' : '';
         $label = $row['maintenance_asset_code'] . ' - ' . $row['name'] . ' (' . $row['maintenance_type'] . ')';
@@ -84,7 +85,7 @@ function maintenance_asset_options(PDO $pdo, ?int $selected = null): string
 
 /**
  * Mengambil daftar maintenance asset.
- * SYARAT: PC yang belum disinkronkan dengan asset item (p.asset_item_id IS NULL / 0) atau asset child TIDAK AKAN MUNCUL!
+ * SYARAT: Asset child TIDAK AKAN MUNCUL!
  */
 function maintenance_asset_rows(PDO $pdo): array
 {
@@ -97,14 +98,22 @@ function maintenance_asset_rows(PDO $pdo): array
                    COALESCE(ag.group_code, "IT") AS group_code, 
                    at.type_name, 
                    at.type_code, 
+                   ai.asset_code AS unit_asset_code,
+                   ai.asset_name AS unit_asset_name,
+                   ai.asset_mode AS unit_asset_mode,
+                   ai.source_pc_id,
                    COUNT(mi.id) item_count 
             FROM maintenance_assets ma 
             LEFT JOIN asset_groups ag ON ag.id = ma.asset_group_id
             LEFT JOIN asset_types at ON at.id = ma.asset_type_id
+            LEFT JOIN asset_items ai ON ai.id = ma.asset_item_id
             ' . ($hasPcs ? 'LEFT JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci LEFT JOIN asset_items ai_pc ON ai_pc.id = p.asset_item_id ' : '') . '
             LEFT JOIN asset_companies c ON c.id=ma.company_id 
             LEFT JOIN maintenance_asset_items mi ON mi.maintenance_asset_id=ma.id AND mi.detached_at IS NULL 
-            ' . ($hasPcs ? 'WHERE (ma.pc_id IS NULL OR ma.pc_id = "" OR (p.asset_item_id IS NOT NULL AND p.asset_item_id > 0 AND (ai_pc.asset_mode IS NULL OR ai_pc.asset_mode <> "child") AND NOT EXISTS (SELECT 1 FROM asset_item_members aim WHERE aim.child_asset_item_id = ai_pc.id AND aim.detached_at IS NULL))) ' : '') . '
+            WHERE (
+                (ma.asset_item_id IS NOT NULL AND ma.asset_item_id > 0 AND (ai.asset_mode IS NULL OR ai.asset_mode <> "child") AND NOT EXISTS (SELECT 1 FROM asset_item_members aim WHERE aim.child_asset_item_id = ai.id AND aim.detached_at IS NULL))
+                ' . ($hasPcs ? 'OR (ma.asset_item_id IS NULL AND (ma.pc_id IS NULL OR ma.pc_id = "" OR (p.asset_item_id IS NOT NULL AND p.asset_item_id > 0 AND (ai_pc.asset_mode IS NULL OR ai_pc.asset_mode <> "child") AND NOT EXISTS (SELECT 1 FROM asset_item_members aim2 WHERE aim2.child_asset_item_id = ai_pc.id AND aim2.detached_at IS NULL))))' : '') . '
+            )
             GROUP BY ma.id 
             ORDER BY ma.updated_at DESC, ma.maintenance_asset_code';
     return $pdo->query($sql)->fetchAll();
@@ -112,10 +121,12 @@ function maintenance_asset_rows(PDO $pdo): array
 
 function maintenance_assets_table(PDO $pdo, array $rows): string
 {
-    $html = '<table><tr><th>Maintenance Asset ID</th><th>Asset Group / Type</th><th>Job Desk Preventive</th><th>Tipe</th><th>Nama</th><th>Company</th><th>Pengguna / Lokasi</th><th>Asset Item</th><th>Status</th><th>Aksi</th></tr>';
+    $html = '<table><tr><th>Maintenance Asset ID</th><th>Komoditas & Kategori</th><th>Unit Aset Fisik</th><th>Job Desk Preventive</th><th>Tipe</th><th>Nama</th><th>Company</th><th>Pengguna / Lokasi</th><th>Status</th><th>Aksi</th></tr>';
     foreach ($rows as $row) {
         $links = [];
-        if (!empty($row['pc_id'])) {
+        if (!empty($row['source_pc_id'])) {
+            $links[] = 'PC: ' . $row['source_pc_id'];
+        } elseif (!empty($row['pc_id'])) {
             $links[] = 'PC: ' . $row['pc_id'];
         }
         if (!empty($row['printer_id'])) {
@@ -128,15 +139,28 @@ function maintenance_assets_table(PDO $pdo, array $rows): string
             ? '<span class="badge ok">Active</span>' 
             : (($row['status'] ?? '') === 'spare' ? '<span class="badge">Spare</span>' : '<span class="badge danger">Inactive</span>');
 
+        $unitAssetHtml = '<span class="muted" style="color:#ef4444;font-size:12px;">⚠️ Belum ditautkan unit aset</span>';
+        if (!empty($row['unit_asset_code'])) {
+            $rawMode = (string)($row['unit_asset_mode'] ?? 'standalone');
+            $modeBadge = $rawMode === 'group' 
+                ? '<span class="badge ok" style="font-size:10px;">Bundle (Parent)</span>' 
+                : '<span class="badge" style="font-size:10px;">Single</span>';
+            $importBadge = !empty($row['source_pc_id']) 
+                ? ' <span class="badge" style="background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;font-size:10px;">📥 PC ' . e($row['source_pc_id']) . '</span>' 
+                : '';
+            $unitAssetHtml = '<strong>' . e($row['unit_asset_code']) . '</strong> ' . $modeBadge . $importBadge . '<br><span style="font-size:12px;color:#475569;">' . e($row['unit_asset_name']) . '</span>'
+                . '<div style="font-size:11px;color:#64748b;margin-top:2px;">' . e($row['item_count']) . ' item fisik terhubung</div>';
+        }
+
         $html .= '<tr>'
             . '<td><strong>' . e($row['maintenance_asset_code']) . '</strong><br><span class="muted">' . e(implode(' / ', $links) ?: 'General asset') . '</span></td>'
             . '<td><span class="badge">' . e($grpLabel) . '</span><br><span class="muted" style="font-size:12px;font-weight:600;">' . e($typeLabel) . '</span></td>'
+            . '<td>' . $unitAssetHtml . '</td>'
             . '<td>' . $deskBadge . '</td>'
             . '<td>' . e($row['maintenance_type']) . '</td>'
             . '<td>' . e($row['name']) . '</td>'
             . '<td>' . e($row['company_name'] ?: '-') . '</td>'
             . '<td>' . e($row['owner_name'] ?: '-') . '<br><span class="muted">' . e($row['location_label'] ?: '-') . '</span></td>'
-            . '<td>' . e($row['item_count']) . ' item</td>'
             . '<td>' . $statusBadge . '</td>'
             . '<td><div class="actions"><a class="btn primary" href="' . route_url('maintenance_asset_form', ['id' => $row['id']]) . '">Edit / Detail</a></div></td>'
             . '</tr>';
@@ -154,6 +178,7 @@ function maintenance_asset_post_data(PDO $pdo, int $id = 0): array
         'maintenance_type' => trim((string)($_POST['maintenance_type'] ?? 'equipment')),
         'asset_group_id' => (int)($_POST['asset_group_id'] ?? 0) > 0 ? (int)$_POST['asset_group_id'] : null,
         'asset_type_id' => (int)($_POST['asset_type_id'] ?? 0) > 0 ? (int)$_POST['asset_type_id'] : null,
+        'asset_item_id' => (int)($_POST['asset_item_id'] ?? 0) > 0 ? (int)$_POST['asset_item_id'] : null,
         'job_desk_name' => null_if_empty(trim((string)($_POST['job_desk_name'] ?? ''))),
         'name' => trim((string)($_POST['name'] ?? '')),
         'company_id' => (int)($_POST['company_id'] ?? 0) > 0 ? (int)$_POST['company_id'] : null,
@@ -209,6 +234,32 @@ function maintenance_all_job_desks(PDO $pdo): array
 function maintenance_asset_form_html(PDO $pdo, array $asset, bool $editing): string
 {
     $asset = array_merge(maintenance_asset_defaults(), $asset);
+    $selectedGroupId = (int)($asset['asset_group_id'] ?? 0);
+    $selectedTypeId = (int)($asset['asset_type_id'] ?? 0);
+    $selectedAssetItemId = (int)($asset['asset_item_id'] ?? 0);
+    $selectedJobDesk = (string)($asset['job_desk_name'] ?? '');
+
+    // Preload current linked asset item if exists
+    $curAssetItem = null;
+    if ($selectedAssetItemId > 0) {
+        $caiStmt = $pdo->prepare('SELECT ai.*, c.company_name, p.pc_id, p.computer_name, prn.prn_id 
+                                  FROM asset_items ai 
+                                  LEFT JOIN asset_companies c ON c.id=ai.company_id 
+                                  LEFT JOIN pcs p ON (p.asset_item_id=ai.id OR (ai.source_pc_id IS NOT NULL AND ai.source_pc_id != "" AND p.pc_id COLLATE utf8mb4_unicode_ci = ai.source_pc_id COLLATE utf8mb4_unicode_ci)) 
+                                  LEFT JOIN printers prn ON prn.asset_item_id=ai.id 
+                                  WHERE ai.id=?');
+        $caiStmt->execute([$selectedAssetItemId]);
+        $curAssetItem = $caiStmt->fetch(PDO::FETCH_ASSOC);
+        if ($curAssetItem) {
+            if ($selectedGroupId <= 0 && !empty($curAssetItem['asset_group_id'])) {
+                $selectedGroupId = (int)$curAssetItem['asset_group_id'];
+            }
+            if ($selectedTypeId <= 0 && !empty($curAssetItem['asset_type_id'])) {
+                $selectedTypeId = (int)$curAssetItem['asset_type_id'];
+            }
+        }
+    }
+
     $typeOptions = '';
     foreach (['pc_set' => 'PC Set / Bundle Maintenance', 'printer' => 'Printer', 'vehicle' => 'Kendaraan', 'facility' => 'Fasilitas / Gedung', 'electronics' => 'Elektronik', 'office_equipment' => 'Peralatan Kantor', 'furniture' => 'Furniture', 'equipment' => 'General Equipment'] as $value => $label) {
         $typeOptions .= '<option value="' . e($value) . '"' . (((string)($asset['maintenance_type'] ?? '') === $value) ? ' selected' : '') . '>' . e($label) . '</option>';
@@ -217,10 +268,6 @@ function maintenance_asset_form_html(PDO $pdo, array $asset, bool $editing): str
     foreach (['active' => 'Active', 'spare' => 'Spare', 'inactive' => 'Inactive'] as $value => $label) {
         $statusOptions .= '<option value="' . e($value) . '"' . (($asset['status'] ?? '') === $value ? ' selected' : '') . '>' . e($label) . '</option>';
     }
-
-    $selectedGroupId = (int)($asset['asset_group_id'] ?? 0);
-    $selectedTypeId = (int)($asset['asset_type_id'] ?? 0);
-    $selectedJobDesk = (string)($asset['job_desk_name'] ?? '');
 
     $desks = [];
     if ($selectedGroupId > 0 || $selectedTypeId > 0) {
@@ -238,33 +285,105 @@ function maintenance_asset_form_html(PDO $pdo, array $asset, bool $editing): str
         $jobDeskOptions .= '<option value="' . e($dName) . '"' . $sel . '>' . e($dName) . '</option>';
     }
 
-    $html = '<section class="panel"><div class="split"><div><h1>' . ($editing ? 'Edit Maintenance Asset' : 'Tambah Maintenance Asset') . '</h1><p class="muted">Maintenance Asset ID adalah identitas unit untuk preventive dan corrective maintenance. Asset Item fisik dipasang di bagian anggota di bawah form.</p></div><div class="actions"><a class="btn" href="' . route_url('maintenance_assets') . '">Kembali</a></div></div></section>';
+    $initialAssetOptions = '<option value="">-- Pilih Komoditas & Kategori Dahulu --</option>';
+    if ($curAssetItem) {
+        $mLabel = ($curAssetItem['asset_mode'] === 'group') ? '[BUNDLE PARENT]' : '[SINGLE]';
+        $initialAssetOptions = '<option value="' . e($curAssetItem['id']) . '" selected>' . e($curAssetItem['asset_code'] . ' - ' . $curAssetItem['asset_name'] . ' ' . $mLabel) . '</option>';
+    }
+
+    $html = '<section class="panel"><div class="split"><div><h1>' . ($editing ? 'Edit Maintenance Asset' : 'Tambah Maintenance Asset') . '</h1><p class="muted">Pilih Komoditas dan Kategori untuk mendapatkan daftar Unit Aset fisik (Parent / Standalone) yang bisa dipelihara / diservis.</p></div><div class="actions"><a class="btn" href="' . route_url('maintenance_assets') . '">Kembali ke Daftar</a></div></div></section>';
     $html .= '<section class="panel"><form method="post"><input type="hidden" name="csrf" value="' . csrf_token() . '">'
+        . '<h2>1. Klasifikasi Aset</h2>'
+        . '<div class="grid two">'
+        . '<label>Komoditas (Grup Aset) *<select id="maintAssetGroup" name="asset_group_id" onchange="onMaintGroupChanged()" required>' . asset_group_options($pdo, $selectedGroupId, true, '- Pilih Komoditas (Grup Aset) -') . '</select></label>'
+        . '<label>Kategori (Tipe Aset) *<select id="maintAssetType" name="asset_type_id" onchange="onMaintTypeChanged()" required>' . asset_type_options($pdo, $selectedTypeId, $selectedGroupId) . '</select></label>'
+        . '</div>'
+        . '<h2>2. Pemilihan Unit Aset Fisik (Parent / Standalone)</h2>'
+        . '<div style="margin-bottom:18px;">'
+        . '<label>Pilih Unit Aset yang Dipelihara / Diservis *<select id="maintAssetItemId" name="asset_item_id" onchange="onMaintAssetItemChanged(true)" required style="font-size:14px;padding:8px 12px;width:100%;">' . $initialAssetOptions . '</select></label>'
+        . '<small id="maintAssetHint" style="display:block;color:#64748b;margin-top:4px;">Unit aset yang sudah masuk ke Maintenance Asset aktif atau berstatus Child Asset tidak akan muncul di pilihan.</small>'
+        . '<div id="maintBundleInfoContainer" style="display:none;margin-top:12px;padding:12px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">'
+        . '<div style="font-weight:700;color:#166534;font-size:13px;margin-bottom:6px;display:flex;align-items:center;gap:6px;"><span>📦 Komponen Bundle Fisik yang Terhubung:</span><span class="badge ok" style="font-size:10px;">Auto-Linked ke Item Pemeliharaan</span></div>'
+        . '<div id="maintBundleInfoTable"></div>'
+        . '</div>'
+        . '<div id="maintPcBadgeContainer" style="display:none;margin-top:8px;"></div>'
+        . '</div>'
+        . '<h2>3. Identitas Maintenance Asset & Job Desk</h2>'
         . '<div class="grid four">'
-        . '<label>Maintenance Asset ID<input name="maintenance_asset_code" value="' . e($asset['maintenance_asset_code']) . '" placeholder="Contoh: MNT-PC000001" required></label>'
-        . '<label>Security Code<input name="security_code" value="' . e($asset['security_code']) . '" required></label>'
-        . '<label>Asset Group<select id="maintAssetGroup" name="asset_group_id"><option value="">- Pilih Asset Group -</option>' . asset_group_options($pdo, $selectedGroupId, false) . '</select></label>'
-        . '<label>Asset Type<select id="maintAssetType" name="asset_type_id"><option value="">- Pilih Asset Type -</option>' . asset_type_options($pdo, $selectedTypeId, $selectedGroupId) . '</select></label>'
+        . '<label>Maintenance Asset ID *<input id="maintAssetCode" name="maintenance_asset_code" value="' . e($asset['maintenance_asset_code']) . '" placeholder="Contoh: MNT-PC000001" required></label>'
+        . '<label>Secret QR Code *<input name="security_code" value="' . e($asset['security_code']) . '" required></label>'
+        . '<label>Job Desk Preventive Maintenance<select id="maintJobDesk" name="job_desk_name">' . $jobDeskOptions . '</select></label>'
+        . '<label>Tipe Maintenance *<select id="maintType" name="maintenance_type">' . $typeOptions . '</select></label>'
         . '</div>'
         . '<div class="grid three">'
-        . '<label>Job Desk Preventive Maintenance<select id="maintJobDesk" name="job_desk_name">' . $jobDeskOptions . '</select></label>'
-        . '<label>Tipe Maintenance<select name="maintenance_type">' . $typeOptions . '</select></label>'
-        . '<label>Status<select name="status">' . $statusOptions . '</select></label>'
+        . '<label style="grid-column: span 2;">Nama Maintenance Asset *<input id="maintName" name="name" value="' . e($asset['name']) . '" required placeholder="Contoh: AST-CMP-000001 - PC Kantor"></label>'
+        . '<label>Status *<select name="status">' . $statusOptions . '</select></label>'
         . '</div>'
-        . '<div class="grid two">'
-        . '<label>Nama Maintenance Asset<input name="name" value="' . e($asset['name']) . '" required></label>'
-        . '<label>Company<select name="company_id">' . company_options($pdo, (int)($asset['company_id'] ?? 0)) . '</select></label>'
+        . '<h2>4. Lokasi, Perusahaan & Pengguna (Custodian)</h2>'
+        . '<div class="grid three">'
+        . '<label>Company *<select id="maintCompanyId" name="company_id">' . company_options($pdo, (int)($asset['company_id'] ?? 0)) . '</select></label>'
+        . '<label>Nama / Titik Lokasi<input id="maintLocationLabel" name="location_label" list="savedLocationGroups" value="' . e($asset['location_label'] ?? '') . '" placeholder="Gedung / Lantai / Ruangan"></label>'
+        . '<label>Radius Meter<input type="number" min="1" name="location_radius_m" value="' . e($asset['location_radius_m'] ?? 5) . '"></label>'
         . '</div>'
-        . '<div class="grid two">' . employee_picker_html($asset) . '<label>Nama / Titik Lokasi<input name="location_label" list="savedLocationGroups" value="' . e($asset['location_label'] ?? '') . '"></label></div>' . saved_location_datalist_html()
-        . '<div class="grid three"><label>Latitude<input name="latitude" value="' . e($asset['latitude'] ?? '') . '"></label><label>Longitude<input name="longitude" value="' . e($asset['longitude'] ?? '') . '"></label><label>Radius Meter<input type="number" min="1" name="location_radius_m" value="' . e($asset['location_radius_m'] ?? 5) . '"></label></div>'
-        . '<label>Catatan<textarea name="notes">' . e($asset['notes'] ?? '') . '</textarea></label>'
-        . '<div class="actions"><button class="btn primary">Simpan Maintenance Asset</button></div>'
+        . '<div class="grid two">' . employee_picker_html($asset) . '</div>' . saved_location_datalist_html()
+        . '<div class="grid two"><label>Latitude<input name="latitude" value="' . e($asset['latitude'] ?? '') . '"></label><label>Longitude<input name="longitude" value="' . e($asset['longitude'] ?? '') . '"></label></div>'
+        . '<label>Catatan Tambahan<textarea name="notes">' . e($asset['notes'] ?? '') . '</textarea></label>'
+        . '<div class="actions"><button class="btn primary">Simpan Maintenance Asset</button><a class="btn" href="' . route_url('maintenance_assets') . '">Batal</a></div>'
         . '</form></section>'
         . '<script>
 (function(){
+    var currentMaintId = ' . (int)$asset['id'] . ';
+    var selectedAssetItemId = ' . (int)$selectedAssetItemId . ';
     var groupSel = document.getElementById("maintAssetGroup");
     var typeSel = document.getElementById("maintAssetType");
+    var itemSel = document.getElementById("maintAssetItemId");
     var deskSel = document.getElementById("maintJobDesk");
+    var codeInp = document.getElementById("maintAssetCode");
+    var nameInp = document.getElementById("maintName");
+    var compSel = document.getElementById("maintCompanyId");
+    var typeMaintSel = document.getElementById("maintType");
+    var nikInp = document.getElementById("employeeNik");
+    var ownerInp = document.getElementById("ownerNameInput");
+    var locInp = document.getElementById("maintLocationLabel");
+    var bundleContainer = document.getElementById("maintBundleInfoContainer");
+    var bundleTable = document.getElementById("maintBundleInfoTable");
+    var pcBadgeContainer = document.getElementById("maintPcBadgeContainer");
+
+    var itemsCache = {};
+
+    window.onMaintGroupChanged = function(){
+        var gid = groupSel.value;
+        typeSel.innerHTML = "<option value=\"\">- Memuat Kategori... -</option>";
+        itemSel.innerHTML = "<option value=\"\">-- Pilih Kategori Terlebih Dahulu --</option>";
+        renderBundleInfo(null);
+        if(!gid){
+            typeSel.innerHTML = "<option value=\"\">- Pilih Kategori -</option>";
+            return;
+        }
+        fetch("index.php?route=api_asset_types&group_id=" + gid)
+            .then(function(r){ return r.json(); })
+            .then(function(types){
+                typeSel.innerHTML = "<option value=\"\">- Pilih Kategori (Tipe Aset) -</option>";
+                types.forEach(function(t){
+                    var opt = document.createElement("option");
+                    opt.value = t.id;
+                    opt.textContent = t.type_code + " - " + t.type_name;
+                    typeSel.appendChild(opt);
+                });
+                loadJobDesks(gid, typeSel.value, true);
+                loadEligibleItems(gid, typeSel.value, selectedAssetItemId);
+            })
+            .catch(function(){
+                typeSel.innerHTML = "<option value=\"\">- Pilih Kategori (Tipe Aset) -</option>";
+            });
+    };
+
+    window.onMaintTypeChanged = function(){
+        var gid = groupSel.value;
+        var tid = typeSel.value;
+        loadJobDesks(gid, tid, true);
+        loadEligibleItems(gid, tid, selectedAssetItemId);
+    };
 
     function loadJobDesks(groupId, typeId, autoSelect) {
         var url = "index.php?route=api_job_desks&group_id=" + (groupId || 0) + "&type_id=" + (typeId || 0);
@@ -291,31 +410,144 @@ function maintenance_asset_form_html(PDO $pdo, array $asset, bool $editing): str
             .catch(function(){});
     }
 
-    if (groupSel && typeSel && deskSel) {
-        groupSel.addEventListener("change", function(){
-            var gid = this.value;
-            typeSel.innerHTML = "<option value=\"\">- Memuat Tipe... -</option>";
-            fetch("index.php?route=api_asset_types&group_id=" + (gid || 0))
-                .then(function(r){ return r.json(); })
-                .then(function(types){
-                    typeSel.innerHTML = "<option value=\"\">- Pilih Asset Type -</option>";
-                    types.forEach(function(t){
-                        var opt = document.createElement("option");
-                        opt.value = t.id;
-                        opt.textContent = t.type_code + " - " + t.type_name;
-                        typeSel.appendChild(opt);
-                    });
-                    loadJobDesks(gid, typeSel.value, true);
-                })
-                .catch(function(){
-                    typeSel.innerHTML = "<option value=\"\">- Pilih Asset Type -</option>";
-                    loadJobDesks(gid, 0, false);
-                });
-        });
+    function loadEligibleItems(gid, tid, keepSelectedId){
+        var targetSelectId = keepSelectedId || (itemSel.value ? parseInt(itemSel.value, 10) : selectedAssetItemId);
+        itemSel.innerHTML = "<option value=\"\">⏳ Memuat unit aset yang tersedia...</option>";
+        var url = "index.php?route=api_eligible_maintenance_asset_items&group_id=" + (gid || 0) + "&type_id=" + (tid || 0) + "&maintenance_asset_id=" + currentMaintId + "&current_asset_item_id=" + selectedAssetItemId;
+        fetch(url)
+            .then(function(r){ return r.json(); })
+            .then(function(items){
+                itemsCache = {};
+                itemSel.innerHTML = "";
+                if(!items || items.length === 0){
+                    itemSel.innerHTML = "<option value=\"\">-- Tidak ada Unit Aset tersedia (semua sudah masuk maintenance atau berstatus Child) --</option>";
+                    renderBundleInfo(null);
+                    return;
+                }
+                var defaultOpt = document.createElement("option");
+                defaultOpt.value = "";
+                defaultOpt.textContent = "-- Pilih Unit Aset Fisik (" + items.length + " unit tersedia) --";
+                itemSel.appendChild(defaultOpt);
 
-        typeSel.addEventListener("change", function(){
-            loadJobDesks(groupSel.value, this.value, true);
-        });
+                var autoPickIdx = -1;
+                items.forEach(function(it, idx){
+                    itemsCache[it.id] = it;
+                    var opt = document.createElement("option");
+                    opt.value = it.id;
+                    var modeLabel = (it.asset_mode === "group") ? "[BUNDLE PARENT]" : "[SINGLE]";
+                    var custLabel = it.custodian_name ? (" • Custodian: " + it.custodian_name) : "";
+                    var pcLabel = it.pc_id ? (" • PC: " + it.pc_id) : "";
+                    opt.textContent = it.asset_code + " - " + it.asset_name + " " + modeLabel + custLabel + pcLabel;
+                    if(targetSelectId && parseInt(it.id, 10) === targetSelectId){
+                        opt.selected = true;
+                        autoPickIdx = idx;
+                    }
+                    itemSel.appendChild(opt);
+                });
+
+                if(autoPickIdx !== -1){
+                    onMaintAssetItemChanged(false);
+                } else {
+                    renderBundleInfo(null);
+                }
+            })
+            .catch(function(err){
+                itemSel.innerHTML = "<option value=\"\">Gagal memuat unit aset: " + err.message + "</option>";
+            });
+    }
+
+    window.onMaintAssetItemChanged = function(isUserTriggered){
+        if(isUserTriggered === undefined) isUserTriggered = true;
+        var itemId = itemSel.value;
+        var it = itemsCache[itemId];
+        if(!it){
+            renderBundleInfo(null);
+            return;
+        }
+
+        renderBundleInfo(it);
+
+        if(isUserTriggered || !codeInp.value || codeInp.value.indexOf("MNT-") === 0){
+            if(!currentMaintId || isUserTriggered){
+                codeInp.value = "MNT-" + it.asset_code;
+            }
+        }
+        if(isUserTriggered || !nameInp.value){
+            nameInp.value = it.asset_code + " - " + it.asset_name;
+        }
+        if(it.company_id && compSel){
+            compSel.value = it.company_id;
+        }
+        if(it.location_label && locInp && (isUserTriggered || !locInp.value)){
+            locInp.value = it.location_label;
+        }
+        if(it.custodian_nik && nikInp && (isUserTriggered || !nikInp.value)){
+            nikInp.value = it.custodian_nik;
+        }
+        if(it.custodian_name && ownerInp && (isUserTriggered || !ownerInp.value)){
+            ownerInp.value = it.custodian_name;
+        }
+
+        // Auto infer maintenance type
+        if(typeMaintSel && (isUserTriggered || !typeMaintSel.value || typeMaintSel.value === "equipment")){
+            var cat = ((it.asset_type || "") + " " + (it.asset_category || "")).toLowerCase();
+            if(cat.indexOf("computer") !== -1 || cat.indexOf("komputer") !== -1 || cat.indexOf("pc") !== -1 || cat.indexOf("laptop") !== -1 || cat.indexOf("server") !== -1){
+                typeMaintSel.value = "pc_set";
+            } else if(cat.indexOf("printer") !== -1){
+                typeMaintSel.value = "printer";
+            } else if(cat.indexOf("kendaraan") !== -1 || cat.indexOf("mobil") !== -1 || cat.indexOf("motor") !== -1 || cat.indexOf("vehicle") !== -1){
+                typeMaintSel.value = "vehicle";
+            } else if(cat.indexOf("elektronik") !== -1 || cat.indexOf("ac") !== -1){
+                typeMaintSel.value = "electronics";
+            } else if(cat.indexOf("kantor") !== -1 || cat.indexOf("office") !== -1){
+                typeMaintSel.value = "office_equipment";
+            } else if(cat.indexOf("furniture") !== -1){
+                typeMaintSel.value = "furniture";
+            }
+        }
+    };
+
+    function renderBundleInfo(it){
+        if(!bundleContainer) return;
+        if(!it || it.asset_mode !== "group" || !it.bundle_children || it.bundle_children.length === 0){
+            bundleContainer.style.display = "none";
+        } else {
+            bundleContainer.style.display = "block";
+            var h = "<table style=\"width:100%;font-size:12px;background:#fff;border-radius:6px;border-collapse:collapse;margin-top:6px;\">";
+            h += "<thead><tr style=\"background:#dcfce7;text-align:left;\"><th style=\"padding:6px 8px;\">Kode Aset Anggota</th><th style=\"padding:6px 8px;\">Nama Perangkat</th><th style=\"padding:6px 8px;\">Role Bundle</th><th style=\"padding:6px 8px;\">SN</th><th style=\"padding:6px 8px;\">Tipe</th></tr></thead><tbody>";
+            it.bundle_children.forEach(function(c){
+                h += "<tr style=\"border-bottom:1px solid #f0fdf4;\"><td style=\"padding:6px 8px;font-weight:700;\">" + escapeHtml(c.asset_code) + "</td><td style=\"padding:6px 8px;\">" + escapeHtml(c.asset_name) + "</td><td style=\"padding:6px 8px;color:#15803d;font-weight:600;\">" + escapeHtml(c.role_name || "-") + "</td><td style=\"padding:6px 8px;color:#64748b;\">" + escapeHtml(c.serial_number || "-") + "</td><td style=\"padding:6px 8px;\">" + escapeHtml(c.asset_type || "-") + "</td></tr>";
+            });
+            h += "</tbody></table>";
+            bundleTable.innerHTML = h;
+        }
+
+        if(pcBadgeContainer){
+            if(it && (it.pc_id || it.prn_id)){
+                var bHtml = "";
+                if(it.pc_id){
+                    bHtml += "<span class=\"badge\" style=\"background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;padding:5px 12px;font-weight:600;\">🖥️ Data PC Terhubung: " + escapeHtml(it.pc_id) + (it.computer_name ? " (" + escapeHtml(it.computer_name) + ")" : "") + "</span> ";
+                }
+                if(it.prn_id){
+                    bHtml += "<span class=\"badge\" style=\"background:#fef3c7;color:#92400e;border:1px solid #fde68a;padding:5px 12px;font-weight:600;\">🖨️ Data Printer Terhubung: " + escapeHtml(it.prn_id) + "</span>";
+                }
+                pcBadgeContainer.innerHTML = bHtml;
+                pcBadgeContainer.style.display = "block";
+            } else {
+                pcBadgeContainer.style.display = "none";
+                pcBadgeContainer.innerHTML = "";
+            }
+        }
+    }
+
+    function escapeHtml(s){
+        if(!s) return "";
+        return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    // Initial load if group and type are selected
+    if(groupSel && groupSel.value){
+        loadEligibleItems(groupSel.value, typeSel ? typeSel.value : 0, selectedAssetItemId);
     }
 })();
 </script>';
@@ -450,17 +682,84 @@ function handle_route_maintenance_asset_form(PDO $pdo): void
             flash('Maintenance Asset ID, Secret QR, dan nama wajib diisi.', 'err');
             redirect_to('maintenance_asset_form', $id > 0 ? ['id' => $id] : []);
         }
+        if (empty($data['asset_item_id'])) {
+            flash('Unit Aset fisik (Parent / Standalone) wajib dipilih.', 'err');
+            redirect_to('maintenance_asset_form', $id > 0 ? ['id' => $id] : []);
+        }
+
         try {
+            $chkStmt = $pdo->prepare('SELECT id, asset_code, asset_name, asset_mode FROM asset_items WHERE id=?');
+            $chkStmt->execute([(int)$data['asset_item_id']]);
+            $chkItem = $chkStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$chkItem) {
+                flash('Unit Aset fisik tidak ditemukan.', 'err');
+                redirect_to('maintenance_asset_form', $id > 0 ? ['id' => $id] : []);
+            }
+            if (($chkItem['asset_mode'] ?? '') === 'child') {
+                flash('Unit Aset dengan status Bundle (Child Asset) tidak boleh dijadikan Maintenance Asset.', 'err');
+                redirect_to('maintenance_asset_form', $id > 0 ? ['id' => $id] : []);
+            }
+            if (db_table_exists($pdo, 'asset_item_members')) {
+                $cMemStmt = $pdo->prepare('SELECT 1 FROM asset_item_members WHERE child_asset_item_id=? AND detached_at IS NULL LIMIT 1');
+                $cMemStmt->execute([(int)$data['asset_item_id']]);
+                if ($cMemStmt->fetchColumn()) {
+                    flash('Unit Aset ini aktif sebagai anggota bundle lain dan tidak dapat dijadikan Maintenance Asset.', 'err');
+                    redirect_to('maintenance_asset_form', $id > 0 ? ['id' => $id] : []);
+                }
+            }
+            $dupStmt = $pdo->prepare('SELECT id, maintenance_asset_code FROM maintenance_assets WHERE asset_item_id=? AND id<>? AND status<>"inactive" LIMIT 1');
+            $dupStmt->execute([(int)$data['asset_item_id'], $id]);
+            $dup = $dupStmt->fetch(PDO::FETCH_ASSOC);
+            if ($dup) {
+                flash('Unit Aset ini sudah digunakan di Maintenance Asset ' . $dup['maintenance_asset_code'] . '.', 'err');
+                redirect_to('maintenance_asset_form', $id > 0 ? ['id' => $id] : []);
+            }
+
             if ($id > 0) {
                 $values = array_values($data);
                 $values[] = $id;
-                $pdo->prepare('UPDATE maintenance_assets SET maintenance_asset_code=?, security_code=?, maintenance_type=?, asset_group_id=?, asset_type_id=?, job_desk_name=?, name=?, company_id=?, employee_nik=?, owner_name=?, location_label=?, latitude=?, longitude=?, location_radius_m=?, status=?, notes=? WHERE id=?')->execute($values);
+                $pdo->prepare('UPDATE maintenance_assets SET maintenance_asset_code=?, security_code=?, maintenance_type=?, asset_group_id=?, asset_type_id=?, asset_item_id=?, job_desk_name=?, name=?, company_id=?, employee_nik=?, owner_name=?, location_label=?, latitude=?, longitude=?, location_radius_m=?, status=?, notes=? WHERE id=?')->execute($values);
                 flash('Maintenance asset berhasil diperbarui.');
             } else {
-                $pdo->prepare('INSERT INTO maintenance_assets (maintenance_asset_code, security_code, maintenance_type, asset_group_id, asset_type_id, job_desk_name, name, company_id, employee_nik, owner_name, location_label, latitude, longitude, location_radius_m, status, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute(array_values($data));
+                $pdo->prepare('INSERT INTO maintenance_assets (maintenance_asset_code, security_code, maintenance_type, asset_group_id, asset_type_id, asset_item_id, job_desk_name, name, company_id, employee_nik, owner_name, location_label, latitude, longitude, location_radius_m, status, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')->execute(array_values($data));
                 $id = (int)$pdo->lastInsertId();
                 flash('Maintenance asset berhasil ditambahkan.');
             }
+
+            // Otomatis tautkan unit aset fisik utama ke maintenance_asset_items
+            link_maintenance_asset_item($pdo, $id, (int)$data['asset_item_id'], 'Unit Utama');
+
+            // Jika unit aset adalah bundle parent, tautkan semua komponen bundle anak
+            if (db_table_exists($pdo, 'asset_item_members')) {
+                $aimStmt = $pdo->prepare('SELECT child_asset_item_id, role_name FROM asset_item_members WHERE parent_asset_item_id=? AND detached_at IS NULL');
+                $aimStmt->execute([(int)$data['asset_item_id']]);
+                foreach ($aimStmt->fetchAll(PDO::FETCH_ASSOC) as $cm) {
+                    link_maintenance_asset_item($pdo, $id, (int)$cm['child_asset_item_id'], $cm['role_name'] ?: 'Anggota Bundle');
+                }
+            }
+
+            // Sinkronisasi data PC jika unit aset terkait PC
+            if (db_table_exists($pdo, 'pcs')) {
+                $pcStmt = $pdo->prepare('SELECT pc_id FROM pcs WHERE asset_item_id=? OR pc_id=(SELECT source_pc_id FROM asset_items WHERE id=? LIMIT 1) LIMIT 1');
+                $pcStmt->execute([(int)$data['asset_item_id'], (int)$data['asset_item_id']]);
+                $fPc = (string)($pcStmt->fetchColumn() ?: '');
+                if ($fPc !== '') {
+                    $pdo->prepare('UPDATE maintenance_assets SET pc_id=? WHERE id=?')->execute([$fPc, $id]);
+                    $pdo->prepare('UPDATE pcs SET maintenance_asset_id=? WHERE pc_id=?')->execute([$id, $fPc]);
+                }
+            }
+
+            // Sinkronisasi data Printer jika unit aset terkait Printer
+            if (db_table_exists($pdo, 'printers')) {
+                $prnStmt = $pdo->prepare('SELECT prn_id FROM printers WHERE asset_item_id=? LIMIT 1');
+                $prnStmt->execute([(int)$data['asset_item_id']]);
+                $fPrn = (string)($prnStmt->fetchColumn() ?: '');
+                if ($fPrn !== '') {
+                    $pdo->prepare('UPDATE maintenance_assets SET printer_id=? WHERE id=?')->execute([$fPrn, $id]);
+                    $pdo->prepare('UPDATE printers SET maintenance_asset_id=? WHERE prn_id=?')->execute([$id, $fPrn]);
+                }
+            }
+
             redirect_to('maintenance_asset_form', ['id' => $id]);
         } catch (Throwable $e) {
             flash('Gagal simpan maintenance asset: ' . $e->getMessage(), 'err');

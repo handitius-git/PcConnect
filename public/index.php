@@ -420,6 +420,9 @@ switch ($route) {
     case 'api_ai_resolve_model':
         handle_route_api_ai_resolve_model($pdo);
         break;
+    case 'api_eligible_maintenance_asset_items':
+        handle_route_api_eligible_maintenance_asset_items($pdo);
+        break;
 
     default:
         http_response_code(404);

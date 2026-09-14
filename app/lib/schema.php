@@ -880,6 +880,28 @@ function ensure_maintenance_asset_schema(PDO $pdo): void
         if (!db_column_exists($pdo, 'maintenance_assets', 'job_desk_name')) {
             $pdo->exec('ALTER TABLE maintenance_assets ADD COLUMN job_desk_name VARCHAR(160) NULL AFTER asset_type_id');
         }
+        if (!db_column_exists($pdo, 'maintenance_assets', 'asset_item_id')) {
+            $pdo->exec('ALTER TABLE maintenance_assets ADD COLUMN asset_item_id BIGINT NULL AFTER asset_type_id');
+            try {
+                $pdo->exec('ALTER TABLE maintenance_assets ADD INDEX idx_maint_asset_item (asset_item_id)');
+            } catch (Throwable $ignored) {}
+        }
+        if (db_table_exists($pdo, 'asset_items') && !db_column_exists($pdo, 'asset_items', 'source_pc_id')) {
+            $pdo->exec('ALTER TABLE asset_items ADD COLUMN source_pc_id VARCHAR(80) NULL AFTER model');
+            try {
+                $pdo->exec('ALTER TABLE asset_items ADD INDEX idx_ai_source_pc (source_pc_id)');
+            } catch (Throwable $ignored) {}
+        }
+        try {
+            if (db_table_exists($pdo, 'pcs')) {
+                $pdo->exec("UPDATE maintenance_assets ma JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci SET ma.asset_item_id = p.asset_item_id WHERE ma.asset_item_id IS NULL AND p.asset_item_id IS NOT NULL AND p.asset_item_id > 0");
+                $pdo->exec("UPDATE asset_items ai JOIN pcs p ON p.asset_item_id = ai.id SET ai.source_pc_id = p.pc_id WHERE (ai.source_pc_id IS NULL OR ai.source_pc_id = '') AND p.pc_id IS NOT NULL AND p.pc_id != ''");
+            }
+            if (db_table_exists($pdo, 'printers')) {
+                $pdo->exec("UPDATE maintenance_assets ma JOIN printers pr ON pr.prn_id COLLATE utf8mb4_unicode_ci = ma.printer_id COLLATE utf8mb4_unicode_ci SET ma.asset_item_id = pr.asset_item_id WHERE ma.asset_item_id IS NULL AND pr.asset_item_id IS NOT NULL AND pr.asset_item_id > 0");
+            }
+            $pdo->exec("UPDATE maintenance_assets ma JOIN maintenance_asset_items mai ON mai.maintenance_asset_id = ma.id AND mai.detached_at IS NULL SET ma.asset_item_id = mai.asset_item_id WHERE ma.asset_item_id IS NULL");
+        } catch (Throwable $ignored) {}
         try {
             $itGroupId = (int)$pdo->query("SELECT id FROM asset_groups WHERE group_code='IT' LIMIT 1")->fetchColumn();
             if ($itGroupId > 0) {

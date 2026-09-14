@@ -223,7 +223,12 @@ function asset_items_table(PDO $pdo, array $rows): string
             $specHtml = '<div style="font-size:11px;color:#475569;margin-top:4px;line-height:1.3;">' . implode(' • ', array_map('e', array_slice($specs, 0, 3))) . (count($specs) > 3 ? '<br><span class="muted">+ ' . (count($specs) - 3) . ' spesifikasi lainnya</span>' : '') . '</div>';
         }
 
-        $html .= '<tr><td><strong>' . e($row['asset_code']) . '</strong><br><span class="muted">SN: ' . e($row['serial_number'] ?: '-') . '</span>' . $idfHtml . '</td><td>' . nl2br(e($maintenanceText)) . '</td><td>' . e($row['company_name'] ?: '-') . $locationText . '</td><td>' . $custodianText . '</td><td>' . e($row['asset_category'] ?? '-') . '</td><td>' . $mode . '</td><td>' . e($row['asset_type']) . '</td><td>' . e($row['asset_name']) . '<br><span class="muted">' . e(trim(($row['brand'] ?? '') . ' ' . ($row['model'] ?? ''))) . '</span>' . $specHtml . '</td><td>Awal: Rp ' . e(number_format((float)$row['purchase_value'], 0, ',', '.')) . '<br>Current: Rp ' . e(number_format((float)$row['current_value'], 0, ',', '.')) . '</td><td><span class="badge">' . e($row['status']) . '</span></td><td><a class="btn" href="' . route_url('asset_item_form', ['id' => $row['id']]) . '">Buka</a> <a class="btn" href="' . route_url('asset_repair_form', ['asset_item_id' => $row['id']]) . '">Repair</a></td></tr>';
+        $sourcePcBadge = '';
+        if (!empty($row['source_pc_id'])) {
+            $sourcePcBadge = '<div style="margin-top:4px;"><span class="badge" style="background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;font-size:11px;font-weight:600;" title="Diimport dari Data PC">📥 Import PC: ' . e($row['source_pc_id']) . '</span></div>';
+        }
+
+        $html .= '<tr><td><strong>' . e($row['asset_code']) . '</strong><br><span class="muted">SN: ' . e($row['serial_number'] ?: '-') . '</span>' . $sourcePcBadge . $idfHtml . '</td><td>' . nl2br(e($maintenanceText)) . '</td><td>' . e($row['company_name'] ?: '-') . $locationText . '</td><td>' . $custodianText . '</td><td>' . e($row['asset_category'] ?? '-') . '</td><td>' . $mode . '</td><td>' . e($row['asset_type']) . '</td><td>' . e($row['asset_name']) . '<br><span class="muted">' . e(trim(($row['brand'] ?? '') . ' ' . ($row['model'] ?? ''))) . '</span>' . $specHtml . '</td><td>Awal: Rp ' . e(number_format((float)$row['purchase_value'], 0, ',', '.')) . '<br>Current: Rp ' . e(number_format((float)$row['current_value'], 0, ',', '.')) . '</td><td><span class="badge">' . e($row['status']) . '</span></td><td><a class="btn" href="' . route_url('asset_item_form', ['id' => $row['id']]) . '">Buka</a> <a class="btn" href="' . route_url('asset_repair_form', ['asset_item_id' => $row['id']]) . '">Repair</a></td></tr>';
     }
     return $html . '</table>';
 }
@@ -252,6 +257,7 @@ function asset_master_item_defaults(): array
         'warranty_until' => '',
         'installed_at' => '',
         'location_label' => '',
+        'source_pc_id' => '',
     ];
 }
 
@@ -351,12 +357,18 @@ function asset_master_item_form_html(PDO $pdo, array $i, bool $editing): string
 
     $searchPlaceholder = 'Ketik nama atau model barang untuk mencari...';
 
+    $sourcePcId = trim((string)($i['source_pc_id'] ?? ''));
     $linkedPcInfo = null;
     if ($editing && !empty($i['id']) && db_table_exists($pdo, 'pcs')) {
-        $lpStmt = $pdo->prepare("SELECT pc_id, computer_name, owner_name FROM pcs WHERE asset_item_id = ? LIMIT 1");
-        $lpStmt->execute([(int)$i['id']]);
+        $lpStmt = $pdo->prepare("SELECT pc_id, computer_name, owner_name FROM pcs WHERE asset_item_id = ? OR pc_id = ? LIMIT 1");
+        $lpStmt->execute([(int)$i['id'], $sourcePcId]);
+        $linkedPcInfo = $lpStmt->fetch(PDO::FETCH_ASSOC);
+    } elseif ($sourcePcId !== '' && db_table_exists($pdo, 'pcs')) {
+        $lpStmt = $pdo->prepare("SELECT pc_id, computer_name, owner_name FROM pcs WHERE pc_id = ? LIMIT 1");
+        $lpStmt->execute([$sourcePcId]);
         $linkedPcInfo = $lpStmt->fetch(PDO::FETCH_ASSOC);
     }
+    $effectivePcId = $sourcePcId !== '' ? $sourcePcId : ($linkedPcInfo['pc_id'] ?? '');
 
     $specLogs = [];
     if ($editing && !empty($i['id']) && db_table_exists($pdo, 'asset_specification_logs')) {
@@ -366,10 +378,11 @@ function asset_master_item_form_html(PDO $pdo, array $i, bool $editing): string
     }
 
     $headerBadge = '';
-    if ($linkedPcInfo) {
-        $headerBadge = '<div style="margin-top:6px;"><span class="badge" style="background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;padding:4px 10px;border-radius:6px;font-size:13px;font-weight:600;">🖥️ Terhubung PC ID: <span id="linkedPcBadgeText">' . e($linkedPcInfo['pc_id']) . ' (' . e($linkedPcInfo['computer_name']) . ')</span></span></div>';
+    if ($effectivePcId !== '') {
+        $pcCompName = !empty($linkedPcInfo['computer_name']) ? (' (' . e($linkedPcInfo['computer_name']) . ')') : '';
+        $headerBadge = '<div style="margin-top:6px;"><span class="badge" style="background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;padding:5px 12px;border-radius:6px;font-size:13px;font-weight:600;">📥 Diimport dari Data PC • PC ID: <strong id="linkedPcBadgeText">' . e($effectivePcId) . $pcCompName . '</strong></span></div>';
     } else {
-        $headerBadge = '<div id="linkedPcBadgeContainer" style="display:none;margin-top:6px;"><span class="badge" style="background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;padding:4px 10px;border-radius:6px;font-size:13px;font-weight:600;">🖥️ Terhubung PC ID: <span id="linkedPcBadgeText"></span></span></div>';
+        $headerBadge = '<div id="linkedPcBadgeContainer" style="display:none;margin-top:6px;"><span class="badge" style="background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;padding:5px 12px;border-radius:6px;font-size:13px;font-weight:600;">📥 Diimport dari Data PC • PC ID: <strong id="linkedPcBadgeText"></strong></span></div>';
     }
 
     $logHtml = '';
@@ -475,7 +488,7 @@ function asset_master_item_form_html(PDO $pdo, array $i, bool $editing): string
         ? '<a class="btn" href="' . route_url('asset_item_form', ['id' => $parentId]) . '">Batal / Kembali ke Bundle</a><button class="btn primary">Simpan & Masukkan ke Bundle</button>'
         : '<a class="btn" href="' . route_url('asset_items') . '">Batal</a><button class="btn primary">Simpan Unit Aset</button>';
 
-    return '<section class="panel">' . $bundleBanner . '<div class="split" style="align-items:center;margin-bottom:16px;"><div><h1 style="margin:0;">' . ($editing ? 'Edit' : 'Tambah') . ' Unit Aset' . ($parentAsset && !$editing ? ' (Anggota Bundle)' : '') . '</h1>' . $headerBadge . '</div><div><button type="button" class="btn warning" id="btnImportPc" onclick="openImportPcModal()" style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;font-weight:600;" title="Pilih Master Barang terlebih dahulu sebelum Import PC"><span style="font-size:16px;">📥</span> Import dari Data PC</button></div></div><form method="post"><input type="hidden" name="csrf" value="' . csrf_token() . '">' . ($parentId > 0 ? '<input type="hidden" name="parent_asset_item_id" value="' . e($parentId) . '"><input type="hidden" name="bundle_role" value="Unit Anggota">' : '') . '<input type="hidden" name="linked_pc_id" id="linkedPcId" value="' . e($linkedPcInfo['pc_id'] ?? '') . '"><div id="upgradeHiddenInputs"></div><h2>1. Klasifikasi Aset & Master Barang</h2><div class="grid three"><label>Komoditas (Grup Aset) *<select id="assetGroup" name="asset_group_id" onchange="onGroupSelectChanged()" required>' . asset_group_options($pdo, (int)$i['asset_group_id'], true, '- Pilih Komoditas (Grup Aset) -') . '</select></label><label>Kategori (Tipe Aset) *<select id="assetType" name="asset_type_id" onchange="reloadAssetForm()" required>' . $types . '</select></label><label>ID Aset (Kode Unit)<input id="assetCode" name="asset_code" value="' . e($code) . '" readonly></label></div><div class="grid two"><div style="position:relative;"><label for="masterItemSearch" style="display:flex;justify-content:space-between;align-items:center;"><span>Pilih / Cari Master Barang <span style="color:#ef4444;" title="Wajib dipilih">*</span></span><a href="' . route_url('asset_master_items') . '" target="_blank" style="font-size:12px;color:#0284c7;text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:3px;" title="Buka form Master Barang di tab baru">➕ Tambah Master Barang Baru ↗</a></label><div style="display:flex;gap:6px;align-items:stretch;"><div style="position:relative;flex:1;"><input type="text" id="masterItemSearch" placeholder="' . e($searchPlaceholder) . '" autocomplete="off" value="' . e($masterItemText) . '" style="width:100%;box-sizing:border-box;padding-right:58px;background:#fff;cursor:text;" onfocus="onMasterItemInput(this.value)" onclick="onMasterItemInput(this.value)" oninput="onMasterItemInput(this.value)" onkeydown="onMasterItemKeyDown(event)"><button type="button" id="masterItemClearBtn" style="display:' . (!empty($i['master_item_id']) ? 'block' : 'none') . ';position:absolute;right:28px;top:50%;transform:translateY(-50%);background:none;border:none;color:#94a3b8;cursor:pointer;font-size:16px;padding:4px 8px;z-index:2;" onclick="clearMasterItem()" title="Hapus pilihan">✕</button><span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);pointer-events:none;color:#94a3b8;font-size:12px;">▾</span><input type="hidden" id="masterItemIdInput" name="master_item_id" value="' . (int)($i['master_item_id'] ?? 0) . '"><div id="masterItemResults" style="display:none;position:absolute;left:0;right:0;top:calc(100% + 2px);max-height:280px;overflow-y:auto;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 12px 30px rgba(0,0,0,0.18);z-index:99999;"></div></div><a href="' . route_url('asset_master_items') . '" target="_blank" class="btn" style="padding:0 14px;background:#0284c7;color:#fff;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:bold;text-decoration:none;white-space:nowrap;" title="Tambah Master Barang Baru (Buka di Tab Baru)">➕</a></div><small id="masterItemHint" style="display:block;color:#64748b;margin-top:4px">' . (!empty($i['master_item_id']) ? '<span style="color:#166534;font-weight:600;">✓ Master Barang Terpilih (Siap Import dari PC)</span>' : 'Pilih Master Barang terlebih dahulu sebelum Import dari Data PC. Ketik nama untuk mencari.') . '</small></div><label>Mode Aset<select name="asset_mode" id="assetModeSelect">' . $modeOptions . '</select><small id="assetModeHint" style="display:block;color:#64748b;margin-top:4px">' . e($modeHint) . '</small></label></div><h2>2. Identifikasi & Serial Number Unit</h2><div id="identifierFields" class="grid three">' . $fields . '</div><h2>3. Spesifikasi Teknis Unit</h2><div id="specificationFields" class="grid three">' . $specFields . '</div>' . $logHtml . '<h2>4. Detail Barang & Merek</h2><div class="grid three"><label>Brand / Merk<select id="assetBrandId" name="brand_id">' . $brandOptions . '</select></label><label>Nama Brand (Teks)<input id="assetBrandInput" name="brand" value="' . e($i['brand']) . '" placeholder="Auto terisi dari master merk"></label><label>Model / Varian<input id="assetModelInput" name="model" value="' . e($i['model']) . '" placeholder="Contoh: ThinkPad T480 / OptiPlex 3080"></label></div><div class="grid two"><label>Nama Unit Aset (Deskriptif)<input id="assetNameInput" name="asset_name" value="' . e($i['asset_name']) . '" placeholder="Contoh: Laptop ThinkPad T480 IT"></label><label>Keterangan Tambahan<textarea name="notes" style="min-height:42px">' . e($i['notes']) . '</textarea></label></div><h2>5. Lokasi & Tanggung Jawab (Custodian)</h2><div class="grid three"><label>Lokasi Unit Aset *<select name="location_id" id="assetLocationId" required>' . $locationOptions . '</select></label><label>Detail Ruangan / Gedung<input name="location_label" id="assetLocationLabel" value="' . e($i['location_label']) . '" placeholder="Gedung / Lantai / Ruangan"></label><label>Company<select name="company_id">' . company_options($pdo, (int)$i['company_id']) . '</select></label></div><div class="grid two"><label>NIK Pengguna / Custodian<input id="assetCustodianNik" name="custodian_nik" value="' . e($i['custodian_nik'] ?? '') . '" placeholder="NIK karyawan"></label><label>Nama Pengguna / Custodian<input id="assetCustodianName" name="custodian_name" value="' . e($i['custodian_name'] ?? '') . '" placeholder="Nama pemakai / PIC aset"></label></div>' . (function_exists('employee_portal_name_picker_html') ? employee_portal_name_picker_html('assetCustodian', 'assetCustodianName', 'assetCustodianNik') : '') . '<h2>6. Pembelian / Garansi / Status</h2><div class="grid four"><label>Tanggal Perolehan / Beli<input type="date" name="installed_at" value="' . e($i['installed_at']) . '"></label><label>Harga Perolehan (Rp)<input type="number" name="purchase_value" value="' . e($i['purchase_value']) . '"></label><label>Garansi Berakhir<input type="date" name="warranty_until" value="' . e($i['warranty_until']) . '"></label><label>Status Unit *<select name="asset_status_id" required>' . asset_status_options($pdo, (int)$i['asset_status_id']) . '</select></label></div><div class="actions">' . $cancelBtn . '</div></form>' . $pcModalHtml . '</section><script>
+    return '<section class="panel">' . $bundleBanner . '<div class="split" style="align-items:center;margin-bottom:16px;"><div><h1 style="margin:0;">' . ($editing ? 'Edit' : 'Tambah') . ' Unit Aset' . ($parentAsset && !$editing ? ' (Anggota Bundle)' : '') . '</h1>' . $headerBadge . '</div><div><button type="button" class="btn warning" id="btnImportPc" onclick="openImportPcModal()" style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;font-weight:600;" title="Pilih Master Barang terlebih dahulu sebelum Import PC"><span style="font-size:16px;">📥</span> Import dari Data PC</button></div></div><form method="post"><input type="hidden" name="csrf" value="' . csrf_token() . '">' . ($parentId > 0 ? '<input type="hidden" name="parent_asset_item_id" value="' . e($parentId) . '"><input type="hidden" name="bundle_role" value="Unit Anggota">' : '') . '<input type="hidden" name="source_pc_id" id="sourcePcId" value="' . e($effectivePcId) . '"><input type="hidden" name="linked_pc_id" id="linkedPcId" value="' . e($effectivePcId) . '"><div id="upgradeHiddenInputs"></div><h2>1. Klasifikasi Aset & Master Barang</h2><div class="grid three"><label>Komoditas (Grup Aset) *<select id="assetGroup" name="asset_group_id" onchange="onGroupSelectChanged()" required>' . asset_group_options($pdo, (int)$i['asset_group_id'], true, '- Pilih Komoditas (Grup Aset) -') . '</select></label><label>Kategori (Tipe Aset) *<select id="assetType" name="asset_type_id" onchange="reloadAssetForm()" required>' . $types . '</select></label><label>ID Aset (Kode Unit)<input id="assetCode" name="asset_code" value="' . e($code) . '" readonly></label></div><div class="grid two"><div style="position:relative;"><label for="masterItemSearch" style="display:flex;justify-content:space-between;align-items:center;"><span>Pilih / Cari Master Barang <span style="color:#ef4444;" title="Wajib dipilih">*</span></span><a href="' . route_url('asset_master_items') . '" target="_blank" style="font-size:12px;color:#0284c7;text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:3px;" title="Buka form Master Barang di tab baru">➕ Tambah Master Barang Baru ↗</a></label><div style="display:flex;gap:6px;align-items:stretch;"><div style="position:relative;flex:1;"><input type="text" id="masterItemSearch" placeholder="' . e($searchPlaceholder) . '" autocomplete="off" value="' . e($masterItemText) . '" style="width:100%;box-sizing:border-box;padding-right:58px;background:#fff;cursor:text;" onfocus="onMasterItemInput(this.value)" onclick="onMasterItemInput(this.value)" oninput="onMasterItemInput(this.value)" onkeydown="onMasterItemKeyDown(event)"><button type="button" id="masterItemClearBtn" style="display:' . (!empty($i['master_item_id']) ? 'block' : 'none') . ';position:absolute;right:28px;top:50%;transform:translateY(-50%);background:none;border:none;color:#94a3b8;cursor:pointer;font-size:16px;padding:4px 8px;z-index:2;" onclick="clearMasterItem()" title="Hapus pilihan">✕</button><span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);pointer-events:none;color:#94a3b8;font-size:12px;">▾</span><input type="hidden" id="masterItemIdInput" name="master_item_id" value="' . (int)($i['master_item_id'] ?? 0) . '"><div id="masterItemResults" style="display:none;position:absolute;left:0;right:0;top:calc(100% + 2px);max-height:280px;overflow-y:auto;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 12px 30px rgba(0,0,0,0.18);z-index:99999;"></div></div><a href="' . route_url('asset_master_items') . '" target="_blank" class="btn" style="padding:0 14px;background:#0284c7;color:#fff;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:bold;text-decoration:none;white-space:nowrap;" title="Tambah Master Barang Baru (Buka di Tab Baru)">➕</a></div><small id="masterItemHint" style="display:block;color:#64748b;margin-top:4px">' . (!empty($i['master_item_id']) ? '<span style="color:#166534;font-weight:600;">✓ Master Barang Terpilih (Siap Import dari PC)</span>' : 'Pilih Master Barang terlebih dahulu sebelum Import dari Data PC. Ketik nama untuk mencari.') . '</small></div><label>Mode Aset<select name="asset_mode" id="assetModeSelect">' . $modeOptions . '</select><small id="assetModeHint" style="display:block;color:#64748b;margin-top:4px">' . e($modeHint) . '</small></label></div><h2>2. Identifikasi & Serial Number Unit</h2><div id="identifierFields" class="grid three">' . $fields . '</div><h2>3. Spesifikasi Teknis Unit</h2><div id="specificationFields" class="grid three">' . $specFields . '</div>' . $logHtml . '<h2>4. Detail Barang & Merek</h2><div class="grid three"><label>Brand / Merk<select id="assetBrandId" name="brand_id">' . $brandOptions . '</select></label><label>Nama Brand (Teks)<input id="assetBrandInput" name="brand" value="' . e($i['brand']) . '" placeholder="Auto terisi dari master merk"></label><label>Model / Varian<input id="assetModelInput" name="model" value="' . e($i['model']) . '" placeholder="Contoh: ThinkPad T480 / OptiPlex 3080"></label></div><div class="grid two"><label>Nama Unit Aset (Deskriptif)<input id="assetNameInput" name="asset_name" value="' . e($i['asset_name']) . '" placeholder="Contoh: Laptop ThinkPad T480 IT"></label><label>Keterangan Tambahan<textarea name="notes" style="min-height:42px">' . e($i['notes']) . '</textarea></label></div><h2>5. Lokasi & Tanggung Jawab (Custodian)</h2><div class="grid three"><label>Lokasi Unit Aset *<select name="location_id" id="assetLocationId" required>' . $locationOptions . '</select></label><label>Detail Ruangan / Gedung<input name="location_label" id="assetLocationLabel" value="' . e($i['location_label']) . '" placeholder="Gedung / Lantai / Ruangan"></label><label>Company<select name="company_id">' . company_options($pdo, (int)$i['company_id']) . '</select></label></div><div class="grid two"><label>NIK Pengguna / Custodian<input id="assetCustodianNik" name="custodian_nik" value="' . e($i['custodian_nik'] ?? '') . '" placeholder="NIK karyawan"></label><label>Nama Pengguna / Custodian<input id="assetCustodianName" name="custodian_name" value="' . e($i['custodian_name'] ?? '') . '" placeholder="Nama pemakai / PIC aset"></label></div>' . (function_exists('employee_portal_name_picker_html') ? employee_portal_name_picker_html('assetCustodian', 'assetCustodianName', 'assetCustodianNik') : '') . '<h2>6. Pembelian / Garansi / Status</h2><div class="grid four"><label>Tanggal Perolehan / Beli<input type="date" name="installed_at" value="' . e($i['installed_at']) . '"></label><label>Harga Perolehan (Rp)<input type="number" name="purchase_value" value="' . e($i['purchase_value']) . '"></label><label>Garansi Berakhir<input type="date" name="warranty_until" value="' . e($i['warranty_until']) . '"></label><label>Status Unit *<select name="asset_status_id" required>' . asset_status_options($pdo, (int)$i['asset_status_id']) . '</select></label></div><div class="actions">' . $cancelBtn . '</div></form>' . $pcModalHtml . '</section><script>
 (function(){
     var sel = document.getElementById("assetModeSelect");
     var hint = document.getElementById("assetModeHint");
@@ -954,15 +967,17 @@ window.selectPcForImport = async function(pcId){
             }
         }
 
-        // Set linked PC ID
+        // Set linked & source PC ID
         var hLinked = document.getElementById("linkedPcId");
         if(hLinked) hLinked.value = res.pc_id;
+        var hSource = document.getElementById("sourcePcId");
+        if(hSource) hSource.value = res.pc_id;
 
         // Update badge
         var badgeText = document.getElementById("linkedPcBadgeText");
         var badgeContainer = document.getElementById("linkedPcBadgeContainer");
         if(badgeText){
-            badgeText.textContent = res.pc_id + " (" + (res.computer_name || "-") + ")";
+            badgeText.textContent = res.pc_id + (res.computer_name ? " (" + res.computer_name + ")" : "");
             if(badgeContainer) badgeContainer.style.display = "block";
         }
 
@@ -1349,6 +1364,7 @@ function save_asset_master_item(PDO $pdo, int $id, array $post): int
 
     $custodianName = trim((string)($post['custodian_name'] ?? ''));
     $custodianNik = trim((string)($post['custodian_nik'] ?? ''));
+    $sourcePcId = trim((string)($post['source_pc_id'] ?? ($post['linked_pc_id'] ?? ''))) ?: null;
     $p = [
         $masterItemId,
         $brandId,
@@ -1369,6 +1385,7 @@ function save_asset_master_item(PDO $pdo, int $id, array $post): int
         trim((string)($post['installed_at'] ?? '')) ?: null,
         (float)($post['purchase_value'] ?? 0),
         trim((string)($post['warranty_until'] ?? '')) ?: null,
+        $sourcePcId,
     ];
     $oldSpecs = [];
     if ($id > 0 && db_table_exists($pdo, 'asset_specifications')) {
@@ -1380,9 +1397,9 @@ function save_asset_master_item(PDO $pdo, int $id, array $post): int
     }
 
     if ($id) {
-        $pdo->prepare('UPDATE asset_items SET master_item_id=?,brand_id=?,asset_code=?,asset_group_id=?,asset_type_id=?,asset_status_id=?,asset_mode=?,asset_name=?,brand=?,model=?,custodian_name=?,custodian_nik=?,notes=?,company_id=?,location_id=?,location_label=?,installed_at=?,purchase_value=?,warranty_until=?,asset_type=? WHERE id=?')->execute([...$p, $c['type']['type_name'], $id]);
+        $pdo->prepare('UPDATE asset_items SET master_item_id=?,brand_id=?,asset_code=?,asset_group_id=?,asset_type_id=?,asset_status_id=?,asset_mode=?,asset_name=?,brand=?,model=?,custodian_name=?,custodian_nik=?,notes=?,company_id=?,location_id=?,location_label=?,installed_at=?,purchase_value=?,warranty_until=?,source_pc_id=?,asset_type=? WHERE id=?')->execute([...$p, $c['type']['type_name'], $id]);
     } else {
-        $pdo->prepare("INSERT INTO asset_items(master_item_id,brand_id,asset_code,asset_group_id,asset_type_id,asset_status_id,asset_mode,asset_name,brand,model,custodian_name,custodian_nik,notes,company_id,location_id,location_label,installed_at,purchase_value,warranty_until,asset_type,asset_category,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Legacy','active')")->execute([...$p, $c['type']['type_name']]);
+        $pdo->prepare("INSERT INTO asset_items(master_item_id,brand_id,asset_code,asset_group_id,asset_type_id,asset_status_id,asset_mode,asset_name,brand,model,custodian_name,custodian_nik,notes,company_id,location_id,location_label,installed_at,purchase_value,warranty_until,source_pc_id,asset_type,asset_category,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Legacy','active')")->execute([...$p, $c['type']['type_name']]);
         $id = (int)$pdo->lastInsertId();
     }
     foreach ($c['identifiers'] as $x) {
@@ -1426,11 +1443,11 @@ function save_asset_master_item(PDO $pdo, int $id, array $post): int
             }
         }
     }
-    if (!empty($post['linked_pc_id']) && db_table_exists($pdo, 'pcs')) {
-        $linkedPcId = trim((string)$post['linked_pc_id']);
-        $pdo->prepare('UPDATE pcs SET asset_item_id = ? WHERE pc_id = ?')->execute([$id, $linkedPcId]);
+    $effectivePc = $sourcePcId ?: trim((string)($post['linked_pc_id'] ?? ''));
+    if (!empty($effectivePc) && db_table_exists($pdo, 'pcs')) {
+        $pdo->prepare('UPDATE pcs SET asset_item_id = ? WHERE pc_id = ?')->execute([$id, $effectivePc]);
         if (function_exists('sync_pc_maintenance_asset')) {
-            sync_pc_maintenance_asset($pdo, $linkedPcId);
+            sync_pc_maintenance_asset($pdo, $effectivePc);
         }
     }
     if (db_table_exists($pdo, 'pcs') && function_exists('sync_pc_maintenance_asset')) {
@@ -3691,7 +3708,8 @@ function handle_route_asset_items(PDO $pdo): void
         $params[] = $locationId;
     }
     if ($q !== '') {
-        $where[] = "(ai.asset_code LIKE ? OR ai.asset_name LIKE ? OR ai.serial_number LIKE ? OR ai.custodian_name LIKE ? OR ai.custodian_nik LIKE ? OR ai.model LIKE ? OR ai.location_label LIKE ? OR EXISTS (SELECT 1 FROM asset_identifiers aid WHERE aid.asset_item_id = ai.id AND aid.identifier_value LIKE ?) OR EXISTS (SELECT 1 FROM asset_specifications asp WHERE asp.asset_item_id = ai.id AND asp.specification_value LIKE ?))";
+        $where[] = "(ai.asset_code LIKE ? OR ai.asset_name LIKE ? OR ai.serial_number LIKE ? OR ai.source_pc_id LIKE ? OR ai.custodian_name LIKE ? OR ai.custodian_nik LIKE ? OR ai.model LIKE ? OR ai.location_label LIKE ? OR EXISTS (SELECT 1 FROM asset_identifiers aid WHERE aid.asset_item_id = ai.id AND aid.identifier_value LIKE ?) OR EXISTS (SELECT 1 FROM asset_specifications asp WHERE asp.asset_item_id = ai.id AND asp.specification_value LIKE ?))";
+        $params[] = "%{$q}%";
         $params[] = "%{$q}%";
         $params[] = "%{$q}%";
         $params[] = "%{$q}%";
@@ -3831,39 +3849,6 @@ function handle_route_asset_item_form(PDO $pdo): void
     if ($id > 0) {
         echo asset_item_maintenance_link_panel_html($pdo, $id);
         echo asset_item_member_manager_html($pdo, $id);
-
-        if (db_table_exists($pdo, 'corrective_tickets')) {
-            $tStmt = $pdo->prepare("SELECT t.*, 
-                (SELECT COUNT(*) FROM corrective_repairs cr WHERE cr.ticket_id = t.id) AS repair_count,
-                (SELECT COALESCE(SUM(cr.repair_cost), 0) FROM corrective_repairs cr WHERE cr.ticket_id = t.id) AS total_repair_cost,
-                (SELECT COALESCE(SUM(crp.part_cost), 0) FROM corrective_repairs cr JOIN corrective_repair_parts crp ON crp.repair_id = cr.id WHERE cr.ticket_id = t.id) AS total_part_cost
-                FROM corrective_tickets t
-                WHERE t.asset_item_id = ?
-                ORDER BY t.created_at DESC");
-            $tStmt->execute([$id]);
-            $itemTickets = $tStmt->fetchAll(PDO::FETCH_ASSOC);
-
-            echo '<section class="panel"><div class="split"><h2>Riwayat Tiket & Reparasi Aset Ini</h2><a class="btn primary" href="' . route_url('ticket_form', ['asset_item_id' => $id, 'category' => $item['asset_category'] ?? 'IT']) . '">+ Buat Tiket Masalah / Reparasi</a></div>';
-            if (!$itemTickets) {
-                echo '<p class="muted">Belum ada tiket atau perbaikan yang tercatat untuk aset ini.</p>';
-            } else {
-                echo '<table><thead><tr><th>Tiket & Tanggal</th><th>Prioritas</th><th>Subjek & Keluhan</th><th>Pelapor</th><th>Status</th><th>Total Biaya</th><th>Aksi</th></tr></thead><tbody>';
-                foreach ($itemTickets as $it) {
-                    $cost = (float)$it['total_repair_cost'] + (float)$it['total_part_cost'];
-                    echo '<tr>';
-                    echo '<td><strong>' . e($it['ticket_code']) . '</strong><br><span class="muted">' . e(date('d M Y H:i', strtotime($it['created_at']))) . '</span></td>';
-                    echo '<td>' . (function_exists('ticket_priority_badge') ? ticket_priority_badge($it['priority']) : e($it['priority'])) . '</td>';
-                    echo '<td><strong>' . e($it['subject']) . '</strong><br><span class="muted">' . e(mb_strimwidth((string)$it['description'], 0, 60, '...')) . '</span></td>';
-                    echo '<td>' . e($it['reporter_name']) . '</td>';
-                    echo '<td>' . (function_exists('ticket_status_badge') ? ticket_status_badge($it['status']) : e($it['status'])) . '</td>';
-                    echo '<td>' . ($cost > 0 ? '<strong>Rp ' . number_format($cost, 0, ',', '.') . '</strong>' : '<span class="muted">Rp 0</span>') . '</td>';
-                    echo '<td><a class="btn" href="' . route_url('ticket_detail', ['id' => $it['id']]) . '">Lihat / Handle</a></td>';
-                    echo '</tr>';
-                }
-                echo '</tbody></table>';
-            }
-            echo '</section>';
-        }
     }
     render_footer();
 }

@@ -397,6 +397,91 @@ function handle_route_api_job_desks(PDO $pdo): void
     echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
+function handle_route_api_eligible_maintenance_asset_items(PDO $pdo): void
+{
+    require_login();
+    $groupId = (int)($_GET['group_id'] ?? 0);
+    $typeId = (int)($_GET['type_id'] ?? 0);
+    $maintId = (int)($_GET['maintenance_asset_id'] ?? 0);
+    $curAssetItemId = (int)($_GET['current_asset_item_id'] ?? 0);
+
+    $where = [];
+    $params = [];
+
+    if ($groupId > 0) {
+        $where[] = "ai.asset_group_id = ?";
+        $params[] = $groupId;
+    }
+    if ($typeId > 0) {
+        $where[] = "ai.asset_type_id = ?";
+        $params[] = $typeId;
+    }
+
+    // Hanya Unit Aset Standalone atau Bundle Parent (Child tidak boleh masuk Maintenance Asset)
+    $where[] = "(ai.asset_mode IS NULL OR ai.asset_mode <> 'child')";
+    $where[] = "NOT EXISTS (SELECT 1 FROM asset_item_members aim WHERE aim.child_asset_item_id = ai.id AND aim.detached_at IS NULL)";
+
+    // Unit aset yang sudah pernah dimasukkan ke Maintenance Asset aktif dilarang muncul kembali
+    $where[] = "(ai.id = ? OR (
+        NOT EXISTS (
+            SELECT 1 FROM maintenance_assets ma 
+            LEFT JOIN pcs p_chk ON p_chk.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci 
+            LEFT JOIN printers pr_chk ON pr_chk.prn_id COLLATE utf8mb4_unicode_ci = ma.printer_id COLLATE utf8mb4_unicode_ci
+            WHERE (ma.asset_item_id = ai.id OR (ma.pc_id IS NOT NULL AND ma.pc_id != '' AND p_chk.asset_item_id = ai.id) OR (ma.printer_id IS NOT NULL AND ma.printer_id != '' AND pr_chk.asset_item_id = ai.id))
+              AND ma.status <> 'inactive'
+              AND (? <= 0 OR ma.id <> ?)
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM maintenance_asset_items mai 
+            WHERE mai.asset_item_id = ai.id 
+              AND mai.detached_at IS NULL 
+              AND (? <= 0 OR mai.maintenance_asset_id <> ?)
+        )
+    ))";
+    $params[] = $curAssetItemId;
+    $params[] = $maintId;
+    $params[] = $maintId;
+    $params[] = $maintId;
+    $params[] = $maintId;
+
+    $sql = "SELECT ai.id, ai.asset_code, ai.asset_name, ai.asset_type, ai.asset_category, ai.asset_mode, ai.brand, ai.model, ai.serial_number,
+                   ai.company_id, ac.company_name, ai.location_id, ai.location_label, ai.custodian_name, ai.custodian_nik,
+                   ai.source_pc_id, COALESCE(NULLIF(ai.source_pc_id, ''), p.pc_id) AS pc_id, p.computer_name, prn.prn_id
+            FROM asset_items ai
+            LEFT JOIN asset_companies ac ON ac.id = ai.company_id
+            LEFT JOIN pcs p ON (p.asset_item_id = ai.id OR (ai.source_pc_id IS NOT NULL AND ai.source_pc_id != '' AND p.pc_id COLLATE utf8mb4_unicode_ci = ai.source_pc_id COLLATE utf8mb4_unicode_ci))
+            LEFT JOIN printers prn ON prn.asset_item_id = ai.id
+            WHERE " . implode(" AND ", $where) . "
+            ORDER BY ai.asset_code ASC";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (!empty($items) && db_table_exists($pdo, 'asset_item_members')) {
+        $parentIds = array_map(fn($it) => (int)$it['id'], array_filter($items, fn($it) => ($it['asset_mode'] ?? '') === 'group'));
+        if (!empty($parentIds)) {
+            $inParents = implode(',', $parentIds);
+            $cStmt = $pdo->query("SELECT aim.parent_asset_item_id, aim.role_name, c.asset_code, c.asset_name, c.serial_number, c.asset_type
+                                  FROM asset_item_members aim
+                                  JOIN asset_items c ON c.id = aim.child_asset_item_id
+                                  WHERE aim.parent_asset_item_id IN ($inParents) AND aim.detached_at IS NULL
+                                  ORDER BY aim.id ASC");
+            $childrenMap = [];
+            while ($cRow = $cStmt->fetch(PDO::FETCH_ASSOC)) {
+                $childrenMap[(int)$cRow['parent_asset_item_id']][] = $cRow;
+            }
+            foreach ($items as &$it) {
+                $it['bundle_children'] = $childrenMap[(int)$it['id']] ?? [];
+            }
+            unset($it);
+        }
+    }
+
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($items, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
 function handle_route_api_master_items(PDO $pdo): void
 {
     require_login();
