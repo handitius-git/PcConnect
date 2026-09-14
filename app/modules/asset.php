@@ -881,11 +881,13 @@ window.fetchPcList = async function(query){
             container.innerHTML = "<div style=\"text-align:center;padding:30px;color:#64748b;\">Tidak ditemukan PC dengan kata kunci \"" + (query || "") + "\".</div>";
             return;
         }
-        var html = "<table style=\"width:100%;font-size:13px;border-collapse:collapse;\"><thead><tr style=\"background:#f8fafc;border-bottom:1px solid #e2e8f0;text-align:left;\"><th style=\"padding:10px 14px;\">PC ID</th><th style=\"padding:10px 14px;\">Nama Komputer</th><th style=\"padding:10px 14px;\">Pengguna (Master Pengguna)</th><th style=\"padding:10px 14px;\">Lokasi</th><th style=\"padding:10px 14px;text-align:center;\">Aksi</th></tr></thead><tbody>";
+        var html = "<table style=\"width:100%;font-size:13px;border-collapse:collapse;\"><thead><tr style=\"background:#f8fafc;border-bottom:1px solid #e2e8f0;text-align:left;\"><th style=\"padding:10px 14px;\">PC ID</th><th style=\"padding:10px 14px;\">Nama Komputer</th><th style=\"padding:10px 14px;\">Brand / Manufaktur</th><th style=\"padding:10px 14px;\">Model Hardware</th><th style=\"padding:10px 14px;\">Pengguna (Master Pengguna)</th><th style=\"padding:10px 14px;\">Lokasi</th><th style=\"padding:10px 14px;text-align:center;\">Aksi</th></tr></thead><tbody>";
         res.data.forEach(function(pc){
             var cust = pc.directory_name ? (pc.directory_name + (pc.employee_nik ? " (" + pc.employee_nik + ")" : "")) : (pc.owner_name || "-");
             var linkedBadge = pc.asset_code ? ("<br><span style=\"color:#0284c7;font-size:11px;\">🔗 Terhubung: " + pc.asset_code + "</span>") : "";
-            html += "<tr style=\"border-bottom:1px solid #f1f5f9;\"><td style=\"padding:10px 14px;font-weight:700;\">" + pc.pc_id + linkedBadge + "</td><td style=\"padding:10px 14px;\">" + (pc.computer_name || "-") + "</td><td style=\"padding:10px 14px;\">" + cust + "</td><td style=\"padding:10px 14px;\">" + (pc.location_label || "-") + "</td><td style=\"padding:10px 14px;text-align:center;\"><button type=\"button\" class=\"btn small primary\" data-pc=\"" + pc.pc_id + "\" onclick=\"selectPcForImport(this.dataset.pc)\">Pilih PC</button></td></tr>";
+            var mfr = (pc.specs && pc.specs.manufacturer) ? pc.specs.manufacturer : (pc.manufacturer || "-");
+            var mdl = (pc.specs && pc.specs.model) ? pc.specs.model : (pc.model || "-");
+            html += "<tr style=\"border-bottom:1px solid #f1f5f9;\"><td style=\"padding:10px 14px;font-weight:700;\">" + pc.pc_id + linkedBadge + "</td><td style=\"padding:10px 14px;\">" + (pc.computer_name || "-") + "</td><td style=\"padding:10px 14px;font-weight:600;color:#1e293b;\">" + mfr + "</td><td style=\"padding:10px 14px;font-weight:600;color:#0369a1;\">" + mdl + "</td><td style=\"padding:10px 14px;\">" + cust + "</td><td style=\"padding:10px 14px;\">" + (pc.location_label || "-") + "</td><td style=\"padding:10px 14px;text-align:center;\"><button type=\"button\" class=\"btn small primary\" data-pc=\"" + pc.pc_id + "\" onclick=\"selectPcForImport(this.dataset.pc)\">Pilih PC</button></td></tr>";
         });
         html += "</tbody></table>";
         container.innerHTML = html;
@@ -962,20 +964,25 @@ window.selectPcForImport = async function(pcId){
         // Populate Brand & Model
         var bIn = document.getElementById("assetBrandInput");
         var bSel = document.getElementById("assetBrandId");
-        if(res.specs && res.specs.manufacturer){
-            if(bIn) bIn.value = res.specs.manufacturer;
+        var mIn = document.getElementById("assetModelInput");
+        var mfr = (res.specs && res.specs.manufacturer) ? res.specs.manufacturer : (res.manufacturer || "");
+        var rawModel = (res.specs && res.specs.model) ? res.specs.model : (res.model || "");
+
+        if(mfr){
+            if(bIn) bIn.value = mfr;
             if(bSel){
+                var cleanM = mfr.replace(/\b(inc|corp|corporation|ltd|co|limited)\b\.?/gi, "").trim().toUpperCase();
                 for(var k=0; k<bSel.options.length; k++){
-                    if(bSel.options[k].text.toUpperCase().indexOf(res.specs.manufacturer.toUpperCase()) !== -1){
+                    if(bSel.options[k].text.toUpperCase().indexOf(cleanM) !== -1){
                         bSel.selectedIndex = k;
+                        if(bIn) bIn.value = bSel.options[k].text.replace(/\s*\([^)]*\)$/, "").trim();
                         break;
                     }
                 }
             }
         }
-        var mIn = document.getElementById("assetModelInput");
-        if(mIn && res.specs && res.specs.model){
-            mIn.value = res.specs.model;
+        if(mIn && rawModel){
+            mIn.value = rawModel;
         }
 
         // Populate Asset Name
@@ -3401,9 +3408,9 @@ function handle_route_asset_master_items(PDO $pdo): void
             }
             var html = "<table style=\"width:100%;font-size:13px;border-collapse:collapse;\"><thead><tr style=\"background:#f8fafc;border-bottom:1px solid #e2e8f0;text-align:left;\"><th style=\"padding:10px 14px;\">PC ID</th><th style=\"padding:10px 14px;\">Nama Komputer</th><th style=\"padding:10px 14px;\">Brand / Manufaktur</th><th style=\"padding:10px 14px;\">Model Hardware</th><th style=\"padding:10px 14px;text-align:center;\">Aksi</th></tr></thead><tbody>";
             res.data.forEach(function(pc){
-                var mfr = pc.specs ? (pc.specs.manufacturer || "-") : "-";
-                var mdl = pc.specs ? (pc.specs.model || "-") : "-";
-                html += "<tr style=\"border-bottom:1px solid #f1f5f9;\"><td style=\"padding:10px 14px;font-weight:700;\">" + pc.pc_id + "</td><td style=\"padding:10px 14px;\">" + (pc.computer_name || "-") + "</td><td style=\"padding:10px 14px;\">" + mfr + "</td><td style=\"padding:10px 14px;\">" + mdl + "</td><td style=\"padding:10px 14px;text-align:center;\"><button type=\"button\" class=\"btn small primary\" data-pc=\"" + pc.pc_id + "\" onclick=\"selectPcForMi(this.dataset.pc)\">Pilih PC</button></td></tr>";
+                var mfr = (pc.specs && pc.specs.manufacturer) ? pc.specs.manufacturer : (pc.manufacturer || "-");
+                var mdl = (pc.specs && pc.specs.model) ? pc.specs.model : (pc.model || "-");
+                html += "<tr style=\"border-bottom:1px solid #f1f5f9;\"><td style=\"padding:10px 14px;font-weight:700;\">" + pc.pc_id + "</td><td style=\"padding:10px 14px;\">" + (pc.computer_name || "-") + "</td><td style=\"padding:10px 14px;font-weight:600;color:#1e293b;\">" + mfr + "</td><td style=\"padding:10px 14px;font-weight:600;color:#0369a1;\">" + mdl + "</td><td style=\"padding:10px 14px;text-align:center;\"><button type=\"button\" class=\"btn small primary\" data-pc=\"" + pc.pc_id + "\" onclick=\"selectPcForMi(this.dataset.pc)\">Pilih PC</button></td></tr>";
             });
             html += "</tbody></table>";
             container.innerHTML = html;
@@ -3452,8 +3459,8 @@ function handle_route_asset_master_items(PDO $pdo): void
             }
 
             // Resolve Brand & Model via AI endpoint
-            var mfr = res.specs ? (res.specs.manufacturer || "") : "";
-            var rawModel = res.specs ? (res.specs.model || "") : "";
+            var mfr = (res.specs && res.specs.manufacturer) ? res.specs.manufacturer : (res.manufacturer || "");
+            var rawModel = (res.specs && res.specs.model) ? res.specs.model : (res.model || "");
             var cpu = res.specs ? (res.specs.processor || "") : "";
             var ram = res.specs ? (res.specs.ram || "") : "";
             var storage = res.specs ? (res.specs.storage || "") : "";
@@ -3464,13 +3471,20 @@ function handle_route_asset_master_items(PDO $pdo): void
 
             // Populate Brand
             var bSel = document.getElementById("miBrandId");
-            if(bSel && aiRes.ok){
-                if(aiRes.brand_id){
+            if(bSel){
+                var bMatched = false;
+                if(aiRes && aiRes.ok && aiRes.brand_id){
                     bSel.value = aiRes.brand_id;
-                } else if(aiRes.brand_name){
+                    bMatched = true;
+                }
+                if(!bMatched){
+                    var targetBrand = (aiRes && aiRes.ok && aiRes.brand_name) ? aiRes.brand_name : mfr;
+                    var cleanTarget = targetBrand.replace(/\b(inc|corp|corporation|ltd|co|limited)\b\.?/gi, "").trim();
                     for(var k=0; k<bSel.options.length; k++){
-                        if(bSel.options[k].text.toUpperCase().indexOf(aiRes.brand_name.toUpperCase()) !== -1){
+                        var optTxt = bSel.options[k].text.toUpperCase();
+                        if(cleanTarget && optTxt.indexOf(cleanTarget.toUpperCase()) !== -1){
                             bSel.selectedIndex = k;
+                            bMatched = true;
                             break;
                         }
                     }
@@ -3479,14 +3493,16 @@ function handle_route_asset_master_items(PDO $pdo): void
 
             // Populate Model Name
             var mIn = document.getElementById("miModelName");
+            var resolvedModel = (aiRes && aiRes.ok && aiRes.popular_model) ? aiRes.popular_model : rawModel;
             if(mIn){
-                mIn.value = (aiRes.ok && aiRes.popular_model) ? aiRes.popular_model : rawModel;
+                mIn.value = resolvedModel;
             }
 
             // Populate Item Name
             var nIn = document.getElementById("miItemName");
             if(nIn){
-                nIn.value = (aiRes.ok && aiRes.suggested_item_name) ? aiRes.suggested_item_name : (mfr + " " + (aiRes.popular_model || rawModel));
+                var brandDisplay = (bSel && bSel.selectedIndex > 0) ? bSel.options[bSel.selectedIndex].text.replace(/\s*\([^)]*\)$/, "").trim() : mfr;
+                nIn.value = (aiRes && aiRes.ok && aiRes.suggested_item_name) ? aiRes.suggested_item_name : (brandDisplay + " " + resolvedModel).trim();
             }
 
             // Map PC hardware telemetry to specifications in #miSpecificationFields

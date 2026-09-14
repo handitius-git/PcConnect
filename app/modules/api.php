@@ -511,13 +511,13 @@ function handle_route_api_pc_import(PDO $pdo): void
     if (isset($_GET['q'])) {
         $q = trim((string)($_GET['q'] ?? ''));
         $sql = "SELECT p.pc_id, p.computer_name, p.owner_name, p.employee_nik, p.asset_item_id, p.location_label,
-                       ai.asset_code
+                       p.general_specs, ai.asset_code
                 FROM pcs p
                 LEFT JOIN asset_items ai ON ai.id = p.asset_item_id
-                WHERE p.pc_id LIKE ? OR p.computer_name LIKE ? OR p.owner_name LIKE ? OR p.employee_nik LIKE ?
+                WHERE p.pc_id LIKE ? OR p.computer_name LIKE ? OR p.owner_name LIKE ? OR p.employee_nik LIKE ? OR p.general_specs LIKE ?
                 ORDER BY p.pc_id ASC
-                LIMIT 30";
-        $params = array_fill(0, 4, "%{$q}%");
+                LIMIT 50";
+        $params = array_fill(0, 5, "%{$q}%");
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -543,6 +543,31 @@ function handle_route_api_pc_import(PDO $pdo): void
             $nik = trim((string)($r['employee_nik'] ?? ''));
             $r['directory_name'] = $edMap[$nik]['employee_name'] ?? '';
             $r['department'] = $edMap[$nik]['department'] ?? '';
+
+            // Extract manufacturer & model from general_specs
+            $rawSpecs = json_decode((string)($r['general_specs'] ?? ''), true) ?: [];
+            $mfr = trim((string)($rawSpecs['manufacturer'] ?? ($rawSpecs['system']['manufacturer'] ?? '')));
+            $mdl = trim((string)($rawSpecs['model'] ?? ($rawSpecs['system']['model'] ?? '')));
+
+            if ($mfr === '' && !empty($r['computer_name'])) {
+                if (stripos($r['computer_name'], 'LENOVO') !== false) {
+                    $mfr = 'LENOVO';
+                } elseif (stripos($r['computer_name'], 'DELL') !== false) {
+                    $mfr = 'Dell';
+                } elseif (stripos($r['computer_name'], 'HP') !== false) {
+                    $mfr = 'HP';
+                }
+            }
+
+            $r['manufacturer'] = $mfr;
+            $r['model'] = $mdl;
+            $r['specs'] = [
+                'manufacturer' => $mfr,
+                'model' => $mdl,
+                'processor' => trim((string)($rawSpecs['processor'] ?? '')),
+                'ram' => isset($rawSpecs['ram_gb']) ? ($rawSpecs['ram_gb'] . ' GB') : '',
+            ];
+            unset($r['general_specs']);
         }
         unset($r);
 
@@ -653,8 +678,17 @@ function handle_route_api_pc_import(PDO $pdo): void
     }
 
     // Extract Manufacturer / Brand & Model
-    $manufacturer = trim((string)($rawSpecs['manufacturer'] ?? ''));
-    $model = trim((string)($rawSpecs['model'] ?? ''));
+    $manufacturer = trim((string)($rawSpecs['manufacturer'] ?? ($rawSpecs['system']['manufacturer'] ?? '')));
+    $model = trim((string)($rawSpecs['model'] ?? ($rawSpecs['system']['model'] ?? '')));
+    if ($manufacturer === '' && !empty($pc['computer_name'])) {
+        if (stripos($pc['computer_name'], 'LENOVO') !== false) {
+            $manufacturer = 'LENOVO';
+        } elseif (stripos($pc['computer_name'], 'DELL') !== false) {
+            $manufacturer = 'Dell';
+        } elseif (stripos($pc['computer_name'], 'HP') !== false) {
+            $manufacturer = 'HP';
+        }
+    }
 
     echo json_encode([
         'ok' => true,
@@ -666,6 +700,8 @@ function handle_route_api_pc_import(PDO $pdo): void
         'location_label' => (string)($pc['location_label'] ?? ''),
         'asset_item_id' => (int)($pc['asset_item_id'] ?? 0),
         'existing_asset_code' => (string)($pc['asset_code'] ?? ''),
+        'manufacturer' => $manufacturer,
+        'model' => $model,
         'specs' => [
             'processor' => $processor,
             'ram' => $ram,
@@ -797,7 +833,12 @@ function handle_route_api_ai_resolve_model(PDO $pdo): void
             '/20N2|20N3/' => 'ThinkPad T490s',
             '/20N4|20N5/' => 'ThinkPad T590',
             '/20Q0|20Q1/' => 'ThinkPad X390',
+            '/20NS/' => 'ThinkPad L390',
+            '/80E4/' => 'Lenovo G40-80',
+            '/80XU/' => 'IdeaPad 320',
+            '/F0D4/' => 'IdeaCentre AIO 520',
             '/10AA|10AB/' => 'ThinkCentre M73',
+            '/10MA/' => 'ThinkCentre M710s',
             '/10FM|10FL/' => 'ThinkCentre M900',
             '/10ST|10SU/' => 'ThinkCentre M720q Tiny',
             '/11DT|11DU/' => 'ThinkCentre M70q Tiny',
