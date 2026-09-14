@@ -736,9 +736,10 @@ function handle_route_maintenance_asset_form(PDO $pdo): void
         }
 
         try {
-            $chkStmt = $pdo->prepare('SELECT ai.id, ai.asset_code, ai.asset_name, ai.asset_mode, ai.custodian_name, ai.custodian_nik, ai.source_pc_id, p.pc_id, p.owner_name AS pc_owner_name, p.employee_nik AS pc_employee_nik 
+            $chkStmt = $pdo->prepare('SELECT ai.id, ai.asset_code, ai.asset_name, ai.asset_mode, ai.custodian_name, ai.custodian_nik, ai.source_pc_id, p.pc_id, p.owner_name AS pc_owner_name, p.employee_nik AS pc_employee_nik, prn.prn_id 
                                       FROM asset_items ai 
                                       LEFT JOIN pcs p ON (p.asset_item_id = ai.id OR (ai.source_pc_id IS NOT NULL AND ai.source_pc_id != "" AND p.pc_id COLLATE utf8mb4_unicode_ci = ai.source_pc_id COLLATE utf8mb4_unicode_ci)) 
+                                      LEFT JOIN printers prn ON prn.asset_item_id = ai.id 
                                       WHERE ai.id=? LIMIT 1');
             $chkStmt->execute([(int)$data['asset_item_id']]);
             $chkItem = $chkStmt->fetch(PDO::FETCH_ASSOC);
@@ -804,23 +805,29 @@ function handle_route_maintenance_asset_form(PDO $pdo): void
 
             // Sinkronisasi data PC jika unit aset terkait PC
             if (db_table_exists($pdo, 'pcs')) {
-                $pcStmt = $pdo->prepare('SELECT pc_id FROM pcs WHERE asset_item_id=? OR pc_id=(SELECT source_pc_id FROM asset_items WHERE id=? LIMIT 1) LIMIT 1');
-                $pcStmt->execute([(int)$data['asset_item_id'], (int)$data['asset_item_id']]);
-                $fPc = (string)($pcStmt->fetchColumn() ?: '');
+                $fPc = trim((string)($chkItem['source_pc_id'] ?: ($chkItem['pc_id'] ?? '')));
+                if ($fPc === '') {
+                    $pcStmt = $pdo->prepare('SELECT pc_id FROM pcs WHERE asset_item_id=? LIMIT 1');
+                    $pcStmt->execute([(int)$data['asset_item_id']]);
+                    $fPc = trim((string)($pcStmt->fetchColumn() ?: ''));
+                }
                 if ($fPc !== '') {
                     $pdo->prepare('UPDATE maintenance_assets SET pc_id=? WHERE id=?')->execute([$fPc, $id]);
-                    $pdo->prepare('UPDATE pcs SET maintenance_asset_id=? WHERE pc_id=?')->execute([$id, $fPc]);
+                    $pdo->prepare('UPDATE pcs SET maintenance_asset_id=? WHERE pc_id COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci')->execute([$id, $fPc]);
                 }
             }
 
             // Sinkronisasi data Printer jika unit aset terkait Printer
             if (db_table_exists($pdo, 'printers')) {
-                $prnStmt = $pdo->prepare('SELECT prn_id FROM printers WHERE asset_item_id=? LIMIT 1');
-                $prnStmt->execute([(int)$data['asset_item_id']]);
-                $fPrn = (string)($prnStmt->fetchColumn() ?: '');
+                $fPrn = trim((string)($chkItem['prn_id'] ?? ''));
+                if ($fPrn === '') {
+                    $prnStmt = $pdo->prepare('SELECT prn_id FROM printers WHERE asset_item_id=? LIMIT 1');
+                    $prnStmt->execute([(int)$data['asset_item_id']]);
+                    $fPrn = trim((string)($prnStmt->fetchColumn() ?: ''));
+                }
                 if ($fPrn !== '') {
                     $pdo->prepare('UPDATE maintenance_assets SET printer_id=? WHERE id=?')->execute([$fPrn, $id]);
-                    $pdo->prepare('UPDATE printers SET maintenance_asset_id=? WHERE prn_id=?')->execute([$id, $fPrn]);
+                    $pdo->prepare('UPDATE printers SET maintenance_asset_id=? WHERE prn_id COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci')->execute([$id, $fPrn]);
                 }
             }
 

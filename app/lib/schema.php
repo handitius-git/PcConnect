@@ -928,8 +928,11 @@ function ensure_maintenance_asset_schema(PDO $pdo): void
             }
         } catch (Throwable $ignored) {}
         try {
+            $pdo->exec('ALTER TABLE pcs MODIFY pc_id VARCHAR(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+            $pdo->exec('ALTER TABLE asset_items MODIFY source_pc_id VARCHAR(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL');
             $pdo->exec('ALTER TABLE maintenance_assets MODIFY pc_id VARCHAR(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL');
             $pdo->exec('ALTER TABLE maintenance_assets MODIFY printer_id VARCHAR(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL');
+            $pdo->exec('ALTER TABLE printers MODIFY prn_id VARCHAR(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
         } catch (Throwable $ignored) {
         }
 
