@@ -417,6 +417,9 @@ switch ($route) {
     case 'api_pc_import':
         handle_route_api_pc_import($pdo);
         break;
+    case 'api_ai_resolve_model':
+        handle_route_api_ai_resolve_model($pdo);
+        break;
 
     default:
         http_response_code(404);

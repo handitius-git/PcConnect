@@ -261,6 +261,18 @@ function asset_master_item_form_html(PDO $pdo, array $i, bool $editing): string
     $config = asset_type_form_config($pdo, (int)$i['asset_type_id'], (int)$i['asset_group_id']);
     $existing = [];
     $existingSpecs = [];
+    $masterItemSpecs = [];
+    $masterItemText = '';
+    if (!empty($i['master_item_id'])) {
+        $miStmt = $pdo->prepare("SELECT ami.*, ab.brand_name FROM asset_master_items ami LEFT JOIN asset_brands ab ON ab.id = ami.brand_id WHERE ami.id = ?");
+        $miStmt->execute([(int)$i['master_item_id']]);
+        $mi = $miStmt->fetch(PDO::FETCH_ASSOC);
+        if ($mi) {
+            $bStr = !empty($mi['brand_name']) ? ' [' . $mi['brand_name'] . ']' : '';
+            $masterItemText = $mi['item_code'] . ' - ' . $mi['item_name'] . $bStr;
+            $masterItemSpecs = json_decode((string)($mi['specifications'] ?? ''), true) ?: [];
+        }
+    }
     if ($editing) {
         $s = $pdo->prepare('SELECT asset_type_identifier_id, identifier_value FROM asset_identifiers WHERE asset_item_id=?');
         $s->execute([$i['id']]);
@@ -273,6 +285,10 @@ function asset_master_item_form_html(PDO $pdo, array $i, bool $editing): string
             foreach ($sSp as $r) {
                 $existingSpecs[$r['asset_type_specification_id']] = $r['specification_value'];
             }
+        }
+    } else {
+        if (!empty($masterItemSpecs)) {
+            $existingSpecs = $masterItemSpecs;
         }
     }
     $fields = '';
@@ -315,16 +331,6 @@ function asset_master_item_form_html(PDO $pdo, array $i, bool $editing): string
     $brandOptions = asset_brand_options($pdo, (int)($i['brand_id'] ?? 0), true, '-- Pilih Brand / Merk --');
     $locationOptions = asset_location_options($pdo, (int)($i['location_id'] ?? 0), true, '-- Pilih Lokasi Unit Aset --');
 
-    $masterItemText = '';
-    if (!empty($i['master_item_id'])) {
-        $miStmt = $pdo->prepare("SELECT ami.*, ab.brand_name FROM asset_master_items ami LEFT JOIN asset_brands ab ON ab.id = ami.brand_id WHERE ami.id = ?");
-        $miStmt->execute([(int)$i['master_item_id']]);
-        $mi = $miStmt->fetch(PDO::FETCH_ASSOC);
-        if ($mi) {
-            $bStr = !empty($mi['brand_name']) ? ' [' . $mi['brand_name'] . ']' : '';
-            $masterItemText = $mi['item_code'] . ' - ' . $mi['item_name'] . $bStr;
-        }
-    }
 
     if (function_exists('repair_asset_type_groups')) {
         repair_asset_type_groups($pdo);
@@ -408,7 +414,51 @@ function asset_master_item_form_html(PDO $pdo, array $i, bool $editing): string
     </div>
 </div>';
 
-    return '<section class="panel"><div class="split" style="align-items:center;margin-bottom:16px;"><div><h1 style="margin:0;">' . ($editing ? 'Edit' : 'Tambah') . ' Unit Aset</h1>' . $headerBadge . '</div><div><button type="button" class="btn warning" id="btnImportPc" onclick="openImportPcModal()" style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;font-weight:600;" title="Pilih Master Barang terlebih dahulu sebelum Import PC"><span style="font-size:16px;">📥</span> Import dari Data PC</button></div></div><form method="post"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="linked_pc_id" id="linkedPcId" value="' . e($linkedPcInfo['pc_id'] ?? '') . '"><h2>1. Klasifikasi Aset & Master Barang</h2><div class="grid three"><label>Komoditas (Grup Aset) *<select id="assetGroup" name="asset_group_id" onchange="onGroupSelectChanged()" required>' . asset_group_options($pdo, (int)$i['asset_group_id'], true, '- Pilih Komoditas (Grup Aset) -') . '</select></label><label>Kategori (Tipe Aset) *<select id="assetType" name="asset_type_id" onchange="reloadAssetForm()" required>' . $types . '</select></label><label>ID Aset (Kode Unit)<input id="assetCode" name="asset_code" value="' . e($code) . '" readonly></label></div><div class="grid two"><div style="position:relative;"><label for="masterItemSearch" style="display:flex;justify-content:space-between;align-items:center;"><span>Pilih / Cari Master Barang <span style="color:#ef4444;" title="Wajib dipilih">*</span></span><a href="' . route_url('asset_master_items') . '" target="_blank" style="font-size:12px;color:#0284c7;text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:3px;" title="Buka form Master Barang di tab baru">➕ Tambah Master Barang Baru ↗</a></label><div style="display:flex;gap:6px;align-items:stretch;"><div style="position:relative;flex:1;"><input type="text" id="masterItemSearch" placeholder="' . e($searchPlaceholder) . '" autocomplete="off" value="' . e($masterItemText) . '" style="width:100%;box-sizing:border-box;padding-right:58px;background:#fff;cursor:text;" onfocus="onMasterItemInput(this.value)" onclick="onMasterItemInput(this.value)" oninput="onMasterItemInput(this.value)" onkeydown="onMasterItemKeyDown(event)"><button type="button" id="masterItemClearBtn" style="display:' . (!empty($i['master_item_id']) ? 'block' : 'none') . ';position:absolute;right:28px;top:50%;transform:translateY(-50%);background:none;border:none;color:#94a3b8;cursor:pointer;font-size:16px;padding:4px 8px;z-index:2;" onclick="clearMasterItem()" title="Hapus pilihan">✕</button><span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);pointer-events:none;color:#94a3b8;font-size:12px;">▾</span><input type="hidden" id="masterItemIdInput" name="master_item_id" value="' . (int)($i['master_item_id'] ?? 0) . '"><div id="masterItemResults" style="display:none;position:absolute;left:0;right:0;top:calc(100% + 2px);max-height:280px;overflow-y:auto;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 12px 30px rgba(0,0,0,0.18);z-index:99999;"></div></div><a href="' . route_url('asset_master_items') . '" target="_blank" class="btn" style="padding:0 14px;background:#0284c7;color:#fff;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:bold;text-decoration:none;white-space:nowrap;" title="Tambah Master Barang Baru (Buka di Tab Baru)">➕</a></div><small id="masterItemHint" style="display:block;color:#64748b;margin-top:4px">' . (!empty($i['master_item_id']) ? '<span style="color:#166534;font-weight:600;">✓ Master Barang Terpilih (Siap Import dari PC)</span>' : 'Pilih Master Barang terlebih dahulu sebelum Import dari Data PC. Ketik nama untuk mencari.') . '</small></div><label>Mode Aset<select name="asset_mode" id="assetModeSelect">' . $modeOptions . '</select><small id="assetModeHint" style="display:block;color:#64748b;margin-top:4px">' . e($modeHint) . '</small></label></div><h2>2. Identifikasi & Serial Number Unit</h2><div id="identifierFields" class="grid three">' . $fields . '</div><h2>3. Spesifikasi Teknis Unit</h2><div id="specificationFields" class="grid three">' . $specFields . '</div>' . $logHtml . '<h2>4. Detail Barang & Merek</h2><div class="grid three"><label>Brand / Merk<select id="assetBrandId" name="brand_id">' . $brandOptions . '</select></label><label>Nama Brand (Teks)<input id="assetBrandInput" name="brand" value="' . e($i['brand']) . '" placeholder="Auto terisi dari master merk"></label><label>Model / Varian<input id="assetModelInput" name="model" value="' . e($i['model']) . '" placeholder="Contoh: ThinkPad T480 / OptiPlex 3080"></label></div><div class="grid two"><label>Nama Unit Aset (Deskriptif)<input id="assetNameInput" name="asset_name" value="' . e($i['asset_name']) . '" placeholder="Contoh: Laptop ThinkPad T480 IT"></label><label>Keterangan Tambahan<textarea name="notes" style="min-height:42px">' . e($i['notes']) . '</textarea></label></div><h2>5. Lokasi & Tanggung Jawab (Custodian)</h2><div class="grid three"><label>Lokasi Unit Aset *<select name="location_id" id="assetLocationId" required>' . $locationOptions . '</select></label><label>Detail Ruangan / Gedung<input name="location_label" id="assetLocationLabel" value="' . e($i['location_label']) . '" placeholder="Gedung / Lantai / Ruangan"></label><label>Company<select name="company_id">' . company_options($pdo, (int)$i['company_id']) . '</select></label></div><div class="grid two"><label>NIK Pengguna / Custodian<input id="assetCustodianNik" name="custodian_nik" value="' . e($i['custodian_nik'] ?? '') . '" placeholder="NIK karyawan"></label><label>Nama Pengguna / Custodian<input id="assetCustodianName" name="custodian_name" value="' . e($i['custodian_name'] ?? '') . '" placeholder="Nama pemakai / PIC aset"></label></div>' . (function_exists('employee_portal_name_picker_html') ? employee_portal_name_picker_html('assetCustodian', 'assetCustodianName', 'assetCustodianNik') : '') . '<h2>6. Pembelian / Garansi / Status</h2><div class="grid four"><label>Tanggal Perolehan / Beli<input type="date" name="installed_at" value="' . e($i['installed_at']) . '"></label><label>Harga Perolehan (Rp)<input type="number" name="purchase_value" value="' . e($i['purchase_value']) . '"></label><label>Garansi Berakhir<input type="date" name="warranty_until" value="' . e($i['warranty_until']) . '"></label><label>Status Unit *<select name="asset_status_id" required>' . asset_status_options($pdo, (int)$i['asset_status_id']) . '</select></label></div><div class="actions"><a class="btn" href="' . route_url('asset_items') . '">Batal</a><button class="btn primary">Simpan Unit Aset</button></div></form>' . $pcModalHtml . '</section><script>
+    $pcModalHtml .= '
+<div id="pcSpecDiffModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,0.65);backdrop-filter:blur(3px);z-index:9999999;align-items:center;justify-content:center;padding:20px;">
+    <div style="background:#fff;border-radius:12px;width:100%;max-width:780px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 25px 50px -12px rgba(0,0,0,0.3);overflow:hidden;">
+        <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;background:#fef3c7;">
+            <div style="display:flex;align-items:center;gap:10px;">
+                <span style="font-size:24px;">⚠️</span>
+                <div>
+                    <h3 style="margin:0;font-size:16px;font-weight:700;color:#92400e;">Konfirmasi Perbedaan Spesifikasi PC vs Master Barang</h3>
+                    <small style="color:#b45309;">Ditemukan perbedaan antara spesifikasi standar katalog dan telemetri fisik PC</small>
+                </div>
+            </div>
+            <button type="button" onclick="closePcSpecDiffModal()" style="background:none;border:none;font-size:22px;cursor:pointer;color:#92400e;line-height:1;">✕</button>
+        </div>
+        <div style="padding:16px 20px;overflow-y:auto;flex:1;">
+            <p style="margin-top:0;font-size:13px;color:#475569;">
+                Spesifikasi telemetri PC yang diimpor memiliki perbedaan dengan spesifikasi standar Master Barang yang dipilih. Silakan tentukan opsi untuk masing-masing spesifikasi:
+            </p>
+            <div id="pcSpecDiffTableContainer"></div>
+            
+            <div id="pcSpecDiffReasonSection" style="margin-top:16px;padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">
+                <label style="font-weight:700;font-size:13px;color:#1e293b;display:block;margin-bottom:8px;">Alasan Perubahan Spesifikasi:</label>
+                <div style="display:flex;gap:16px;margin-bottom:10px;">
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;margin:0;">
+                        <input type="radio" name="specChangeReasonRadio" value="upgrade" checked onchange="onSpecChangeReasonChanged()">
+                        <span><strong>Upgrade Fisik</strong> (Komponen/RAM/Storage telah ditambah/diganti)</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;margin:0;">
+                        <input type="radio" name="specChangeReasonRadio" value="correction" onchange="onSpecChangeReasonChanged()">
+                        <span><strong>Koreksi Data</strong> (Salah input awal / bukan upgrade fisik)</span>
+                    </label>
+                </div>
+                <div id="pcSpecUpgradeNoteBox">
+                    <label style="font-size:12px;color:#475569;display:block;margin-bottom:4px;">Catatan Upgrade (Akan dicatat di Riwayat Audit Upgrade Spesifikasi):</label>
+                    <input type="text" id="pcSpecUpgradeNoteInput" style="width:100%;box-sizing:border-box;padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;" placeholder="Contoh: Upgrade kapasitas RAM / SSD saat serah terima PC">
+                </div>
+            </div>
+        </div>
+        <div style="padding:12px 20px;border-top:1px solid #e2e8f0;background:#f8fafc;display:flex;justify-content:flex-end;gap:8px;">
+            <button type="button" class="btn" onclick="closePcSpecDiffModal()">Batal</button>
+            <button type="button" class="btn primary" onclick="applyPcSpecDifferences()">Terapkan Perubahan</button>
+        </div>
+    </div>
+</div>';
+
+    return '<section class="panel"><div class="split" style="align-items:center;margin-bottom:16px;"><div><h1 style="margin:0;">' . ($editing ? 'Edit' : 'Tambah') . ' Unit Aset</h1>' . $headerBadge . '</div><div><button type="button" class="btn warning" id="btnImportPc" onclick="openImportPcModal()" style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;font-weight:600;" title="Pilih Master Barang terlebih dahulu sebelum Import PC"><span style="font-size:16px;">📥</span> Import dari Data PC</button></div></div><form method="post"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="linked_pc_id" id="linkedPcId" value="' . e($linkedPcInfo['pc_id'] ?? '') . '"><div id="upgradeHiddenInputs"></div><h2>1. Klasifikasi Aset & Master Barang</h2><div class="grid three"><label>Komoditas (Grup Aset) *<select id="assetGroup" name="asset_group_id" onchange="onGroupSelectChanged()" required>' . asset_group_options($pdo, (int)$i['asset_group_id'], true, '- Pilih Komoditas (Grup Aset) -') . '</select></label><label>Kategori (Tipe Aset) *<select id="assetType" name="asset_type_id" onchange="reloadAssetForm()" required>' . $types . '</select></label><label>ID Aset (Kode Unit)<input id="assetCode" name="asset_code" value="' . e($code) . '" readonly></label></div><div class="grid two"><div style="position:relative;"><label for="masterItemSearch" style="display:flex;justify-content:space-between;align-items:center;"><span>Pilih / Cari Master Barang <span style="color:#ef4444;" title="Wajib dipilih">*</span></span><a href="' . route_url('asset_master_items') . '" target="_blank" style="font-size:12px;color:#0284c7;text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:3px;" title="Buka form Master Barang di tab baru">➕ Tambah Master Barang Baru ↗</a></label><div style="display:flex;gap:6px;align-items:stretch;"><div style="position:relative;flex:1;"><input type="text" id="masterItemSearch" placeholder="' . e($searchPlaceholder) . '" autocomplete="off" value="' . e($masterItemText) . '" style="width:100%;box-sizing:border-box;padding-right:58px;background:#fff;cursor:text;" onfocus="onMasterItemInput(this.value)" onclick="onMasterItemInput(this.value)" oninput="onMasterItemInput(this.value)" onkeydown="onMasterItemKeyDown(event)"><button type="button" id="masterItemClearBtn" style="display:' . (!empty($i['master_item_id']) ? 'block' : 'none') . ';position:absolute;right:28px;top:50%;transform:translateY(-50%);background:none;border:none;color:#94a3b8;cursor:pointer;font-size:16px;padding:4px 8px;z-index:2;" onclick="clearMasterItem()" title="Hapus pilihan">✕</button><span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);pointer-events:none;color:#94a3b8;font-size:12px;">▾</span><input type="hidden" id="masterItemIdInput" name="master_item_id" value="' . (int)($i['master_item_id'] ?? 0) . '"><div id="masterItemResults" style="display:none;position:absolute;left:0;right:0;top:calc(100% + 2px);max-height:280px;overflow-y:auto;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 12px 30px rgba(0,0,0,0.18);z-index:99999;"></div></div><a href="' . route_url('asset_master_items') . '" target="_blank" class="btn" style="padding:0 14px;background:#0284c7;color:#fff;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:bold;text-decoration:none;white-space:nowrap;" title="Tambah Master Barang Baru (Buka di Tab Baru)">➕</a></div><small id="masterItemHint" style="display:block;color:#64748b;margin-top:4px">' . (!empty($i['master_item_id']) ? '<span style="color:#166534;font-weight:600;">✓ Master Barang Terpilih (Siap Import dari PC)</span>' : 'Pilih Master Barang terlebih dahulu sebelum Import dari Data PC. Ketik nama untuk mencari.') . '</small></div><label>Mode Aset<select name="asset_mode" id="assetModeSelect">' . $modeOptions . '</select><small id="assetModeHint" style="display:block;color:#64748b;margin-top:4px">' . e($modeHint) . '</small></label></div><h2>2. Identifikasi & Serial Number Unit</h2><div id="identifierFields" class="grid three">' . $fields . '</div><h2>3. Spesifikasi Teknis Unit</h2><div id="specificationFields" class="grid three">' . $specFields . '</div>' . $logHtml . '<h2>4. Detail Barang & Merek</h2><div class="grid three"><label>Brand / Merk<select id="assetBrandId" name="brand_id">' . $brandOptions . '</select></label><label>Nama Brand (Teks)<input id="assetBrandInput" name="brand" value="' . e($i['brand']) . '" placeholder="Auto terisi dari master merk"></label><label>Model / Varian<input id="assetModelInput" name="model" value="' . e($i['model']) . '" placeholder="Contoh: ThinkPad T480 / OptiPlex 3080"></label></div><div class="grid two"><label>Nama Unit Aset (Deskriptif)<input id="assetNameInput" name="asset_name" value="' . e($i['asset_name']) . '" placeholder="Contoh: Laptop ThinkPad T480 IT"></label><label>Keterangan Tambahan<textarea name="notes" style="min-height:42px">' . e($i['notes']) . '</textarea></label></div><h2>5. Lokasi & Tanggung Jawab (Custodian)</h2><div class="grid three"><label>Lokasi Unit Aset *<select name="location_id" id="assetLocationId" required>' . $locationOptions . '</select></label><label>Detail Ruangan / Gedung<input name="location_label" id="assetLocationLabel" value="' . e($i['location_label']) . '" placeholder="Gedung / Lantai / Ruangan"></label><label>Company<select name="company_id">' . company_options($pdo, (int)$i['company_id']) . '</select></label></div><div class="grid two"><label>NIK Pengguna / Custodian<input id="assetCustodianNik" name="custodian_nik" value="' . e($i['custodian_nik'] ?? '') . '" placeholder="NIK karyawan"></label><label>Nama Pengguna / Custodian<input id="assetCustodianName" name="custodian_name" value="' . e($i['custodian_name'] ?? '') . '" placeholder="Nama pemakai / PIC aset"></label></div>' . (function_exists('employee_portal_name_picker_html') ? employee_portal_name_picker_html('assetCustodian', 'assetCustodianName', 'assetCustodianNik') : '') . '<h2>6. Pembelian / Garansi / Status</h2><div class="grid four"><label>Tanggal Perolehan / Beli<input type="date" name="installed_at" value="' . e($i['installed_at']) . '"></label><label>Harga Perolehan (Rp)<input type="number" name="purchase_value" value="' . e($i['purchase_value']) . '"></label><label>Garansi Berakhir<input type="date" name="warranty_until" value="' . e($i['warranty_until']) . '"></label><label>Status Unit *<select name="asset_status_id" required>' . asset_status_options($pdo, (int)$i['asset_status_id']) . '</select></label></div><div class="actions"><a class="btn" href="' . route_url('asset_items') . '">Batal</a><button class="btn primary">Simpan Unit Aset</button></div></form>' . $pcModalHtml . '</section><script>
 (function(){
     var sel = document.getElementById("assetModeSelect");
     var hint = document.getElementById("assetModeHint");
@@ -426,7 +476,9 @@ function asset_master_item_form_html(PDO $pdo, array $i, bool $editing): string
     }
 })();
 
+window._currentMasterItemSpecs = ' . json_encode($masterItemSpecs ?: new stdClass(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE) . ';
 window.allAssetTypes = ' . $jsonAllTypes . ';
+
 
 window.reloadAssetForm = async function(){
     var g = document.getElementById("assetGroup");
@@ -718,6 +770,27 @@ window.selectMasterItemObj = async function(it){
             nIn.value = it.item_name;
         }
     }
+
+    var specsObj = {};
+    if(it.specifications){
+        try {
+            specsObj = typeof it.specifications === "string" ? JSON.parse(it.specifications) : it.specifications;
+        } catch(e){
+            specsObj = {};
+        }
+    }
+    window._currentMasterItemSpecs = specsObj || {};
+    if(specsObj && typeof specsObj === "object"){
+        for(var spId in specsObj){
+            var inps = document.getElementsByName("specifications[" + spId + "]");
+            if(inps && inps.length > 0 && specsObj[spId] !== undefined && specsObj[spId] !== null){
+                inps[0].value = specsObj[spId];
+                inps[0].style.transition = "background-color 0.5s";
+                inps[0].style.backgroundColor = "#e0f2fe";
+                setTimeout(function(el){ return function(){ el.style.backgroundColor = ""; }; }(inps[0]), 1500);
+            }
+        }
+    }
 };
 
 window.clearMasterItem = function(){
@@ -731,6 +804,7 @@ window.clearMasterItem = function(){
     if(sClearBtn) sClearBtn.style.display = "none";
     if(sResults) sResults.style.display = "none";
     if(sHint) sHint.innerHTML = "<span style=\"color:#dc2626;font-weight:600;\">⚠️ Pilih Master Barang terlebih dahulu sebelum Import dari Data PC.</span>";
+    window._currentMasterItemSpecs = {};
 };
 
 document.addEventListener("click", function(e){
@@ -920,30 +994,54 @@ window.selectPcForImport = async function(pcId){
 
         // Auto-match Specification inputs in #specificationFields
         var specContainer = document.getElementById("specificationFields");
+        var diffsList = [];
         if(specContainer && res.specs){
             var rawSpecInputs = specContainer.getElementsByTagName("input");
             for(var si = 0; si < rawSpecInputs.length; si++){
                 var inp = rawSpecInputs[si];
                 if(!inp.name || inp.name.indexOf("specifications[") !== 0) continue;
-                var lbl = (inp.closest("label") ? inp.closest("label").textContent : "").toLowerCase();
+                var mId = inp.name.match(/specifications\[(\d+)\]/);
+                var spId = mId ? mId[1] : "";
+                var lbl = (inp.closest("label") ? inp.closest("label").textContent : "").replace(/\*/g, "").trim();
+                var lblLower = lbl.toLowerCase();
                 var val = "";
-                if(lbl.indexOf("proc") !== -1 || lbl.indexOf("cpu") !== -1 || lbl.indexOf("prosesor") !== -1){
-                    val = res.specs.processor;
-                } else if(lbl.indexOf("ram") !== -1 || lbl.indexOf("memory") !== -1 || lbl.indexOf("memori") !== -1){
-                    val = res.specs.ram;
-                } else if(lbl.indexOf("storage") !== -1 || lbl.indexOf("penyimpanan") !== -1 || lbl.indexOf("ssd") !== -1 || lbl.indexOf("hdd") !== -1 || lbl.indexOf("disk") !== -1){
-                    val = res.specs.storage;
-                } else if(lbl.indexOf("os") !== -1 || lbl.indexOf("sistem operasi") !== -1 || lbl.indexOf("windows") !== -1){
-                    val = res.specs.os;
-                } else if(lbl.indexOf("gpu") !== -1 || lbl.indexOf("vga") !== -1 || lbl.indexOf("grafis") !== -1 || lbl.indexOf("graphics") !== -1){
-                    val = res.specs.gpu;
+                if(lblLower.indexOf("proc") !== -1 || lblLower.indexOf("cpu") !== -1 || lblLower.indexOf("prosesor") !== -1){
+                    val = res.specs.processor || "";
+                } else if(lblLower.indexOf("ram") !== -1 || lblLower.indexOf("memory") !== -1 || lblLower.indexOf("memori") !== -1){
+                    val = res.specs.ram || "";
+                } else if(lblLower.indexOf("storage") !== -1 || lblLower.indexOf("penyimpanan") !== -1 || lblLower.indexOf("ssd") !== -1 || lblLower.indexOf("hdd") !== -1 || lblLower.indexOf("disk") !== -1){
+                    val = res.specs.storage || "";
+                } else if(lblLower.indexOf("os") !== -1 || lblLower.indexOf("sistem operasi") !== -1 || lblLower.indexOf("windows") !== -1){
+                    val = res.specs.os || "";
+                } else if(lblLower.indexOf("gpu") !== -1 || lblLower.indexOf("vga") !== -1 || lblLower.indexOf("grafis") !== -1 || lblLower.indexOf("graphics") !== -1){
+                    val = res.specs.gpu || "";
                 }
-                if(val){
-                    inp.value = val;
-                    inp.style.transition = "background-color 0.5s";
-                    inp.style.backgroundColor = "#dcfce7";
-                    setTimeout(function(el){ return function(){ el.style.backgroundColor = ""; }; }(inp), 2500);
+
+                if(!val) continue;
+
+                var currentVal = (inp.value || "").trim();
+                var masterVal = (window._currentMasterItemSpecs && window._currentMasterItemSpecs[spId] !== undefined) ? String(window._currentMasterItemSpecs[spId]).trim() : "";
+                var baselineVal = currentVal || masterVal;
+
+                if(baselineVal && val){
+                    var normBase = baselineVal.replace(/\s+/g, " ").trim().toLowerCase();
+                    var normVal = val.replace(/\s+/g, " ").trim().toLowerCase();
+                    if(normBase !== normVal){
+                        diffsList.push({
+                            spId: spId,
+                            specName: lbl || ("Spesifikasi #" + spId),
+                            baselineVal: baselineVal,
+                            pcVal: val,
+                            inp: inp
+                        });
+                        continue;
+                    }
                 }
+
+                inp.value = val;
+                inp.style.transition = "background-color 0.5s";
+                inp.style.backgroundColor = "#dcfce7";
+                setTimeout(function(el){ return function(){ el.style.backgroundColor = ""; }; }(inp), 2500);
             }
         }
 
@@ -964,6 +1062,50 @@ window.selectPcForImport = async function(pcId){
             }
         }
 
+        if(diffsList.length > 0){
+            window._pendingPcImport = {
+                res: res,
+                diffs: diffsList
+            };
+
+            var tableHtml = "<table style=\"width:100%;font-size:13px;border-collapse:collapse;margin-top:8px;\">";
+            tableHtml += "<thead><tr style=\"background:#f1f5f9;text-align:left;\">";
+            tableHtml += "<th style=\"padding:8px 10px;border-bottom:1px solid #cbd5e1;\">Spesifikasi</th>";
+            tableHtml += "<th style=\"padding:8px 10px;border-bottom:1px solid #cbd5e1;\">Standar Master Barang</th>";
+            tableHtml += "<th style=\"padding:8px 10px;border-bottom:1px solid #cbd5e1;\">Telemetri Fisik PC</th>";
+            tableHtml += "<th style=\"padding:8px 10px;border-bottom:1px solid #cbd5e1;text-align:center;\">Pilihan Nilai</th>";
+            tableHtml += "</tr></thead><tbody>";
+            diffsList.forEach(function(d, idx){
+                var shortPc = d.pcVal.length > 25 ? d.pcVal.substring(0, 22) + "..." : d.pcVal;
+                var shortBase = d.baselineVal.length > 25 ? d.baselineVal.substring(0, 22) + "..." : d.baselineVal;
+                tableHtml += "<tr style=\"border-bottom:1px solid #e2e8f0;\">";
+                tableHtml += "<td style=\"padding:8px 10px;font-weight:600;\">" + escapeHtml(d.specName) + "</td>";
+                tableHtml += "<td style=\"padding:8px 10px;color:#475569;\">" + escapeHtml(d.baselineVal) + "</td>";
+                tableHtml += "<td style=\"padding:8px 10px;color:#0284c7;font-weight:600;\">" + escapeHtml(d.pcVal) + "</td>";
+                tableHtml += "<td style=\"padding:8px 10px;text-align:center;\">";
+                tableHtml += "<select class=\"pc-spec-diff-choice\" data-idx=\"" + idx + "\" style=\"font-size:12px;padding:4px 8px;border-radius:4px;border:1px solid #cbd5e1;\">";
+                tableHtml += "<option value=\"pc\" selected>Gunakan Data PC (" + escapeHtml(shortPc) + ")</option>";
+                tableHtml += "<option value=\"master\">Tetap Master Barang (" + escapeHtml(shortBase) + ")</option>";
+                tableHtml += "</select>";
+                tableHtml += "</td>";
+                tableHtml += "</tr>";
+            });
+            tableHtml += "</tbody></table>";
+            var containerDiff = document.getElementById("pcSpecDiffTableContainer");
+            if(containerDiff) containerDiff.innerHTML = tableHtml;
+
+            var upgradeNoteInp = document.getElementById("pcSpecUpgradeNoteInput");
+            if(upgradeNoteInp){
+                var diffNames = diffsList.map(function(d){ return d.specName; }).join(", ");
+                upgradeNoteInp.value = "Upgrade spesifikasi (" + diffNames + ") dari telemetri PC " + res.pc_id;
+            }
+
+            window.closeImportPcModal();
+            var diffModal = document.getElementById("pcSpecDiffModal");
+            if(diffModal) diffModal.style.display = "flex";
+            return;
+        }
+
         window.closeImportPcModal();
         alert("✅ Berhasil mengimpor data PC: " + res.pc_id + " (" + (res.computer_name || "") + ")\nPengguna: " + (res.custodian_name || "-") + "\nSpesifikasi hardware telah diterapkan ke form unit aset.");
     } catch(err){
@@ -972,10 +1114,96 @@ window.selectPcForImport = async function(pcId){
     }
 };
 
+window.closePcSpecDiffModal = function(){
+    var m = document.getElementById("pcSpecDiffModal");
+    if(m) m.style.display = "none";
+};
+
+window.onSpecChangeReasonChanged = function(){
+    var r = document.querySelector("input[name=\"specChangeReasonRadio\"]:checked");
+    var reason = r ? r.value : "upgrade";
+    var noteBox = document.getElementById("pcSpecUpgradeNoteBox");
+    if(noteBox){
+        noteBox.style.display = (reason === "upgrade") ? "block" : "none";
+    }
+};
+
+window.applyPcSpecDifferences = function(){
+    if(!window._pendingPcImport || !Array.isArray(window._pendingPcImport.diffs)) return;
+    var res = window._pendingPcImport.res;
+    var diffs = window._pendingPcImport.diffs;
+    var choices = document.querySelectorAll(".pc-spec-diff-choice");
+    var r = document.querySelector("input[name=\"specChangeReasonRadio\"]:checked");
+    var reason = r ? r.value : "upgrade";
+    var customNoteInp = document.getElementById("pcSpecUpgradeNoteInput");
+    var customNote = customNoteInp ? customNoteInp.value.trim() : "";
+    var hiddenDiv = document.getElementById("upgradeHiddenInputs");
+    if(hiddenDiv) hiddenDiv.innerHTML = "";
+
+    var anyPcChosen = false;
+    choices.forEach(function(sel){
+        var idx = parseInt(sel.dataset.idx, 10);
+        var d = diffs[idx];
+        if(!d) return;
+        if(sel.value === "pc"){
+            anyPcChosen = true;
+            if(d.inp) {
+                d.inp.value = d.pcVal;
+                d.inp.style.transition = "background-color 0.5s";
+                d.inp.style.backgroundColor = "#dcfce7";
+                setTimeout(function(el){ return function(){ el.style.backgroundColor = ""; }; }(d.inp), 2500);
+            }
+            if(reason === "upgrade" && hiddenDiv){
+                var hSp = document.createElement("input");
+                hSp.type = "hidden";
+                hSp.name = "upgrade_flag_" + d.spId;
+                hSp.value = "1";
+                hiddenDiv.appendChild(hSp);
+
+                var hNote = document.createElement("input");
+                hNote.type = "hidden";
+                hNote.name = "upgrade_note_" + d.spId;
+                hNote.value = customNote || ("Upgrade " + d.specName + " ke " + d.pcVal + " (PC " + res.pc_id + ")");
+                hiddenDiv.appendChild(hNote);
+            }
+        } else {
+            if(d.inp) {
+                d.inp.value = d.baselineVal;
+            }
+        }
+    });
+
+    if(anyPcChosen && reason === "upgrade" && hiddenDiv){
+        var hFlag = document.createElement("input");
+        hFlag.type = "hidden";
+        hFlag.name = "upgrade_flag";
+        hFlag.value = "1";
+        hiddenDiv.appendChild(hFlag);
+
+        var hGlobalNote = document.createElement("input");
+        hGlobalNote.type = "hidden";
+        hGlobalNote.name = "upgrade_notes_custom";
+        hGlobalNote.value = customNote || ("Upgrade spesifikasi fisik dari telemetri PC " + res.pc_id);
+        hiddenDiv.appendChild(hGlobalNote);
+    }
+
+    window.closePcSpecDiffModal();
+    var statusMsg = anyPcChosen
+        ? (reason === "upgrade" 
+            ? "Spesifikasi PC telah diterapkan dan ditandai sebagai UPGRADE FISIK (akan dicatat di riwayat audit spesifikasi)."
+            : "Spesifikasi PC telah diterapkan sebagai KOREKSI DATA.")
+        : "Spesifikasi standar Master Barang tetap dipertahankan.";
+    alert("✅ Berhasil memproses data PC: " + res.pc_id + "\n\n" + statusMsg);
+};
+
 document.addEventListener("click", function(e){
     var m = document.getElementById("pcImportModal");
     if(m && e.target === m){
         window.closeImportPcModal();
+    }
+    var mDiff = document.getElementById("pcSpecDiffModal");
+    if(mDiff && e.target === mDiff){
+        window.closePcSpecDiffModal();
     }
 });
 </script>';
@@ -1140,22 +1368,36 @@ function save_asset_master_item(PDO $pdo, int $id, array $post): int
             $pdo->prepare('UPDATE asset_items SET serial_number=? WHERE id=?')->execute([$v, $id]);
         }
     }
+    // Fetch Master Barang baseline specs if master_item_id is set
+    $masterSpecs = [];
+    $masterItemId = (int)($post['master_item_id'] ?? 0);
+    if ($masterItemId > 0) {
+        $miRow = $pdo->query("SELECT specifications FROM asset_master_items WHERE id = {$masterItemId}")->fetch(PDO::FETCH_ASSOC);
+        if ($miRow && !empty($miRow['specifications'])) {
+            $masterSpecs = json_decode((string)$miRow['specifications'], true) ?: [];
+        }
+    }
+
     if (!empty($c['specifications']) && db_table_exists($pdo, 'asset_specifications')) {
         foreach ($c['specifications'] as $sp) {
             $spId = (int)$sp['id'];
             $v = trim((string)($post['specifications'][$spId] ?? ''));
             $pdo->prepare('INSERT INTO asset_specifications(asset_item_id,asset_type_specification_id,specification_value) VALUES (?,?,?) ON DUPLICATE KEY UPDATE specification_value=VALUES(specification_value)')->execute([$id, $spId, $v]);
 
-            if ($id > 0 && db_table_exists($pdo, 'asset_specification_logs')) {
-                $oldVal = $oldSpecs[$spId] ?? null;
-                if ($oldVal !== null && $oldVal !== $v) {
-                    $notes = 'Perubahan spesifikasi unit aset dari form edit.';
+            if (db_table_exists($pdo, 'asset_specification_logs')) {
+                $oldVal = $oldSpecs[$spId] ?? ($masterSpecs[$spId] ?? null);
+                $isUpgradeFlagged = !empty($post['upgrade_flag_' . $spId]) || !empty($post['upgrade_flag']);
+                $customUpgradeNote = trim((string)($post['upgrade_note_' . $spId] ?? ($post['upgrade_notes_custom'] ?? '')));
+
+                if ($oldVal !== null && $oldVal !== '' && $v !== '' && $oldVal !== $v) {
+                    $changeType = $isUpgradeFlagged ? 'upgrade' : 'update';
+                    $notes = $customUpgradeNote !== '' ? $customUpgradeNote : ($isUpgradeFlagged ? 'Upgrade spesifikasi unit aset' : 'Perubahan spesifikasi unit aset dari form.');
                     if (!empty($post['linked_pc_id'])) {
-                        $notes .= ' (Import / Link PC: ' . trim((string)$post['linked_pc_id']) . ')';
+                        $notes .= ' (PC: ' . trim((string)$post['linked_pc_id']) . ')';
                     }
                     $techName = $_SESSION['user']['username'] ?? 'admin';
                     $logStmt = $pdo->prepare('INSERT INTO asset_specification_logs (asset_item_id, asset_type_specification_id, specification_name, old_value, new_value, change_type, notes, technician_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-                    $logStmt->execute([$id, $spId, $sp['specification_name'], $oldVal, $v, 'upgrade', $notes, $techName]);
+                    $logStmt->execute([$id, $spId, $sp['specification_name'], $oldVal, $v, $changeType, $notes, $techName]);
                 }
             }
         }
@@ -2815,7 +3057,16 @@ function handle_route_asset_master_items(PDO $pdo): void
         $itemName = trim((string)($_POST['item_name'] ?? ''));
         $itemCode = strtoupper(trim((string)($_POST['item_code'] ?? '')));
         $modelName = trim((string)($_POST['model_name'] ?? ''));
-        $specifications = trim((string)($_POST['specifications'] ?? ''));
+        $specificationsRaw = $_POST['specifications'] ?? [];
+        if (is_array($specificationsRaw)) {
+            $cleanSpecs = [];
+            foreach ($specificationsRaw as $k => $v) {
+                $cleanSpecs[(int)$k] = trim((string)$v);
+            }
+            $specifications = json_encode($cleanSpecs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        } else {
+            $specifications = trim((string)$specificationsRaw);
+        }
         $description = trim((string)($_POST['description'] ?? ''));
         $isActive = isset($_POST['is_active']) ? 1 : 0;
 
@@ -2850,10 +3101,14 @@ function handle_route_asset_master_items(PDO $pdo): void
 
     $editId = (int)($_GET['id'] ?? 0);
     $edit = null;
+    $existingMiSpecs = [];
     if ($editId > 0) {
         $stmt = $pdo->prepare("SELECT * FROM asset_master_items WHERE id = ?");
         $stmt->execute([$editId]);
         $edit = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($edit && !empty($edit['specifications'])) {
+            $existingMiSpecs = json_decode((string)$edit['specifications'], true) ?: [];
+        }
     }
 
     // Filter params
@@ -2902,26 +3157,36 @@ function handle_route_asset_master_items(PDO $pdo): void
 
     // Form Section
     echo '<section class="panel">';
-    echo '<div class="split"><h1>' . ($edit ? 'Edit Master Barang' : 'Tambah Master Barang (Katalog SKU)') . '</h1>';
+    echo '<div class="split" style="align-items:center;"><div><h1 style="margin:0;">' . ($edit ? 'Edit Master Barang' : 'Tambah Master Barang (Katalog SKU)') . '</h1></div>';
+    echo '<div style="display:flex;gap:8px;">';
+    echo '<button type="button" class="btn warning" id="btnMiImportPc" onclick="openMiImportPcModal()" style="display:inline-flex;align-items:center;gap:6px;font-weight:600;"><span style="font-size:16px;">📥</span> Import dari Data PC</button>';
     if ($edit) {
         echo '<a class="btn" href="' . route_url('asset_master_items') . '">+ Tambah Barang Baru</a>';
     }
-    echo '</div>';
+    echo '</div></div>';
+
     echo '<form method="post" style="margin-top:14px"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="id" value="' . (int)($edit['id'] ?? 0) . '">';
     echo '<div class="grid three">';
     echo '<label>Komoditas (Grup Aset) *<select id="miGroup" name="asset_group_id" onchange="onMiGroupChanged()" required>' . asset_group_options($pdo, (int)($edit['asset_group_id'] ?? 0), true, '- Pilih Komoditas -') . '</select></label>';
-    echo '<label>Kategori (Tipe Aset) *<select id="miType" name="asset_type_id" required>' . asset_type_options($pdo, (int)($edit['asset_type_id'] ?? 0), (int)($edit['asset_group_id'] ?? 0)) . '</select></label>';
-    echo '<label>Brand / Merk<select name="brand_id">' . asset_brand_options($pdo, (int)($edit['brand_id'] ?? 0)) . '</select></label>';
+    echo '<label>Kategori (Tipe Aset) *<select id="miType" name="asset_type_id" onchange="onMiTypeChanged()" required>' . asset_type_options($pdo, (int)($edit['asset_type_id'] ?? 0), (int)($edit['asset_group_id'] ?? 0)) . '</select></label>';
+    echo '<label>Brand / Merk<select id="miBrandId" name="brand_id">' . asset_brand_options($pdo, (int)($edit['brand_id'] ?? 0)) . '</select></label>';
     echo '</div>';
     echo '<div class="grid three">';
-    echo '<label>Kode Barang / SKU<input name="item_code" value="' . e($edit['item_code'] ?? '') . '" placeholder="Auto jika dikosongkan (contoh: IT-LPT-LEN-001)"></label>';
-    echo '<label>Nama Barang / Model Lengkap *<input name="item_name" required value="' . e($edit['item_name'] ?? '') . '" placeholder="Contoh: Lenovo ThinkPad T480 Core i5 8GB 256GB"></label>';
-    echo '<label>Model / Varian Spesifik<input name="model_name" value="' . e($edit['model_name'] ?? '') . '" placeholder="Contoh: ThinkPad T480 / OptiPlex 3080"></label>';
+    echo '<label>Kode Barang / SKU<input id="miItemCode" name="item_code" value="' . e($edit['item_code'] ?? '') . '" placeholder="Auto jika dikosongkan (contoh: IT-LPT-LEN-001)"></label>';
+    echo '<label>Nama Barang / Model Lengkap *<input id="miItemName" name="item_name" required value="' . e($edit['item_name'] ?? '') . '" placeholder="Contoh: Lenovo ThinkPad T480 Core i5 8GB 256GB"></label>';
+    echo '<label>Model / Varian Spesifik<input id="miModelName" name="model_name" value="' . e($edit['model_name'] ?? '') . '" placeholder="Contoh: ThinkPad T480 / OptiPlex 3080"></label>';
     echo '</div>';
-    echo '<div class="grid two">';
-    echo '<label>Spesifikasi Standar<textarea name="specifications" placeholder="Contoh: CPU Intel Core i5-8250U, RAM 8GB DDR4, SSD 256GB, Layar 14 inch">' . e($edit['specifications'] ?? '') . '</textarea></label>';
-    echo '<label>Deskripsi / Keterangan Katalog<textarea name="description" placeholder="Catatan kegunaan, part pengganti, atau informasi garansi vendor">' . e($edit['description'] ?? '') . '</textarea></label>';
+
+    // Dynamic Category Specifications container
+    echo '<div style="margin-top:14px;padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">';
+    echo '<h3 style="margin:0 0 10px 0;font-size:14px;font-weight:700;color:#1e293b;display:flex;align-items:center;gap:6px;"><span>⚙️ Spesifikasi Standar Master Barang (Sesuai Komoditas & Kategori)</span></h3>';
+    echo '<div id="miSpecificationFields" class="grid three"><div class="muted" style="grid-column:1/-1;font-size:13px;padding:4px 0;">ℹ️ Pilih Komoditas dan Kategori di atas untuk memuat kolom spesifikasi standar.</div></div>';
     echo '</div>';
+
+    echo '<div class="grid one" style="margin-top:12px;">';
+    echo '<label>Deskripsi / Keterangan Katalog<textarea name="description" placeholder="Catatan kegunaan, part pengganti, atau informasi garansi vendor" style="min-height:50px;">' . e($edit['description'] ?? '') . '</textarea></label>';
+    echo '</div>';
+
     echo '<div class="split" style="margin-top:8px">';
     echo '<label style="margin:0"><input style="width:auto" type="checkbox" name="is_active" ' . ((!$edit || (int)$edit['is_active']) ? 'checked' : '') . '> Aktif (Tampil di pemilihan unit aset fisik)</label>';
     echo '<div class="actions">';
@@ -2980,8 +3245,72 @@ function handle_route_asset_master_items(PDO $pdo): void
     }
     echo '</section>';
 
-    // Dynamic Category script
+    // PC Import Modal for Master Barang
+    echo '
+<div id="miPcImportModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,0.6);backdrop-filter:blur(2px);z-index:999999;align-items:center;justify-content:center;padding:20px;">
+    <div style="background:#fff;border-radius:12px;width:100%;max-width:860px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 25px 50px -12px rgba(0,0,0,0.25);overflow:hidden;">
+        <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;background:#f8fafc;">
+            <div style="display:flex;align-items:center;gap:10px;">
+                <span style="font-size:22px;">📥</span>
+                <div>
+                    <h3 style="margin:0;font-size:16px;font-weight:700;color:#1e293b;">Import Master Barang dari Data PC</h3>
+                    <small style="color:#64748b;">Pilih PC untuk mengisi Brand, Model Populer (AI), dan Spesifikasi Standar Katalog</small>
+                </div>
+            </div>
+            <button type="button" onclick="closeMiImportPcModal()" style="background:none;border:none;font-size:22px;cursor:pointer;color:#64748b;line-height:1;">✕</button>
+        </div>
+        <div style="padding:14px 20px;border-bottom:1px solid #f1f5f9;background:#ffffff;">
+            <div style="display:flex;gap:10px;">
+                <input type="text" id="miPcImportSearch" placeholder="Ketik PC ID, Computer Name, Brand, NIK..." style="flex:1;" oninput="debounceMiPcSearch(this.value)">
+                <button type="button" class="btn" onclick="fetchMiPcList()">Cari</button>
+            </div>
+        </div>
+        <div style="padding:0;overflow-y:auto;flex:1;" id="miPcImportTableContainer">
+            <div style="text-align:center;padding:40px;color:#64748b;">Ketik pencarian atau tunggu daftar PC dimuat...</div>
+        </div>
+        <div style="padding:12px 20px;border-top:1px solid #e2e8f0;background:#f8fafc;display:flex;justify-content:flex-end;">
+            <button type="button" class="btn" onclick="closeMiImportPcModal()">Batal</button>
+        </div>
+    </div>
+</div>';
+
+    // Script block for Master Barang
+    $existingMiSpecsJson = json_encode($existingMiSpecs ?: new stdClass(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE);
     echo '<script>
+    window._existingMiSpecs = ' . $existingMiSpecsJson . ';
+
+    window.loadMiSpecifications = async function(typeId, groupId, fillValues){
+        var container = document.getElementById("miSpecificationFields");
+        if(!container) return;
+        var tid = parseInt(typeId, 10) || 0;
+        var gid = parseInt(groupId, 10) || 0;
+        if(tid <= 0 || gid <= 0){
+            container.innerHTML = "<div class=\"muted\" style=\"grid-column:1/-1;font-size:13px;padding:4px 0;\">ℹ️ Pilih Komoditas dan Kategori di atas untuk memuat kolom spesifikasi standar.</div>";
+            return;
+        }
+        container.innerHTML = "<div class=\"muted\" style=\"grid-column:1/-1;font-size:13px;padding:4px 0;\">⏳ Memuat kolom spesifikasi...</div>";
+        try {
+            var r = await fetch("index.php?route=api_asset_type_config&type_id=" + tid + "&group_id=" + gid);
+            var all = await r.json();
+            if(Array.isArray(all.specifications) && all.specifications.length > 0){
+                var vals = fillValues || window._existingMiSpecs || {};
+                var html = "";
+                all.specifications.forEach(function(sp){
+                    var v = vals[sp.id] !== undefined ? vals[sp.id] : "";
+                    var dt = (sp.data_type === "number") ? "number" : ((sp.data_type === "date") ? "date" : "text");
+                    var star = sp.is_required ? " *" : "";
+                    var req = sp.is_required ? " required" : "";
+                    html += "<label>" + (sp.specification_name || "") + star + "<input type=\"" + dt + "\" name=\"specifications[" + sp.id + "]\" value=\"" + String(v).replace(/"/g, "&quot;") + "\"" + req + " placeholder=\"Masukkan " + (sp.specification_name || "") + "\"></label>";
+                });
+                container.innerHTML = html;
+            } else {
+                container.innerHTML = "<div class=\"muted\" style=\"grid-column:1/-1;font-size:13px;padding:4px 0;\">ℹ️ Tidak ada kolom spesifikasi khusus yang terdaftar untuk kategori ini.</div>";
+            }
+        } catch(e) {
+            container.innerHTML = "<div class=\"muted\" style=\"grid-column:1/-1;font-size:13px;padding:4px 0;color:#dc2626;\">Gagal memuat spesifikasi: " + e.message + "</div>";
+        }
+    };
+
     window.onMiGroupChanged = async function(){
         var miGroup = document.getElementById("miGroup");
         var miType = document.getElementById("miType");
@@ -2989,6 +3318,7 @@ function handle_route_asset_master_items(PDO $pdo): void
         var gid = parseInt(miGroup.value, 10) || 0;
         if(gid === 0){
             miType.innerHTML = "<option value=\"\">- Pilih Komoditas Terlebih Dahulu -</option>";
+            window.loadMiSpecifications(0, 0);
             return;
         }
         miType.innerHTML = "<option value=\"\">Memuat Kategori...</option>";
@@ -3004,18 +3334,203 @@ function handle_route_asset_master_items(PDO $pdo): void
                 opts = "<option value=\"\">- Belum ada kategori untuk komoditas ini -</option>";
             }
             miType.innerHTML = opts;
+            window.loadMiSpecifications(0, gid);
         } catch(e) {
             miType.innerHTML = "<option value=\"\">Gagal memuat kategori</option>";
         }
     };
-    var miGroupEl = document.getElementById("miGroup");
-    if(miGroupEl){
-        miGroupEl.addEventListener("change", window.onMiGroupChanged);
-    }
+
+    window.onMiTypeChanged = function(){
+        var miGroup = document.getElementById("miGroup");
+        var miType = document.getElementById("miType");
+        if(miGroup && miType){
+            window.loadMiSpecifications(miType.value, miGroup.value);
+        }
+    };
+
+    // Auto-load specifications on edit or pre-selected category
+    (function(){
+        var miGroup = document.getElementById("miGroup");
+        var miType = document.getElementById("miType");
+        if(miGroup && miType && parseInt(miType.value, 10) > 0){
+            window.loadMiSpecifications(miType.value, miGroup.value, window._existingMiSpecs);
+        }
+    })();
+
+    // PC Import for Master Items
+    window.openMiImportPcModal = function(){
+        var m = document.getElementById("miPcImportModal");
+        if(m){
+            m.style.display = "flex";
+            var sIn = document.getElementById("miPcImportSearch");
+            if(sIn){
+                sIn.focus();
+                window.fetchMiPcList(sIn.value);
+            } else {
+                window.fetchMiPcList("");
+            }
+        }
+    };
+
+    window.closeMiImportPcModal = function(){
+        var m = document.getElementById("miPcImportModal");
+        if(m) m.style.display = "none";
+    };
+
+    var _miPcSearchTimer = null;
+    window.debounceMiPcSearch = function(val){
+        if(_miPcSearchTimer) clearTimeout(_miPcSearchTimer);
+        _miPcSearchTimer = setTimeout(function(){
+            window.fetchMiPcList(val);
+        }, 300);
+    };
+
+    window.fetchMiPcList = async function(query){
+        var container = document.getElementById("miPcImportTableContainer");
+        if(!container) return;
+        if(typeof query === "undefined"){
+            query = (document.getElementById("miPcImportSearch")?.value || "").trim();
+        }
+        container.innerHTML = "<div style=\"text-align:center;padding:30px;color:#64748b;\">⏳ Memuat daftar PC...</div>";
+        try {
+            var resp = await fetch("index.php?route=api_pc_import&q=" + encodeURIComponent(query));
+            var res = await resp.json();
+            if(!res.ok || !Array.isArray(res.data) || res.data.length === 0){
+                container.innerHTML = "<div style=\"text-align:center;padding:30px;color:#64748b;\">Tidak ditemukan PC dengan kata kunci \"" + (query || "") + "\".</div>";
+                return;
+            }
+            var html = "<table style=\"width:100%;font-size:13px;border-collapse:collapse;\"><thead><tr style=\"background:#f8fafc;border-bottom:1px solid #e2e8f0;text-align:left;\"><th style=\"padding:10px 14px;\">PC ID</th><th style=\"padding:10px 14px;\">Nama Komputer</th><th style=\"padding:10px 14px;\">Brand / Manufaktur</th><th style=\"padding:10px 14px;\">Model Hardware</th><th style=\"padding:10px 14px;text-align:center;\">Aksi</th></tr></thead><tbody>";
+            res.data.forEach(function(pc){
+                var mfr = pc.specs ? (pc.specs.manufacturer || "-") : "-";
+                var mdl = pc.specs ? (pc.specs.model || "-") : "-";
+                html += "<tr style=\"border-bottom:1px solid #f1f5f9;\"><td style=\"padding:10px 14px;font-weight:700;\">" + pc.pc_id + "</td><td style=\"padding:10px 14px;\">" + (pc.computer_name || "-") + "</td><td style=\"padding:10px 14px;\">" + mfr + "</td><td style=\"padding:10px 14px;\">" + mdl + "</td><td style=\"padding:10px 14px;text-align:center;\"><button type=\"button\" class=\"btn small primary\" data-pc=\"" + pc.pc_id + "\" onclick=\"selectPcForMi(this.dataset.pc)\">Pilih PC</button></td></tr>";
+            });
+            html += "</tbody></table>";
+            container.innerHTML = html;
+        } catch(err){
+            container.innerHTML = "<div style=\"text-align:center;padding:30px;color:#dc2626;\">Gagal memuat data PC: " + err.message + "</div>";
+        }
+    };
+
+    window.selectPcForMi = async function(pcId){
+        var container = document.getElementById("miPcImportTableContainer");
+        if(container) container.innerHTML = "<div style=\"text-align:center;padding:30px;color:#0284c7;\">⏳ Mengimpor telemetri hardware & menganalisis model populer (AI)...</div>";
+        try {
+            var resp = await fetch("index.php?route=api_pc_import&pc_id=" + encodeURIComponent(pcId));
+            var res = await resp.json();
+            if(!res.ok){
+                alert("Gagal mengambil data PC: " + (res.error || "Unknown error"));
+                window.fetchMiPcList();
+                return;
+            }
+
+            // Auto-select IT group and Computer/Laptop category if not set
+            var gSel = document.getElementById("miGroup");
+            var tSel = document.getElementById("miType");
+            if(gSel && (!gSel.value || gSel.value === "0")){
+                for(var i=0; i<gSel.options.length; i++){
+                    if(gSel.options[i].text.toUpperCase().indexOf("IT") !== -1){
+                        gSel.selectedIndex = i;
+                        await window.onMiGroupChanged();
+                        break;
+                    }
+                }
+            }
+            if(tSel && (!tSel.value || tSel.value === "0")){
+                for(var j=0; j<tSel.options.length; j++){
+                    var txt = tSel.options[j].text.toUpperCase();
+                    if(txt.indexOf("CMP") !== -1 || txt.indexOf("COMPUTER") !== -1 || txt.indexOf("KOMPUTER") !== -1 || txt.indexOf("LPT") !== -1 || txt.indexOf("LAPTOP") !== -1){
+                        tSel.selectedIndex = j;
+                        break;
+                    }
+                }
+            }
+
+            // Await specifications container for current group & type
+            if(tSel && gSel && parseInt(tSel.value, 10) > 0){
+                await window.loadMiSpecifications(tSel.value, gSel.value);
+            }
+
+            // Resolve Brand & Model via AI endpoint
+            var mfr = res.specs ? (res.specs.manufacturer || "") : "";
+            var rawModel = res.specs ? (res.specs.model || "") : "";
+            var cpu = res.specs ? (res.specs.processor || "") : "";
+            var ram = res.specs ? (res.specs.ram || "") : "";
+            var storage = res.specs ? (res.specs.storage || "") : "";
+
+            var aiUrl = "index.php?route=api_ai_resolve_model&manufacturer=" + encodeURIComponent(mfr) + "&model=" + encodeURIComponent(rawModel) + "&processor=" + encodeURIComponent(cpu) + "&ram=" + encodeURIComponent(ram) + "&storage=" + encodeURIComponent(storage);
+            var aiReq = await fetch(aiUrl);
+            var aiRes = await aiReq.json();
+
+            // Populate Brand
+            var bSel = document.getElementById("miBrandId");
+            if(bSel && aiRes.ok){
+                if(aiRes.brand_id){
+                    bSel.value = aiRes.brand_id;
+                } else if(aiRes.brand_name){
+                    for(var k=0; k<bSel.options.length; k++){
+                        if(bSel.options[k].text.toUpperCase().indexOf(aiRes.brand_name.toUpperCase()) !== -1){
+                            bSel.selectedIndex = k;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Populate Model Name
+            var mIn = document.getElementById("miModelName");
+            if(mIn){
+                mIn.value = (aiRes.ok && aiRes.popular_model) ? aiRes.popular_model : rawModel;
+            }
+
+            // Populate Item Name
+            var nIn = document.getElementById("miItemName");
+            if(nIn){
+                nIn.value = (aiRes.ok && aiRes.suggested_item_name) ? aiRes.suggested_item_name : (mfr + " " + (aiRes.popular_model || rawModel));
+            }
+
+            // Map PC hardware telemetry to specifications in #miSpecificationFields
+            var miSpecContainer = document.getElementById("miSpecificationFields");
+            if(miSpecContainer && res.specs){
+                var inputs = miSpecContainer.getElementsByTagName("input");
+                for(var si = 0; si < inputs.length; si++){
+                    var inp = inputs[si];
+                    if(!inp.name || inp.name.indexOf("specifications[") !== 0) continue;
+                    var lbl = (inp.closest("label") ? inp.closest("label").textContent : "").toLowerCase();
+                    var val = "";
+                    if(lbl.indexOf("proc") !== -1 || lbl.indexOf("cpu") !== -1 || lbl.indexOf("prosesor") !== -1){
+                        val = res.specs.processor;
+                    } else if(lbl.indexOf("ram") !== -1 || lbl.indexOf("memory") !== -1 || lbl.indexOf("memori") !== -1){
+                        val = res.specs.ram;
+                    } else if(lbl.indexOf("storage") !== -1 || lbl.indexOf("penyimpanan") !== -1 || lbl.indexOf("ssd") !== -1 || lbl.indexOf("hdd") !== -1 || lbl.indexOf("disk") !== -1){
+                        val = res.specs.storage;
+                    } else if(lbl.indexOf("os") !== -1 || lbl.indexOf("sistem operasi") !== -1 || lbl.indexOf("windows") !== -1){
+                        val = res.specs.os;
+                    } else if(lbl.indexOf("gpu") !== -1 || lbl.indexOf("vga") !== -1 || lbl.indexOf("grafis") !== -1 || lbl.indexOf("graphics") !== -1){
+                        val = res.specs.gpu;
+                    }
+                    if(val){
+                        inp.value = val;
+                        inp.style.transition = "background-color 0.5s";
+                        inp.style.backgroundColor = "#dcfce7";
+                        setTimeout(function(el){ return function(){ el.style.backgroundColor = ""; }; }(inp), 2500);
+                    }
+                }
+            }
+
+            window.closeMiImportPcModal();
+            var modelDisplay = (aiRes.ok && aiRes.popular_model) ? aiRes.popular_model : rawModel;
+            alert("✅ Berhasil mengimpor data Master Barang dari PC: " + res.pc_id + "\n\nModel Populer: " + modelDisplay + "\nBrand: " + (aiRes.brand_name || mfr) + "\nSpesifikasi standar telah terisi.");
+        } catch(err){
+            alert("Terjadi kesalahan saat memproses data PC: " + err.message);
+            window.fetchMiPcList();
+        }
+    };
     </script>';
 
     render_footer();
 }
+
 
 function handle_route_asset_items(PDO $pdo): void
 {

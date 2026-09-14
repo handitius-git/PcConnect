@@ -679,6 +679,183 @@ function handle_route_api_pc_import(PDO $pdo): void
     exit;
 }
 
+function handle_route_api_ai_resolve_model(PDO $pdo): void
+{
+    require_login();
+    $mfr = trim((string)($_REQUEST['manufacturer'] ?? ''));
+    $model = trim((string)($_REQUEST['model'] ?? ''));
+    $processor = trim((string)($_REQUEST['processor'] ?? ''));
+    $ram = trim((string)($_REQUEST['ram'] ?? ''));
+    $storage = trim((string)($_REQUEST['storage'] ?? ''));
+
+    // Match brand
+    $cleanMfr = preg_replace('/\b(inc|corp|corporation|ltd|co|limited|computer|gmbh|systems)\b\.?/i', '', $mfr);
+    $cleanMfr = trim($cleanMfr, " ,.-");
+
+    $brandId = null;
+    $brandName = '';
+    $brands = $pdo->query("SELECT id, brand_code, brand_name FROM asset_brands WHERE is_active = 1")->fetchAll(PDO::FETCH_ASSOC);
+    
+    // First try exact / substring match
+    foreach ($brands as $b) {
+        $bName = trim($b['brand_name']);
+        if ($bName !== '' && (stripos($cleanMfr, $bName) !== false || stripos($mfr, $bName) !== false || stripos($bName, $cleanMfr) !== false)) {
+            $brandId = (int)$b['id'];
+            $brandName = $bName;
+            break;
+        }
+    }
+    // Specific aliases
+    if (!$brandId) {
+        $aliases = [
+            'hewlett-packard' => 'HP',
+            'hp' => 'HP',
+            'asustek' => 'ASUS',
+            'asus' => 'ASUS',
+            'lenovo' => 'Lenovo',
+            'dell' => 'Dell',
+            'acer' => 'Acer',
+            'apple' => 'Apple',
+            'msi' => 'MSI',
+        ];
+        foreach ($aliases as $aliasKey => $aliasVal) {
+            if (stripos($mfr, $aliasKey) !== false) {
+                foreach ($brands as $b) {
+                    if (strcasecmp($b['brand_name'], $aliasVal) === 0) {
+                        $brandId = (int)$b['id'];
+                        $brandName = $b['brand_name'];
+                        break 2;
+                    }
+                }
+            }
+        }
+    }
+
+    $popularModel = '';
+    $method = 'fallback';
+
+    // 1. Try Gemini AI if API key is configured
+    $apiKey = trim((string)(config_value('gemini_api_key') ?: getenv('GEMINI_API_KEY') ?: ''));
+    if ($apiKey !== '' && ($model !== '' || $mfr !== '')) {
+        $prompt = "You are an IT hardware expert. Identify the popular commercial marketing product model name for this PC hardware.\nManufacturer: {$mfr}\nSystem Model/Board: {$model}\nCPU: {$processor}\n\nRespond with ONLY a JSON object: {\"popular_model\": \"string (e.g. ThinkPad T480, OptiPlex 3080, Latitude 5490, EliteBook 840 G5, etc.)\"}";
+        $candidateModels = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+        foreach ($candidateModels as $cMod) {
+            $url = 'https://generativelanguage.googleapis.com/v1beta/models/' . urlencode($cMod) . ':generateContent?key=' . urlencode($apiKey);
+            $payload = [
+                'contents' => [
+                    ['parts' => [['text' => $prompt]]]
+                ],
+                'generationConfig' => [
+                    'temperature' => 0.1,
+                    'maxOutputTokens' => 150,
+                ]
+            ];
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+            curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+            $res = curl_exec($ch);
+            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            if ($code === 200 && $res) {
+                $j = json_decode((string)$res, true);
+                $aiTxt = $j['candidates'][0]['content']['parts'][0]['text'] ?? '';
+                if (preg_match('/\{[\s\S]*\}/', $aiTxt, $mMatch)) {
+                    $aiObj = json_decode($mMatch[0], true);
+                    if (!empty($aiObj['popular_model'])) {
+                        $popularModel = trim((string)$aiObj['popular_model']);
+                        $method = 'gemini_ai (' . $cMod . ')';
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Rule-based resolver / dictionary if AI did not return a result
+    if ($popularModel === '') {
+        $uModel = strtoupper($model);
+        // Lenovo Machine Types
+        $lenovoPatterns = [
+            '/20L7|20L8/' => 'ThinkPad T480',
+            '/20NX|20NY/' => 'ThinkPad T490',
+            '/20UD|20UE/' => 'ThinkPad T14 Gen 1 (AMD)',
+            '/20S0|20S1/' => 'ThinkPad T14 Gen 1 (Intel)',
+            '/20W0|20W1/' => 'ThinkPad T14 Gen 2 (Intel)',
+            '/20XK|20XL/' => 'ThinkPad T14 Gen 2 (AMD)',
+            '/20QD|20QE/' => 'ThinkPad X1 Carbon 7th',
+            '/20U9|20UA/' => 'ThinkPad X1 Carbon 8th',
+            '/20XW|20XX/' => 'ThinkPad X1 Carbon 9th',
+            '/20KF|20KE/' => 'ThinkPad X280',
+            '/20K6|20K5/' => 'ThinkPad X270',
+            '/20L5|20L6/' => 'ThinkPad T580',
+            '/20N2|20N3/' => 'ThinkPad T490s',
+            '/20N4|20N5/' => 'ThinkPad T590',
+            '/20Q0|20Q1/' => 'ThinkPad X390',
+            '/10AA|10AB/' => 'ThinkCentre M73',
+            '/10FM|10FL/' => 'ThinkCentre M900',
+            '/10ST|10SU/' => 'ThinkCentre M720q Tiny',
+            '/11DT|11DU/' => 'ThinkCentre M70q Tiny',
+        ];
+        foreach ($lenovoPatterns as $pattern => $name) {
+            if (preg_match($pattern, $uModel)) {
+                $popularModel = $name;
+                $method = 'smart_regex';
+                break;
+            }
+        }
+        // If model already contains well-known series name:
+        if ($popularModel === '') {
+            $wellKnown = ['THINKPAD', 'IDEAPAD', 'THINKCENTRE', 'OPTIPLEX', 'LATITUDE', 'VOSTRO', 'PRECISION', 'ELITEBOOK', 'PROBOOK', 'PRODESK', 'ELITEDESK', 'PAVILION', 'ASPIRE', 'VIVOBOOK', 'ZENBOOK', 'MACBOOK'];
+            foreach ($wellKnown as $wk) {
+                if (stripos($model, $wk) !== false) {
+                    $popularModel = $model;
+                    $method = 'direct';
+                    break;
+                }
+            }
+        }
+        if ($popularModel === '') {
+            $popularModel = $model ?: 'Standard PC';
+        }
+    }
+
+    // Short CPU description for item name
+    $shortCpu = '';
+    if ($processor !== '') {
+        if (preg_match('/(Core\s+i[3579]-[\w]+)/i', $processor, $cm)) {
+            $shortCpu = $cm[1];
+        } elseif (preg_match('/(Ryzen\s+[3579]\s+[\w]+)/i', $processor, $rm)) {
+            $shortCpu = $rm[1];
+        } elseif (preg_match('/(i[3579]-[\w]+)/i', $processor, $cm2)) {
+            $shortCpu = 'Core ' . $cm2[1];
+        }
+    }
+
+    // Suggested Item Name: e.g. "Lenovo ThinkPad T480 Core i5-8250U 8GB"
+    $suggestedNameParts = array_filter([
+        $brandName ?: $cleanMfr,
+        $popularModel,
+        $shortCpu,
+    ]);
+    $suggestedItemName = implode(' ', $suggestedNameParts);
+
+    api_json([
+        'ok' => true,
+        'brand_id' => $brandId,
+        'brand_name' => $brandName,
+        'popular_model' => $popularModel,
+        'raw_model' => $model,
+        'method' => $method,
+        'suggested_item_name' => $suggestedItemName,
+    ]);
+}
+
 
 
 
