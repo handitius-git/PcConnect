@@ -1388,6 +1388,292 @@ function handle_route_maintenance_unlock(PDO $pdo): void
     redirect_to('maintenance_do', ['id' => $id]);
 }
 
+/**
+ * Katalog Template Tugas Standar Preventive Maintenance Berdasarkan Komoditas & Kategori Aset
+ */
+function get_standard_preventive_tasks_catalog(PDO $pdo, ?int $groupId, ?int $typeId, string $deskName = ''): array
+{
+    $typeCode = '';
+    $typeName = '';
+    $groupCode = '';
+    $groupName = '';
+
+    if ($typeId && $typeId > 0) {
+        $stT = $pdo->prepare('SELECT type_code, type_name, asset_group_id FROM asset_types WHERE id = ?');
+        $stT->execute([$typeId]);
+        $tRow = $stT->fetch(PDO::FETCH_ASSOC);
+        if ($tRow) {
+            $typeCode = strtoupper(trim((string)$tRow['type_code']));
+            $typeName = trim((string)$tRow['type_name']);
+            if (!$groupId && !empty($tRow['asset_group_id'])) {
+                $groupId = (int)$tRow['asset_group_id'];
+            }
+        }
+    }
+
+    if ($groupId && $groupId > 0) {
+        $stG = $pdo->prepare('SELECT group_code, group_name FROM asset_groups WHERE id = ?');
+        $stG->execute([$groupId]);
+        $gRow = $stG->fetch(PDO::FETCH_ASSOC);
+        if ($gRow) {
+            $groupCode = strtoupper(trim((string)$gRow['group_code']));
+            $groupName = trim((string)$gRow['group_name']);
+        }
+    }
+
+    $haystack = strtolower($typeCode . ' ' . $typeName . ' ' . $groupCode . ' ' . $groupName . ' ' . $deskName);
+
+    // Kategori Notebook / Laptop
+    if ($typeCode === 'NBK' || str_contains($haystack, 'notebook') || str_contains($haystack, 'laptop')) {
+        return [
+            'category_label' => 'Notebook',
+            'tasks' => [
+                ['title' => 'Pembersihan Casing & Palmrest Laptop', 'estimated_minutes' => 5, 'description' => 'Bersihkan casing luar, palmrest, bezel layar, dan sela tombol dengan cairan pembersih aman.'],
+                ['title' => 'Pembersihan Layar LCD / Monitor Notebook', 'estimated_minutes' => 5, 'description' => 'Bersihkan panel layar notebook dari noda/debu menggunakan cairan khusus LCD dan lap microfiber lembut.'],
+                ['title' => 'Pembersihan Keyboard & Touchpad Notebook', 'estimated_minutes' => 5, 'description' => 'Gunakan kuas halus atau blower untuk membersihkan debu dan remah kotoran pada sela tombol keyboard dan touchpad.'],
+                ['title' => 'Pembersihan Kisi-Kisi Ventilasi & Exhaust Fan', 'estimated_minutes' => 10, 'description' => 'Periksa dan bersihkan kisi-kisi ventilasi udara dari gumpalan debu yang menyumbat sirkulasi pendingin.'],
+                ['title' => 'Pemeriksaan Engsel Layar (Hinge) & Bodi Fisik', 'estimated_minutes' => 5, 'description' => 'Uji kelancaran buka-tutup layar, pastikan engsel kokoh, tidak goyang, dan bodi tidak retak/renggang.'],
+                ['title' => 'Pengecekan Kesehatan Baterai (Battery Health)', 'estimated_minutes' => 5, 'description' => 'Cek battery health, full charge capacity, dan cycle count, pastikan baterai tidak kembung atau drop drastis.'],
+                ['title' => 'Pemeriksaan Adaptor Charger & Kabel Power', 'estimated_minutes' => 5, 'description' => 'Periksa fisik adaptor charger, integritas jack DC/Type-C, kabel tidak terkelupas, serta kestabilan charging.'],
+                ['title' => 'Pemeriksaan Kesehatan Storage (SSD/HDD S.M.A.R.T.)', 'estimated_minutes' => 5, 'description' => 'Cek indikator S.M.A.R.T., health percentage storage, serta pastikan drive sistem (C:) memiliki sisa kapasitas cukup.'],
+                ['title' => 'Pengecekan Suhu Operasional CPU & Thermal', 'estimated_minutes' => 5, 'description' => 'Pantau temperatur CPU saat idle dan load normal, pastikan tidak terjadi overheating atau thermal throttling.'],
+                ['title' => 'Pemeriksaan Fungsi Port I/O & Peripheral Internal', 'estimated_minutes' => 5, 'description' => 'Uji port USB, Type-C, HDMI, audio jack, serta fungsi webcam, mikrofon, dan speaker internal.'],
+                ['title' => 'Pemeriksaan Konektivitas Nirkabel (Wi-Fi & Bluetooth)', 'estimated_minutes' => 5, 'description' => 'Uji stabilitas koneksi Wi-Fi kantor dan koneksi perangkat nirkabel Bluetooth (mouse/headset).'],
+                ['title' => 'Validasi Keamanan OS, Antivirus & Patch Update', 'estimated_minutes' => 5, 'description' => 'Pastikan antivirus aktif dengan definisi terbaru, proteksi real-time menyala, dan update keamanan OS terpasang.'],
+            ],
+        ];
+    }
+
+    // Kategori Computer / Desktop PC
+    if ($typeCode === 'CMP' || str_contains($haystack, 'computer') || str_contains($haystack, 'desktop') || str_contains($haystack, 'pc')) {
+        return [
+            'category_label' => 'Computer',
+            'tasks' => [
+                ['title' => 'Pembersihan Debu Internal Casing CPU', 'estimated_minutes' => 10, 'description' => 'Buka panel samping casing, bersihkan debu motherboard, heatsink fan CPU, dan slot ekspansi dengan kuas/blower.'],
+                ['title' => 'Pembersihan Ventilasi Udara & Filter Debu Casing', 'estimated_minutes' => 5, 'description' => 'Bersihkan kisi-kisi sirkulasi udara, kipas casing depan/belakang, dan filter debu magnetik casing.'],
+                ['title' => 'Pembersihan Layar Monitor Display', 'estimated_minutes' => 5, 'description' => 'Kuas dan bersihkan permukaan layar monitor menggunakan cairan pembersih khusus layar dan lap microfiber.'],
+                ['title' => 'Pembersihan Keyboard, Mouse & Mousepad', 'estimated_minutes' => 5, 'description' => 'Kuas sela-sela tombol keyboard, lap kering tombol dan bersihkan permukaan sensor optik mouse.'],
+                ['title' => 'Pemeriksaan Suhu CPU & Kinerja Kipas Pendingin', 'estimated_minutes' => 5, 'description' => 'Cek suhu CPU di BIOS atau software monitoring, pastikan putaran fan normal tanpa bunyi gesekan abnormal.'],
+                ['title' => 'Pengecekan Kesehatan Storage (SSD/HDD S.M.A.R.T.)', 'estimated_minutes' => 5, 'description' => 'Periksa status SMART SSD/HDD, bad sector warning, serta pastikan drive sistem memiliki ruang kosong cukup.'],
+                ['title' => 'Pemeriksaan Power Supply Unit (PSU) & Kabel Daya', 'estimated_minutes' => 5, 'description' => 'Periksa kestabilan output daya PSU, kebersihan kipas PSU, dan kerapatan konektor kabel power ATX/CPU/SATA.'],
+                ['title' => 'Pemeriksaan Modul RAM & Slot PCIe', 'estimated_minutes' => 5, 'description' => 'Pastikan modul RAM terpasang kokoh pada slot, bersihkan pin konektor jika diperlukan, dan cek deteksi kapasitas di OS.'],
+                ['title' => 'Pemeriksaan Konektivitas Jaringan LAN & Internet', 'estimated_minutes' => 5, 'description' => 'Periksa kondisi kabel patch cord RJ45, port LAN card, dan kestabilan transmisi data jaringan kantor.'],
+                ['title' => 'Pembaruan & Validasi Antivirus Aktif', 'estimated_minutes' => 5, 'description' => 'Pastikan antivirus korporat aktif, proteksi real-time menyala, dan definisi virus berada pada versi terbaru.'],
+                ['title' => 'Pemeriksaan Patch Keamanan Windows & Driver Utama', 'estimated_minutes' => 5, 'description' => 'Pastikan update penting OS dan driver hardware utama (chipset, LAN, VGA) terpasang dengan baik.'],
+                ['title' => 'Kerapian Manajemen Kabel (Cable Management)', 'estimated_minutes' => 5, 'description' => 'Rapikan susunan kabel di belakang meja kerja (kabel power, monitor, peripheral, LAN) menggunakan cable tie/spiral.'],
+            ],
+        ];
+    }
+
+    // Kategori Printer
+    if ($typeCode === 'PRT' || str_contains($haystack, 'printer')) {
+        return [
+            'category_label' => 'Printer',
+            'tasks' => [
+                ['title' => 'Pembersihan Casing Luar & Panel Tombol Printer', 'estimated_minutes' => 5, 'description' => 'Lap permukaan luar printer dan panel tombol/layar navigasi dengan lap microfiber bersih.'],
+                ['title' => 'Pembersihan Kaca Scanner & ADF (Bila Ada)', 'estimated_minutes' => 5, 'description' => 'Gunakan cairan pembersih kaca untuk membersihkan kaca flatbed scanner dan kaca ADF kecil dari kotoran/noda.'],
+                ['title' => 'Pembersihan Roller Penarik Kertas (Pickup Roller)', 'estimated_minutes' => 5, 'description' => 'Bersihkan karet pick-up roller dari debu kertas agar proses penarikan kertas tidak slip atau paper jam.'],
+                ['title' => 'Pembersihan Area Jalur Kertas (Paper Path)', 'estimated_minutes' => 5, 'description' => 'Periksa dan bersihkan sisa sobekan kertas, debu kertas, atau tumpahan toner/tinta di dalam mekanisme jalur kertas.'],
+                ['title' => 'Pemeriksaan Level Tinta / Toner Cartridge', 'estimated_minutes' => 5, 'description' => 'Periksa sisa kapasitas tangki tinta / toner cartridge dan pastikan tidak ada kebocoran atau tumpahan di dalam printer.'],
+                ['title' => 'Pembersihan Printhead / Nozzle Check', 'estimated_minutes' => 10, 'description' => 'Lakukan nozzle check dan head cleaning (inkjet) atau pembersihan drum/laser glass (laserjet) untuk menjaga hasil cetak.'],
+                ['title' => 'Pemeriksaan & Pelumasan Rel Carriage Unit', 'estimated_minutes' => 5, 'description' => 'Periksa kelancaran geser carriage unit, bersihkan encoder strip dari noda tinta, dan beri pelumas rel khusus bila kering.'],
+                ['title' => 'Uji Cetak Dokumen Uji (Print Test Page)', 'estimated_minutes' => 5, 'description' => 'Cetak test page untuk memastikan kejernihan teks, ketepatan garis, dan gradasi warna tanpa garis putus/bayang.'],
+                ['title' => 'Uji Fungsi Pemindai & Fotokopi (Scan & Copy Test)', 'estimated_minutes' => 5, 'description' => 'Untuk printer All-in-One, lakukan scan uji dan fotokopi via flatbed maupun ADF untuk memastikan fungsi optik prima.'],
+                ['title' => 'Pemeriksaan Kabel Data (USB / LAN) & Koneksi Wi-Fi', 'estimated_minutes' => 5, 'description' => 'Periksa kekencangan kabel USB/LAN dan stabilitas konektivitas jaringan printer di jaringan kantor.'],
+                ['title' => 'Pemeriksaan Kabel Daya & Trafo / Adaptor Listrik', 'estimated_minutes' => 5, 'description' => 'Pastikan kabel power tertancap kokoh dan adaptor tidak mengalami panas berlebih atau percikan listrik.'],
+                ['title' => 'Pemeriksaan Spooler & Driver di Komputer Pengguna', 'estimated_minutes' => 5, 'description' => 'Bersihkan antrean print spooler yang macet dan pastikan driver printer di komputer user versi stabil terbaru.'],
+            ],
+        ];
+    }
+
+    // Kategori Server
+    if ($typeCode === 'SRV' || str_contains($haystack, 'server')) {
+        return [
+            'category_label' => 'Server',
+            'tasks' => [
+                ['title' => 'Pembersihan Filter Debu & Ventilasi Rackmount', 'estimated_minutes' => 10, 'description' => 'Bersihkan kisi ventilasi depan/belakang dan filter debu chassis server untuk menjamin aliran udara maksimal.'],
+                ['title' => 'Pemeriksaan Indikator LED Hardware (Health Status)', 'estimated_minutes' => 5, 'description' => 'Periksa status LED front panel (Power, HDD activity, System Alert/Warning LED, LAN activity).'],
+                ['title' => 'Pemeriksaan Status RAID Array & Health Storage Disk', 'estimated_minutes' => 10, 'description' => 'Buka controller RAID / storage manager, pastikan semua disk berstatus Online (tidak ada degraded/rebuilding).'],
+                ['title' => 'Pemeriksaan Suhu Server & Redundansi Chassis Fan', 'estimated_minutes' => 5, 'description' => 'Pantau suhu CPU/system board dan pastikan semua modul redundant cooling fan berputar dengan RPM normal.'],
+                ['title' => 'Pemeriksaan Redundansi Power Supply Unit (PSU Failover)', 'estimated_minutes' => 5, 'description' => 'Pastikan kedua modul PSU menyala (LED hijau) dan terhubung ke sumber daya terpisah (UPS 1 & UPS 2).'],
+                ['title' => 'Pemeriksaan Log Sistem & Hardware Event Log (SEL)', 'estimated_minutes' => 10, 'description' => 'Review log hardware di iLO/iDRAC/BMC dan System Event Viewer OS untuk mendeteksi potensi kegagalan komponen.'],
+                ['title' => 'Pemeriksaan Akses Remote Management (iLO/iDRAC/IPMI)', 'estimated_minutes' => 5, 'description' => 'Uji konektivitas antarmuka manajemen remote out-of-band dan pastikan firmware controller stabil.'],
+                ['title' => 'Pemeriksaan Utilisasi Sumber Daya (CPU, RAM, Storage)', 'estimated_minutes' => 5, 'description' => 'Periksa grafik utilisasi CPU, memory usage, serta sisa ruang kosong pada volume penyimpanan server.'],
+                ['title' => 'Pemeriksaan Kabel Patch Jaringan & Trunking LAN', 'estimated_minutes' => 5, 'description' => 'Pastikan kabel patch cord terlabel rapi, terkunci kokoh pada port LAN server/switch, dan bebas tekukan tajam.'],
+                ['title' => 'Verifikasi Jadwal Backup Data & Snapshot Storage', 'estimated_minutes' => 10, 'description' => 'Periksa status pekerjaan backup harian/mingguan terakhir dan pastikan tidak ada job backup yang gagal.'],
+                ['title' => 'Pemeriksaan Koneksi & Status Baterai UPS Ruang Server', 'estimated_minutes' => 5, 'description' => 'Periksa kondisi daya input/output UPS server, indikator baterai, dan lakukan self-test rutin UPS.'],
+                ['title' => 'Pemeriksaan Pembaruan Patch OS & Firmware Kritis', 'estimated_minutes' => 10, 'description' => 'Verifikasi kesiapan security update OS server dan rencanakan jendela maintenance jika diperlukan reboot.'],
+            ],
+        ];
+    }
+
+    // Kategori Monitor & Display
+    if ($typeCode === 'DSP' || str_contains($haystack, 'monitor') || str_contains($haystack, 'display')) {
+        return [
+            'category_label' => 'Monitor & Display',
+            'tasks' => [
+                ['title' => 'Pembersihan Panel Layar Monitor', 'estimated_minutes' => 5, 'description' => 'Bersihkan permukaan panel display menggunakan cairan khusus pembersih layar dan lap microfiber searah.'],
+                ['title' => 'Pembersihan Bezel, Casing Belakang & Ventilasi', 'estimated_minutes' => 5, 'description' => 'Bersihkan debu pada frame bezel, kisi-kisi ventilasi belakang monitor, dan stand penyangga.'],
+                ['title' => 'Pemeriksaan Visual Panel (Dead Pixel & Backlight Bleed)', 'estimated_minutes' => 5, 'description' => 'Lakukan tes warna solid (merah, hijau, biru, putih, hitam) untuk memeriksa pixel mati atau kebocoran backlight.'],
+                ['title' => 'Pemeriksaan Kabel Display & Konektor (HDMI/DP/VGA/Type-C)', 'estimated_minutes' => 5, 'description' => 'Periksa fisik kabel video, pastikan pin konektor tidak bengkok, kabel tidak terjepit, dan sinyal stabil.'],
+                ['title' => 'Pemeriksaan Adaptor & Kabel Daya Monitor', 'estimated_minutes' => 5, 'description' => 'Pastikan socket power dan adaptor listrik terpasang kokoh serta tidak mengalami panas abnormal.'],
+                ['title' => 'Pemeriksaan Kestabilan Dudukan / VESA Mount Stand', 'estimated_minutes' => 5, 'description' => 'Periksa kekencangan baut VESA arm/bracket dan kelancaran engsel tilt, swivel, pivot, atau height adjustment.'],
+                ['title' => 'Kalibrasi Warna, Kecerahan & Kontras Display', 'estimated_minutes' => 5, 'description' => 'Sesuaikan pengaturan brightness, contrast, dan color temperature monitor untuk kenyamanan kerja pengguna.'],
+                ['title' => 'Pemeriksaan Tombol Navigasi / Joystick Menu OSD', 'estimated_minutes' => 5, 'description' => 'Uji fungsi seluruh tombol kontrol fisik atau joystick On-Screen Display (OSD) monitor.'],
+                ['title' => 'Pengecekan Resolusi Native & Refresh Rate di OS', 'estimated_minutes' => 5, 'description' => 'Pastikan setting tampilan pada sistem operasi menggunakan resolusi native dan refresh rate optimal monitor.'],
+                ['title' => 'Pemeriksaan Fungsi Built-in Speaker / Audio Jack (Bila Ada)', 'estimated_minutes' => 5, 'description' => 'Uji output suara jika monitor dilengkapi built-in speaker atau lubang output headphone.'],
+                ['title' => 'Pemeriksaan Fungsi USB Hub Terintegrasi (Bila Ada)', 'estimated_minutes' => 5, 'description' => 'Uji port USB downstream/upstream yang terpasang pada bodi monitor.'],
+                ['title' => 'Kerapian Manajemen Kabel Belakang Layar', 'estimated_minutes' => 5, 'description' => 'Tata rapi kabel daya dan display melalui jalur cable clips di tiang penyangga monitor.'],
+            ],
+        ];
+    }
+
+    // Kategori Kendaraan Mobil / Car
+    if ($typeCode === 'CAR' || str_contains($haystack, 'mobil') || str_contains($haystack, 'car')) {
+        return [
+            'category_label' => 'Mobil',
+            'tasks' => [
+                ['title' => 'Pengecekan Level & Kualitas Oli Mesin', 'estimated_minutes' => 5, 'description' => 'Periksa ketinggian oli pada dipstick dan pastikan warna/viskositas oli masih layak (tidak hitam pekat/berbau bensin).'],
+                ['title' => 'Pengecekan Cairan Radiator & Tabung Reservoir Coolant', 'estimated_minutes' => 5, 'description' => 'Periksa volume air radiator pada tabung reservoir di batas normal (antara LOW dan FULL).'],
+                ['title' => 'Pemeriksaan Sistem Pengereman & Minyak Rem', 'estimated_minutes' => 10, 'description' => 'Periksa volume minyak rem pada reservoir dan periksa ketebalan kampas rem serta kepakeman rem.'],
+                ['title' => 'Pemeriksaan Tekanan & Kondisi Tapak Ban (Termasuk Cadangan)', 'estimated_minutes' => 10, 'description' => 'Periksa tekanan angin ban (sesuai psi standar pintu) dan cek keausan alur tapak ban serta ban serep.'],
+                ['title' => 'Pemeriksaan Kondisi Aki Kendaraan (Battery Aki)', 'estimated_minutes' => 5, 'description' => 'Periksa tegangan aki, level air aki (jika basah), dan bersihkan kerak putih pada kepala kutub aki.'],
+                ['title' => 'Pemeriksaan Fungsi Seluruh Lampu Kendaraan', 'estimated_minutes' => 5, 'description' => 'Uji nyala lampu utama (dekat/jauh), lampu kota, lampu sein, lampu rem, lampu mundur, dan hazard.'],
+                ['title' => 'Pengecekan Kondisi Karet Wiper & Air Washer Kaca', 'estimated_minutes' => 5, 'description' => 'Periksa elastisitas karet wiper, semprotan nozzle air washer kaca depan/belakang, dan isi ulang air tabung.'],
+                ['title' => 'Pemeriksaan Sistem Kemudi & Suspensi', 'estimated_minutes' => 10, 'description' => 'Periksa kelurusan kemudi (spooring/balancing), cek bunyi asing atau getaran saat roda diputar/dikendarai.'],
+                ['title' => 'Pemeriksaan Minyak Power Steering & Minyak Kopling/Transmisi', 'estimated_minutes' => 5, 'description' => 'Periksa level cairan power steering dan oli transmisi/minyak kopling dari potensi rembesan.'],
+                ['title' => 'Pengecekan AC Kendaraan & Indikator Dashboard', 'estimated_minutes' => 5, 'description' => 'Pastikan hembusan AC dingin normal, blower berfungsi rata, dan tidak ada lampu indikator warning/check engine menyala.'],
+                ['title' => 'Pemeriksaan Kelengkapan Darurat Kendaraan (P3K, Dongkrak, APAR)', 'estimated_minutes' => 5, 'description' => 'Pastikan dongkrak, kunci roda, segitiga pengaman, kotak P3K, dan APAR mini tersedia dalam kondisi siap pakai.'],
+                ['title' => 'Pembersihan Eksterior/Interior & Cek Masa Berlaku STNK/KIR', 'estimated_minutes' => 10, 'description' => 'Periksa kebersihan ruang kabin, kaca depan, dan periksa masa berlaku STNK, pajak kendaraan, serta KIR.'],
+            ],
+        ];
+    }
+
+    // Kategori Sepeda Motor / Motorcycle
+    if ($typeCode === 'MTR' || str_contains($haystack, 'motor')) {
+        return [
+            'category_label' => 'Sepeda Motor',
+            'tasks' => [
+                ['title' => 'Pengecekan Ketinggian & Kejernihan Oli Mesin', 'estimated_minutes' => 5, 'description' => 'Periksa volume oli mesin dengan dipstick dan pastikan oli transmisi/gardan (khusus matic) dalam kondisi baik.'],
+                ['title' => 'Pemeriksaan Sistem Pengereman Depan & Belakang', 'estimated_minutes' => 5, 'description' => 'Periksa ketebalan kampas rem depan/belakang, keausan piringan cakram, dan level minyak rem master silinder.'],
+                ['title' => 'Pemeriksaan Tekanan Angin & Kondisi Fisik Ban', 'estimated_minutes' => 5, 'description' => 'Periksa tekanan angin ban depan & belakang serta pastikan alur ban belum aus (tidak botak/retak).'],
+                ['title' => 'Pemeriksaan Rantai Roda / V-Belt & Roller CVT', 'estimated_minutes' => 10, 'description' => 'Cek ketegangan dan lumasi rantai roda (bebek/sport), atau cek suara kasar pada mangkok CVT (matic).'],
+                ['title' => 'Pemeriksaan Tegangan Aki & Sistem Starter Listrik', 'estimated_minutes' => 5, 'description' => 'Periksa kesiapan starter elektrik, tegangan aki, dan pastikan klakson bersuara lantang.'],
+                ['title' => 'Pemeriksaan Lampu Utama, Sein, Rem, & Indikator Spidometer', 'estimated_minutes' => 5, 'description' => 'Pastikan semua fungsi pencahayaan dan lampu indikator spidometer menyala normal.'],
+                ['title' => 'Pemeriksaan Karet Grip Gas, Handle Rem, & Spion', 'estimated_minutes' => 5, 'description' => 'Pastikan tuas gas kembali otomatis (tidak seret), handle rem responsif, dan kedua kaca spion terpasang kencang.'],
+                ['title' => 'Pengecekan Suspensi Depan & Belakang (Shock Absorber)', 'estimated_minutes' => 5, 'description' => 'Periksa bantalan peredam kejut depan/belakang dari kebocoran oli shock dan pastikan ayunan empuk.'],
+                ['title' => 'Pengecekan Saringan Udara (Air Filter)', 'estimated_minutes' => 5, 'description' => 'Bersihkan debu pada filter udara dan ganti jika filter elemen sudah sangat kotor.'],
+                ['title' => 'Pengecekan Busi & Jalur Bahan Bakar', 'estimated_minutes' => 5, 'description' => 'Periksa elektroda busi dari kerak karbon dan pastikan tidak ada kebocoran selang bahan bakar.'],
+                ['title' => 'Pembersihan Bodi Motor & Kaca Lampu', 'estimated_minutes' => 5, 'description' => 'Bersihkan debu bodi motor, permukaan spidometer, dan mika lampu dari kotoran jalanan.'],
+                ['title' => 'Pemeriksaan Kelengkapan Dokumen (STNK & Pajak)', 'estimated_minutes' => 5, 'description' => 'Periksa masa berlaku pajak tahunan dan lima tahunan sepeda motor dinas.'],
+            ],
+        ];
+    }
+
+    // Kategori Truk / Truck
+    if ($typeCode === 'TRK' || str_contains($haystack, 'truk') || str_contains($haystack, 'truck')) {
+        return [
+            'category_label' => 'Truk',
+            'tasks' => [
+                ['title' => 'Pengecekan Level Oli Mesin, Gardan & Transmisi', 'estimated_minutes' => 10, 'description' => 'Periksa ketinggian dan kejernihan oli mesin truk, oli gardan belakang, dan oli transmisi manual.'],
+                ['title' => 'Pemeriksaan Sistem Radiator & Sirkulasi Coolant Truk', 'estimated_minutes' => 5, 'description' => 'Periksa volume air radiator, tutup radiator, dan pastikan tidak ada kebocoran selang pendingin mesin diesel.'],
+                ['title' => 'Pemeriksaan Sistem Rem Udara / Angin (Pneumatic Brake)', 'estimated_minutes' => 10, 'description' => 'Periksa tekanan tabung angin rem, buang air kondensasi kompresor, dan cek kebocoran selang angin.'],
+                ['title' => 'Pemeriksaan Kondisi & Torsi Baut Roda Seluruh Ban', 'estimated_minutes' => 15, 'description' => 'Periksa tekanan angin ban ganda/tunggal, kedalaman alur ban, dan kekencangan mur baut roda.'],
+                ['title' => 'Pemeriksaan Kondisi Aki Ganda (24V) & Kelistrikan', 'estimated_minutes' => 10, 'description' => 'Periksa tegangan seri aki 24V, kejernihan air aki, kebersihan terminal, dan switch pemutus arus utama.'],
+                ['title' => 'Pemeriksaan Sistem Suspensi Per Daun & Pelumasan Nipple', 'estimated_minutes' => 15, 'description' => 'Periksa susunan daun per dari keretakan/geseran dan berikan gemuk/grease pada nipple sasis.'],
+                ['title' => 'Pemeriksaan Lampu Kerja, Lampu Utama, Sein, & Sirine Mundur', 'estimated_minutes' => 5, 'description' => 'Pastikan seluruh lampu sorot kerja, lampu rem, lampu hazard, dan alarm mundur berfungsi keras.'],
+                ['title' => 'Pemeriksaan Filter Solar & Kuras Water Separator', 'estimated_minutes' => 10, 'description' => 'Kuras endapan air pada mangkok sedimenter solar dan periksa kebersihan filter solar primer/sekunder.'],
+                ['title' => 'Pemeriksaan Sistem Kemudi (Kingpin & Tie Rod End)', 'estimated_minutes' => 10, 'description' => 'Periksa kelonggaran tie rod, draglink, dan pastikan sistem power steering bekerja tanpa rembesan oli.'],
+                ['title' => 'Pemeriksaan Bak Muatan, Engsel Pintu & Pengunci Terpal', 'estimated_minutes' => 5, 'description' => 'Periksa kekokohan dinding bak muatan, kelancaran engsel pintu belakang, dan bracket pengaman.'],
+                ['title' => 'Pemeriksaan Perlengkapan Darurat (Dongkrak Berat, Balok, APAR)', 'estimated_minutes' => 5, 'description' => 'Pastikan dongkrak hidrolik tonase besar, balok pengganjal roda, segitiga, dan APAR tersedia lengkap.'],
+                ['title' => 'Pemeriksaan Kelengkapan Legalitas (KIR, STNK, Izin Operasi)', 'estimated_minutes' => 5, 'description' => 'Periksa masa berlaku uji berkala KIR, kartu pengawasan, izin dispensasi jalan, dan STNK truk.'],
+            ],
+        ];
+    }
+
+    // Kategori AC / Pendingin
+    if ($typeCode === 'AC' || str_contains($haystack, 'ac') || str_contains($haystack, 'pendingin')) {
+        return [
+            'category_label' => 'AC / Pendingin',
+            'tasks' => [
+                ['title' => 'Pembersihan Filter Udara Unit Indoor', 'estimated_minutes' => 10, 'description' => 'Lepas filter debu unit indoor, cuci bersih dengan air mengalir dan keringkan sebelum dipasang kembali.'],
+                ['title' => 'Pembersihan Evaporator Indoor Unit (Cuci AC)', 'estimated_minutes' => 15, 'description' => 'Semprot sirip-sirip evaporator indoor dengan jet cleaner dan cairan pembersih khusus hingga bebas lendir/jamur.'],
+                ['title' => 'Pembersihan Talang & Saluran Pembuangan Air (Drainase)', 'estimated_minutes' => 10, 'description' => 'Semprot dan bersihkan pipa drainase kondensasi air agar tidak terjadi kebocoran air menetes (water leakage).'],
+                ['title' => 'Pembersihan Kisi-kisi Condenser Unit Outdoor', 'estimated_minutes' => 15, 'description' => 'Semprot sirip kondensor outdoor unit dengan air bertekanan untuk menghilangkan debu dan kotoran tebal.'],
+                ['title' => 'Pemeriksaan Tekanan Gas Refrigerant (Freon R32/R410A)', 'estimated_minutes' => 10, 'description' => 'Ukur tekanan freon menggunakan manifold gauge saat kompresor bekerja, pastikan sesuai spesifikasi (psi).'],
+                ['title' => 'Pengukuran Arus Listrik (Ampere) Kompresor', 'estimated_minutes' => 5, 'description' => 'Ukur beban arus listrik (ampere) menggunakan clamp meter dan bandingkan dengan nameplate AC.'],
+                ['title' => 'Pemeriksaan Putaran Fan Blower Indoor & Fan Outdoor', 'estimated_minutes' => 5, 'description' => 'Pastikan motor blower indoor berputar hening seimbang dan kipas fan outdoor berhembus kencang.'],
+                ['title' => 'Pemeriksaan Kerapatan Bracket Outdoor & Peredam Getaran', 'estimated_minutes' => 5, 'description' => 'Pastikan baut bracket outdoor kokoh, tidak berkarat keropos, dan bantalan karet peredam getaran terpasang.'],
+                ['title' => 'Pemeriksaan Terminal Kelistrikan & Kapasitor Kompresor', 'estimated_minutes' => 5, 'description' => 'Periksa kekencangan baut terminal kabel listrik dan periksa kondisi fisik kapasitor (tidak kembung).'],
+                ['title' => 'Pengecekan Suhu Pendinginan (Delta T Inlet vs Outlet)', 'estimated_minutes' => 5, 'description' => 'Ukur temperatur udara masuk (inlet) dan udara hembusan keluar (outlet), pastikan selisih suhu normal (min. 8-10°C).'],
+                ['title' => 'Pemeriksaan Fungsi Remote Control & Sensor Display Indoor', 'estimated_minutes' => 5, 'description' => 'Uji respons sensor inframerah remote control, swing louvre motor, dan ketepatan setpoint suhu.'],
+                ['title' => 'Pembersihan Casing Cover Indoor & Kerapian Isolasi Pipa', 'estimated_minutes' => 5, 'description' => 'Lap bersih cover plastik indoor unit dan periksa pembungkus insulasi duct tape pipa tembaga freon.'],
+            ],
+        ];
+    }
+
+    // Kategori Genset / Generator
+    if ($typeCode === 'GEN' || str_contains($haystack, 'genset') || str_contains($haystack, 'generator')) {
+        return [
+            'category_label' => 'Genset',
+            'tasks' => [
+                ['title' => 'Pemeriksaan Ketinggian & Kualitas Oli Mesin Genset', 'estimated_minutes' => 5, 'description' => 'Cek dipstick oli mesin, pastikan level oli cukup dan viskositas tidak mengental atau terkontaminasi.'],
+                ['title' => 'Pemeriksaan Bahan Bakar Solar & Kuras Filter Sedimen', 'estimated_minutes' => 10, 'description' => 'Periksa level solar pada tangki harian dan buang endapan air pada water separator filter bahan bakar.'],
+                ['title' => 'Pemeriksaan Kondisi Aki Starter & Tegangan Charger Alternator', 'estimated_minutes' => 10, 'description' => 'Periksa level air aki genset, kebersihan terminal kutub, dan pastikan automatic battery trickle charger aktif.'],
+                ['title' => 'Pemeriksaan Air Radiator & Sirkulasi Cairan Pendingin', 'estimated_minutes' => 5, 'description' => 'Periksa level air radiator dan kondisi selang karet radiator dari keretakan atau kebocoran klem.'],
+                ['title' => 'Pemeriksaan Ketegangan V-Belt Kipas & Alternator', 'estimated_minutes' => 5, 'description' => 'Periksa kelenturan dan kondisi fisik tali kipas (v-belt) genset, pastikan tidak kendur atau retak.'],
+                ['title' => 'Pembersihan / Penggantian Filter Udara Genset', 'estimated_minutes' => 10, 'description' => 'Buka rumah filter udara, bersihkan elemen saringan dari debu tebal menggunakan semprotan angin kompresor.'],
+                ['title' => 'Uji Pemanasan Mesin (Running Test 10-15 Menit)', 'estimated_minutes' => 15, 'description' => 'Nyalakan genset dalam mode pemanasan (no-load / load test) untuk melumasi seluruh komponen mesin internal.'],
+                ['title' => 'Pengukuran Parameter Output Listrik (Volt, Hz, RPM)', 'estimated_minutes' => 5, 'description' => 'Ukur voltase antar-fase (380V/220V), frekuensi listrik (50 Hz), dan kestabilan putaran mesin (1500 RPM).'],
+                ['title' => 'Pengecekan Kebocoran (Oli, Solar, Coolant, Knalpot)', 'estimated_minutes' => 5, 'description' => 'Inspeksi visual ruang mesin saat menyala untuk memastikan tidak ada rembesan cairan atau kebocoran gas buang.'],
+                ['title' => 'Pemeriksaan Panel Kontrol & Indikator Sensor (Hour Meter)', 'estimated_minutes' => 5, 'description' => 'Periksa display digital/analog genset: tekanan oli, temperatur air mesin, dan catat jam operasi genset.'],
+                ['title' => 'Pengujian Tombol Emergency Stop & Proteksi Auto Cut-Off', 'estimated_minutes' => 5, 'description' => 'Uji respons sakelar tombol emergency stop dan simulasi proteksi suhu tinggi / tekanan oli rendah.'],
+                ['title' => 'Pembersihan Ruang Genset & Peredam Silent Box', 'estimated_minutes' => 10, 'description' => 'Bersihkan debu sasis genset, lantai ruang genset dari ceceran oli, dan pastikan jalur sirkulasi knalpot lancar.'],
+            ],
+        ];
+    }
+
+    // Kategori Gedung & Fasilitas / Bangunan
+    if ($typeCode === 'BLD' || $groupCode === 'FC' || str_contains($haystack, 'gedung') || str_contains($haystack, 'bangunan') || str_contains($haystack, 'fasilitas')) {
+        return [
+            'category_label' => 'Gedung & Fasilitas',
+            'tasks' => [
+                ['title' => 'Pemeriksaan Kebocoran Atap, Plafon & Dinding Ruangan', 'estimated_minutes' => 10, 'description' => 'Periksa tanda-tanda bercak air, jamur, atau retakan pada plafon gypsum dan dinding bangunan.'],
+                ['title' => 'Pemeriksaan Panel Distribusi Listrik (MCB Box & Grounding)', 'estimated_minutes' => 10, 'description' => 'Periksa kondisi MCB, kekencangan sambungan terminal kabel listrik, dan pastikan tidak ada bau hangus.'],
+                ['title' => 'Pemeriksaan Kelayakan Lampu Penerangan & Sakelar', 'estimated_minutes' => 10, 'description' => 'Cek fungsi seluruh lampu ruangan, lampu lorong, lampu darurat, dan ganti bola lampu yang berkedip/mati.'],
+                ['title' => 'Pemeriksaan Saluran Air Bersih, Keran & Sanitari Toilet', 'estimated_minutes' => 10, 'description' => 'Pastikan tidak ada keran bocor menetes, flush toilet berfungsi baik, dan tekanan pompa air normal.'],
+                ['title' => 'Pemeriksaan Saluran Pembuangan Air & Floor Drain', 'estimated_minutes' => 5, 'description' => 'Pastikan saluran pembuangan air limbah lancar tanpa genangan dan bersihkan perangkap saringan kotoran.'],
+                ['title' => 'Pemeriksaan Pintu, Jendela, Kunci, Handle & Engsel', 'estimated_minutes' => 5, 'description' => 'Uji kelancaran buka-tutup pintu/jendela, beri pelumas pada engsel berderit, dan periksa door closer.'],
+                ['title' => 'Pemeriksaan Jalur Evakuasi & Kelengkapan APAR Kebakaran', 'estimated_minutes' => 10, 'description' => 'Pastikan jarum tekanan APAR di zona hijau, segel utuh, masa berlaku aktif, dan jalur evakuasi bebas rintangan.'],
+                ['title' => 'Pemeriksaan Exhaust Fan & Sirkulasi Pertukaran Udara', 'estimated_minutes' => 5, 'description' => 'Bersihkan kisi-kisi exhaust fan toilet/dapur/gudang dari debu tebal dan pastikan hisapan motor lancar.'],
+                ['title' => 'Pemeriksaan Kerapian Kabel Utilitas & Jalur Pipa Gedung', 'estimated_minutes' => 5, 'description' => 'Pastikan kabel dan pipa utilitas terpasang pada klem dinding secara aman dan tidak bergelantungan.'],
+                ['title' => 'Pemeriksaan Sistem Kunci Pengaman Pintu & CCTV Lingkungan', 'estimated_minutes' => 5, 'description' => 'Uji fungsi access door controller (fingerprint/kartu RFID) dan kebersihan lensa kamera CCTV terdekat.'],
+                ['title' => 'Pembersihan Area Fasilitas & Pengecekan Hama / Rayap', 'estimated_minutes' => 10, 'description' => 'Inspeksi sudut ruangan terhadap sarang hama/rayap dan pastikan kebersihan umum terjaga rapi.'],
+                ['title' => 'Pencatatan Temuan Fasilitas Yang Membutuhkan Perbaikan Lanjut', 'estimated_minutes' => 5, 'description' => 'Dokumentasikan temuan kerusakan fisik fasilitas yang memerlukan pekerjaan teknisi sipil/reparasi lanjutan.'],
+            ],
+        ];
+    }
+
+    // Default Fallback: Job Desk Umum
+    return [
+        'category_label' => 'Umum',
+        'tasks' => [
+            ['title' => 'Pembersihan Fisik Eksterior Unit & Casing', 'estimated_minutes' => 5, 'description' => 'Bersihkan permukaan fisik luar perangkat dari debu, kotoran, dan noda menggunakan kain microfiber bersih.'],
+            ['title' => 'Pembersihan Ventilasi Udara & Kisi-kisi Pendingin', 'estimated_minutes' => 5, 'description' => 'Periksa dan bersihkan saluran ventilasi dari debu untuk memastikan sirkulasi udara perangkat lancar.'],
+            ['title' => 'Pemeriksaan Integritas Kabel Daya & Socket Listrik', 'estimated_minutes' => 5, 'description' => 'Periksa fisik kabel power, adaptor, dan steker listrik dari tanda-tanda kerusakan, panas, atau kelonggaran.'],
+            ['title' => 'Pemeriksaan Konektor, Port I/O & Kabel Sinyal', 'estimated_minutes' => 5, 'description' => 'Pastikan semua kabel koneksi tertancap kuat dan soket konektor bersih dari debu atau korosi.'],
+            ['title' => 'Pemeriksaan Suhu Operasional & Deteksi Suara Abnormal', 'estimated_minutes' => 5, 'description' => 'Pastikan unit bekerja pada rentang suhu normal dan tidak mengeluarkan bunyi getaran atau gesekan aneh.'],
+            ['title' => 'Pengecekan Komponen Mekanis & Kelancaran Gerak', 'estimated_minutes' => 5, 'description' => 'Periksa komponen mekanikal bergerak, engsel, atau tombol fisik agar responsif dan tidak macet.'],
+            ['title' => 'Pemeriksaan Baterai / Sumber Catu Daya Cadangan', 'estimated_minutes' => 5, 'description' => 'Periksa kondisi baterai internal, adaptor pengisi daya, atau kestabilan suplai catu daya unit.'],
+            ['title' => 'Pengecekan Indikator Status & Lampu LED Operasional', 'estimated_minutes' => 5, 'description' => 'Pastikan lampu indikator operasional unit menyala normal tanpa kode kedipan error.'],
+            ['title' => 'Pemeriksaan Kestabilan Mount, Dudukan & Pengaman Fisik', 'estimated_minutes' => 5, 'description' => 'Periksa kekokohan dudukan, baut pengunci, atau braket pengaman posisi perangkat.'],
+            ['title' => 'Pengujian Fungsi Dasar Operasional Unit', 'estimated_minutes' => 10, 'description' => 'Jalankan siklus pengujian fungsi standar perangkat untuk memverifikasi performa kerja optimal.'],
+            ['title' => 'Kerapian Tata Letak & Manajemen Kabel di Sekitar Unit', 'estimated_minutes' => 5, 'description' => 'Rapikan susunan kabel dan posisi unit agar aman, teratur, serta mudah diakses.'],
+            ['title' => 'Pencatatan Catatan Kondisi & Rekomendasi Preventive', 'estimated_minutes' => 5, 'description' => 'Catat kondisi akhir perangkat dan berikan catatan saran pemeliharaan preventif lanjutan bila perlu.'],
+        ],
+    ];
+}
+
 function handle_route_jobs(PDO $pdo): void
 {
     $user = require_role(['admin', 'maintenance_admin']);
@@ -1626,7 +1912,7 @@ function handle_route_jobs(PDO $pdo): void
             redirect_to('jobs', array_filter(['group_id' => $postGroupId, 'type_id' => $postTypeId, 'manage_desk_id' => $manageDeskId]));
         }
 
-        // --- SALIN TUGAS DARI JOB DESK UMUM ---
+        // --- SALIN TUGAS STANDAR SESUAI KOMODITAS & KATEGORI ---
         if ($action === 'copy_default_tasks') {
             $manageDeskId = (int)($_POST['manage_desk_id'] ?? 0);
             $stmtDesk = $pdo->prepare('SELECT * FROM preventive_job_desks WHERE id=?');
@@ -1635,25 +1921,31 @@ function handle_route_jobs(PDO $pdo): void
 
             if ($curDesk) {
                 $targetDeskName = $curDesk['job_desk_name'];
-                $defaultJobs = $pdo->query("SELECT title, description, estimated_minutes FROM maintenance_jobs WHERE job_desk_name = 'Job Desk Umum' OR job_desk_name IS NULL OR job_desk_name = '' ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC);
+                $deskGroupId = $curDesk['asset_group_id'] ?: ($postGroupId ?: null);
+                $deskTypeId = $curDesk['asset_type_id'] ?: ($postTypeId ?: null);
+
+                $catalog = get_standard_preventive_tasks_catalog($pdo, $deskGroupId ? (int)$deskGroupId : null, $deskTypeId ? (int)$deskTypeId : null, $targetDeskName);
+                $standardTasks = $catalog['tasks'];
+                $catLabel = $catalog['category_label'];
+
                 $ins = $pdo->prepare("INSERT INTO maintenance_jobs (title, description, asset_group_id, asset_type_id, job_desk_name, estimated_minutes, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)");
                 $copied = 0;
-                foreach ($defaultJobs as $dj) {
+                foreach ($standardTasks as $st) {
                     $chkDup = $pdo->prepare("SELECT COUNT(*) FROM maintenance_jobs WHERE job_desk_name = ? AND title = ?");
-                    $chkDup->execute([$targetDeskName, $dj['title']]);
+                    $chkDup->execute([$targetDeskName, $st['title']]);
                     if ((int)$chkDup->fetchColumn() === 0) {
                         $ins->execute([
-                            $dj['title'],
-                            $dj['description'],
-                            $curDesk['asset_group_id'] ?: ($postGroupId ?: null),
-                            $curDesk['asset_type_id'] ?: ($postTypeId ?: null),
+                            $st['title'],
+                            $st['description'],
+                            $deskGroupId,
+                            $deskTypeId,
                             $targetDeskName,
-                            $dj['estimated_minutes'],
+                            $st['estimated_minutes'],
                         ]);
                         $copied++;
                     }
                 }
-                flash("Berhasil menyalin {$copied} tugas standar ke '{$targetDeskName}'.");
+                flash("Berhasil menyalin {$copied} tugas standar ({$catLabel}) ke '{$targetDeskName}'.");
             }
             redirect_to('jobs', array_filter(['group_id' => $postGroupId, 'type_id' => $postTypeId, 'manage_desk_id' => $manageDeskId]));
         }
@@ -1900,6 +2192,13 @@ function handle_route_jobs(PDO $pdo): void
     if ($activeDesk) {
         $actId = (int)$activeDesk['desk_id'];
         $actName = (string)$activeDesk['job_desk_name'];
+        $actGroupId = $activeDesk['asset_group_id'] ? (int)$activeDesk['asset_group_id'] : null;
+        $actTypeId = $activeDesk['asset_type_id'] ? (int)$activeDesk['asset_type_id'] : null;
+
+        $deskCatalog = get_standard_preventive_tasks_catalog($pdo, $actGroupId, $actTypeId, $actName);
+        $catLabel = $deskCatalog['category_label'];
+        $catTaskCount = count($deskCatalog['tasks']);
+
         $totMinutes = 0;
         foreach ($activeDeskTasks as $t) {
             if (!empty($t['is_active'])) {
@@ -1908,13 +2207,12 @@ function handle_route_jobs(PDO $pdo): void
         }
 
         echo '<div class="panel" style="margin-top:20px;border-top:3px solid #2563eb;">';
-        $copyHeaderBtn = ($actName !== 'Job Desk Umum')
-            ? '<form method="post" style="display:inline;"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="copy_default_tasks"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><input type="hidden" name="asset_group_id" value="' . $filterGroupId . '"><input type="hidden" name="asset_type_id" value="' . $filterTypeId . '"><button class="btn" style="padding:5px 10px;font-size:12px;background:#f0fdf4;border:1px solid #86efac;color:#166534;font-weight:600;" title="Salin tugas-tugas standar yang belum ada ke Job Desk ini">+ Salin Tugas Standar</button></form>'
-            : '';
+        $copyHeaderBtn = '<form method="post" style="display:inline;"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="copy_default_tasks"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><input type="hidden" name="asset_group_id" value="' . $filterGroupId . '"><input type="hidden" name="asset_type_id" value="' . $filterTypeId . '"><button class="btn" style="padding:5px 10px;font-size:12px;background:#f0fdf4;border:1px solid #86efac;color:#166534;font-weight:600;" title="Salin ' . $catTaskCount . ' tugas standar pemeliharaan preventif ' . e($catLabel) . ' ke Job Desk ini">+ Salin ' . $catTaskCount . ' Tugas Standar (' . e($catLabel) . ')</button></form>';
+
         echo '<div class="split" style="align-items:center;margin-bottom:14px;">'
             . '<div>'
             . '<h2 style="margin:0;color:#1e40af;">📋 Daftar Pekerjaan (Job Tasks) untuk: ' . e($actName) . ' <span class="badge" style="font-size:12px;">ID: #' . $actId . '</span></h2>'
-            . '<p class="muted" style="margin:4px 0 0 0;font-size:13px;">Kelola rincian item pekerjaan yang wajib dijalankan teknisi saat preventive maintenance untuk Job Desk ini.</p>'
+            . '<p class="muted" style="margin:4px 0 0 0;font-size:13px;">Kelola rincian item pekerjaan yang wajib dijalankan teknisi saat preventive maintenance untuk Job Desk ini (Kategori: <strong>' . e($catLabel) . '</strong>).</p>'
             . '</div>'
             . '<div style="display:flex;gap:8px;align-items:center;">'
             . $copyHeaderBtn
@@ -1953,12 +2251,10 @@ function handle_route_jobs(PDO $pdo): void
         // Tabel Daftar Job Tasks Terdaftar
         echo '<div>';
         if (!$activeDeskTasks) {
-            $copyEmptyBtn = ($actName !== 'Job Desk Umum')
-                ? '<form method="post" style="margin-top:12px;"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="copy_default_tasks"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><input type="hidden" name="asset_group_id" value="' . $filterGroupId . '"><input type="hidden" name="asset_type_id" value="' . $filterTypeId . '"><button class="btn primary" style="font-size:13px;">📥 Salin 12 Tugas Standar dari Job Desk Umum</button></form>'
-                : '';
+            $copyEmptyBtn = '<form method="post" style="margin-top:14px;"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="copy_default_tasks"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><input type="hidden" name="asset_group_id" value="' . $filterGroupId . '"><input type="hidden" name="asset_type_id" value="' . $filterTypeId . '"><button class="btn primary" style="font-size:13px;padding:8px 16px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">📥 Salin ' . $catTaskCount . ' Tugas Standar Preventive (' . e($catLabel) . ')</button></form>';
             echo '<div style="padding:28px;text-align:center;background:#fff;border:1px dashed #cbd5e1;border-radius:8px;">'
                 . '<p class="muted" style="margin:0 0 8px 0;">Belum ada item pekerjaan untuk Job Desk <strong>' . e($actName) . '</strong>.</p>'
-                . '<p style="font-size:13px;color:#64748b;margin:0;">Silakan tambahkan pekerjaan pertama pada formulir di sebelah kiri atau salin dari tugas standar.</p>'
+                . '<p style="font-size:13px;color:#64748b;margin:0;">Klik tombol di bawah untuk otomatis menyalin <strong>' . $catTaskCount . ' tugas standar pemeliharaan preventif</strong> yang dirancang khusus untuk kategori <strong>' . e($catLabel) . '</strong>, atau tambahkan pekerjaan manual melalui formulir di sebelah kiri.</p>'
                 . $copyEmptyBtn
                 . '</div>';
         } else {
