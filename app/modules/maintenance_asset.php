@@ -253,9 +253,23 @@ function maintenance_asset_form_html(PDO $pdo, array $asset, bool $editing): str
         if ($curAssetItem) {
             if ($selectedGroupId <= 0 && !empty($curAssetItem['asset_group_id'])) {
                 $selectedGroupId = (int)$curAssetItem['asset_group_id'];
+                $asset['asset_group_id'] = $selectedGroupId;
             }
             if ($selectedTypeId <= 0 && !empty($curAssetItem['asset_type_id'])) {
                 $selectedTypeId = (int)$curAssetItem['asset_type_id'];
+                $asset['asset_type_id'] = $selectedTypeId;
+            }
+            if (empty($asset['company_id']) && !empty($curAssetItem['company_id'])) {
+                $asset['company_id'] = (int)$curAssetItem['company_id'];
+            }
+            if (empty($asset['location_label']) && !empty($curAssetItem['location_label'])) {
+                $asset['location_label'] = (string)$curAssetItem['location_label'];
+            }
+            if (empty($asset['name'])) {
+                $asset['name'] = trim((string)$curAssetItem['asset_code'] . ' - ' . (string)$curAssetItem['asset_name']);
+            }
+            if (empty($asset['maintenance_asset_code']) && !empty($curAssetItem['asset_code'])) {
+                $asset['maintenance_asset_code'] = 'MNT-' . (string)$curAssetItem['asset_code'];
             }
             if (empty($asset['owner_name'])) {
                 $asset['owner_name'] = trim((string)($curAssetItem['custodian_name'] ?: ($curAssetItem['pc_owner_name'] ?? '')));
@@ -595,6 +609,7 @@ function maintenance_asset_form_html(PDO $pdo, array $asset, bool $editing): str
 
     // Initial load if group and type are selected
     if(groupSel && groupSel.value){
+        loadJobDesks(groupSel.value, typeSel ? typeSel.value : 0, false);
         loadEligibleItems(groupSel.value, typeSel ? typeSel.value : 0, selectedAssetItemId);
     }
 })();
@@ -705,6 +720,17 @@ function handle_route_maintenance_asset_form(PDO $pdo): void
             exit('Maintenance asset tidak ditemukan.');
         }
         $asset = array_merge($asset, $found);
+    } elseif (!empty($_GET['asset_item_id'])) {
+        $targetAssetId = (int)$_GET['asset_item_id'];
+        $asset['asset_item_id'] = $targetAssetId;
+        // Cek apakah sudah terdaftar di maintenance asset aktif
+        $chkExisting = $pdo->prepare('SELECT id, maintenance_asset_code FROM maintenance_assets WHERE asset_item_id = ? AND status <> "inactive" LIMIT 1');
+        $chkExisting->execute([$targetAssetId]);
+        $existingMaint = $chkExisting->fetch(PDO::FETCH_ASSOC);
+        if ($existingMaint) {
+            flash('Unit Aset ini sudah terdaftar di Maintenance Asset (' . $existingMaint['maintenance_asset_code'] . '). Anda dialihkan ke halaman edit.', 'info');
+            redirect_to('maintenance_asset_form', ['id' => (int)$existingMaint['id']]);
+        }
     }
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $data = maintenance_asset_post_data($pdo, $id);
