@@ -2878,6 +2878,18 @@ function asset_specification_master_page(PDO $pdo, array $user): void
             flash('Komoditas, Kategori, Kode Spesifikasi, dan Nama Spesifikasi wajib diisi.', 'err');
             redirect_to('asset_specifications', $id ? ['id' => $id] : []);
         }
+        // Cek duplikasi kode spesifikasi pada kategori yang sama
+        $checkStmt = $pdo->prepare('SELECT ats.id, t.type_name, ats.specification_name 
+                                    FROM asset_type_specifications ats 
+                                    JOIN asset_types t ON t.id = ats.asset_type_id 
+                                    WHERE ats.asset_type_id = ? AND UPPER(ats.specification_code) = ? AND ats.id != ?');
+        $checkStmt->execute([$type, $code, $id]);
+        $existing = $checkStmt->fetch(PDO::FETCH_ASSOC);
+        if ($existing) {
+            flash('Gagal: Kode spesifikasi "' . e($code) . '" sudah ada pada kategori ' . e($existing['type_name']) . ' (' . e($existing['specification_name']) . '). Berbeda kategori diperbolehkan, namun dalam satu kategori yang sama kode spesifikasi harus unik. Silakan edit spesifikasi yang sudah ada atau gunakan kode lain.', 'err');
+            redirect_to('asset_specifications', $id ? ['id' => $id] : []);
+        }
+
         $p = [$type, $code, $name, $_POST['data_type'] ?? 'text', isset($_POST['is_required']) ? 1 : 0, isset($_POST['is_searchable']) ? 1 : 0, max(1, (int)($_POST['display_order'] ?? 1))];
         $sql = $id ? 'UPDATE asset_type_specifications SET asset_type_id=?,specification_code=?,specification_name=?,data_type=?,is_required=?,is_searchable=?,display_order=? WHERE id=?' : 'INSERT INTO asset_type_specifications(asset_type_id,specification_code,specification_name,data_type,is_required,is_searchable,display_order) VALUES (?,?,?,?,?,?,?)';
         if ($id) {
@@ -2887,7 +2899,11 @@ function asset_specification_master_page(PDO $pdo, array $user): void
             $pdo->prepare($sql)->execute($p);
             flash('Spesifikasi Aset berhasil disimpan.');
         } catch (Throwable $e) {
-            flash('Gagal: ' . $e->getMessage(), 'err');
+            if ($e instanceof PDOException && (int)($e->errorInfo[1] ?? 0) === 1062) {
+                flash('Gagal: Kode spesifikasi "' . e($code) . '" sudah terdaftar pada kategori yang dipilih. Berbeda kategori diperbolehkan, namun dalam satu kategori yang sama kode spesifikasi harus unik.', 'err');
+            } else {
+                flash('Gagal: ' . $e->getMessage(), 'err');
+            }
         }
         redirect_to('asset_specifications');
     }
@@ -2909,16 +2925,17 @@ function asset_specification_master_page(PDO $pdo, array $user): void
     if ($edit) {
         echo '<a class="btn" href="' . route_url('asset_specifications') . '">+ Tambah Spesifikasi Baru</a>';
     }
-    echo '</div><form method="post" style="margin-top:14px"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="id" value="' . (int)($edit['id'] ?? 0) . '">';
+    echo '</div><form method="post" style="margin-top:14px"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" id="specEditId" name="id" value="' . (int)($edit['id'] ?? 0) . '">';
     
     // Harus isi Komoditas dan Kategori terlebih dahulu
     echo '<div class="grid two">';
     echo '<label>Komoditas (Grup Aset) *<select id="specGroup" name="asset_group_id" onchange="onSpecGroupChanged()" required>' . asset_group_options($pdo, $editGroupId, true, '- Pilih Komoditas (Grup Aset) -') . '</select></label>';
-    echo '<label>Kategori (Tipe Aset) *<select id="specType" name="asset_type_id" required>' . asset_type_options($pdo, (int)($edit['asset_type_id'] ?? 0), $editGroupId, true, $editGroupId ? '- Pilih Kategori -' : '- Pilih Komoditas Terlebih Dahulu -') . '</select></label>';
+    echo '<label>Kategori (Tipe Aset) *<select id="specType" name="asset_type_id" onchange="onSpecTypeChanged()" required>' . asset_type_options($pdo, (int)($edit['asset_type_id'] ?? 0), $editGroupId, true, $editGroupId ? '- Pilih Kategori -' : '- Pilih Komoditas Terlebih Dahulu -') . '</select></label>';
     echo '</div>';
+    echo '<div id="specExistingNotice" style="display:none;margin-bottom:12px"></div>';
 
     echo '<div class="grid two">';
-    echo '<label>Kode Spesifikasi *<input name="specification_code" required value="' . e($edit['specification_code'] ?? '') . '" placeholder="Contoh: PROCESSOR, RAM, STORAGE, RESOLUSI, WARNA, CC"></label>';
+    echo '<label>Kode Spesifikasi *<input id="specCodeInput" name="specification_code" required value="' . e($edit['specification_code'] ?? '') . '" placeholder="Contoh: PROCESSOR, RAM, STORAGE, RESOLUSI, WARNA, CC" oninput="checkSpecCodeDuplicate()"><div id="specCodeWarn" style="display:none;color:#dc2626;font-size:12px;margin-top:4px;font-weight:600;"></div></label>';
     echo '<label>Nama Spesifikasi *<input name="specification_name" required value="' . e($edit['specification_name'] ?? '') . '" placeholder="Contoh: Processor / CPU, Kapasitas RAM, Tipe Storage, Kapasitas Mesin"></label>';
     echo '</div>';
 
@@ -2938,14 +2955,18 @@ function asset_specification_master_page(PDO $pdo, array $user): void
     if ($edit) {
         echo '<a class="btn" href="' . route_url('asset_specifications') . '">Batal</a> ';
     }
-    echo '<button class="btn primary">Simpan Spesifikasi</button>';
+    echo '<button class="btn primary" id="specSubmitBtn">Simpan Spesifikasi</button>';
     echo '</div></form></section>';
 
-    // JavaScript to dynamically populate Kategori when Komoditas changes
+    // JavaScript to dynamically populate Kategori and inspect existing specs
     echo '<script>
+    window.currentCategorySpecs = [];
     window.onSpecGroupChanged = async function(){
         var specGroup = document.getElementById("specGroup");
         var specType = document.getElementById("specType");
+        var notice = document.getElementById("specExistingNotice");
+        window.currentCategorySpecs = [];
+        if(notice) notice.style.display = "none";
         if(!specGroup || !specType) return;
         var gid = parseInt(specGroup.value, 10) || 0;
         if(gid === 0){
@@ -2965,15 +2986,121 @@ function asset_specification_master_page(PDO $pdo, array $user): void
                 h = "<option value=\"\">- Belum ada kategori untuk komoditas ini -</option>";
             }
             specType.innerHTML = h;
+            onSpecTypeChanged();
         } catch(e){
             console.error("Gagal load kategori:", e);
         }
     };
+
+    window.onSpecTypeChanged = async function(){
+        var specType = document.getElementById("specType");
+        var notice = document.getElementById("specExistingNotice");
+        if(!specType || !notice) return;
+        var tid = parseInt(specType.value, 10) || 0;
+        if(tid <= 0){
+            notice.style.display = "none";
+            notice.innerHTML = "";
+            window.currentCategorySpecs = [];
+            checkSpecCodeDuplicate();
+            return;
+        }
+        try {
+            var r = await fetch("index.php?route=api_asset_type_config&type_id=" + tid);
+            var data = await r.json();
+            window.currentCategorySpecs = (data && data.specifications) ? data.specifications : [];
+            if(window.currentCategorySpecs.length > 0){
+                var badges = window.currentCategorySpecs.map(function(s){
+                    return "<span class=\"badge\" style=\"background:#e0f2fe;color:#0369a1;margin-right:5px;margin-bottom:4px;display:inline-block;padding:3px 8px;border:1px solid #bae6fd;font-size:11px;\">" + 
+                           "<strong>" + (s.specification_code || "") + "</strong>: " + (s.specification_name || "") + "</span>";
+                }).join(" ");
+                notice.innerHTML = "<div style=\"padding:8px 12px;background:#f0f9ff;border-left:3px solid #0284c7;border-radius:4px;\">" +
+                                   "<strong style=\"color:#0369a1;font-size:12px;\">Spesifikasi yang sudah terdaftar di kategori ini:</strong>" +
+                                   "<div style=\"margin-top:5px;display:flex;flex-wrap:wrap;\">" + badges + "</div>" +
+                                   "<div style=\"font-size:11px;color:#64748b;margin-top:4px;\"><em>Tips: Kode spesifikasi di atas sudah terdaftar. Jika ingin mengubahnya, silakan gunakan tombol Edit di tabel bawah.</em></div>" +
+                                   "</div>";
+                notice.style.display = "block";
+            } else {
+                notice.innerHTML = "<div style=\"padding:6px 10px;background:#f8fafc;color:#64748b;font-size:12px;border-radius:4px;\"><em>Belum ada spesifikasi terdaftar untuk kategori ini.</em></div>";
+                notice.style.display = "block";
+            }
+            checkSpecCodeDuplicate();
+        } catch(e){
+            console.error("Gagal load spesifikasi kategori:", e);
+        }
+    };
+
+    window.checkSpecCodeDuplicate = function(){
+        var codeInp = document.getElementById("specCodeInput");
+        var warn = document.getElementById("specCodeWarn");
+        var editId = parseInt((document.getElementById("specEditId") || {}).value, 10) || 0;
+        if(!codeInp || !warn) return;
+        var val = codeInp.value.toUpperCase().trim();
+        if(val === "" || !Array.isArray(window.currentCategorySpecs) || window.currentCategorySpecs.length === 0){
+            warn.style.display = "none";
+            warn.innerText = "";
+            return;
+        }
+        var found = window.currentCategorySpecs.find(function(s){
+            return (s.specification_code || "").toUpperCase() === val && parseInt(s.id, 10) !== editId;
+        });
+        if(found){
+            warn.innerText = "⚠️ Kode \"" + val + "\" sudah digunakan di kategori ini (" + found.specification_name + "). Kode harus unik per kategori!";
+            warn.style.display = "block";
+        } else {
+            warn.style.display = "none";
+            warn.innerText = "";
+        }
+    };
+
+    window.filterSpecTable = function(){
+        var grpVal = (document.getElementById("filterTableGroup") || {}).value || "";
+        var typVal = (document.getElementById("filterTableType") || {}).value || "";
+        var qVal = ((document.getElementById("filterTableSearch") || {}).value || "").toLowerCase().trim();
+        var rows = document.querySelectorAll("#specTableBody tr");
+        rows.forEach(function(row){
+            var rGrp = row.getAttribute("data-group-id") || "";
+            var rTyp = row.getAttribute("data-type-id") || "";
+            var rText = (row.getAttribute("data-search") || "").toLowerCase();
+            var matchGrp = (!grpVal || rGrp === grpVal);
+            var matchTyp = (!typVal || rTyp === typVal);
+            var matchQ = (!qVal || rText.indexOf(qVal) !== -1);
+            row.style.display = (matchGrp && matchTyp && matchQ) ? "" : "none";
+        });
+    };
+
+    document.addEventListener("DOMContentLoaded", function(){
+        var specType = document.getElementById("specType");
+        if(specType && specType.value){
+            onSpecTypeChanged();
+        }
+    });
     </script>';
 
-    echo '<section class="panel"><h2>Daftar Spesifikasi Aset</h2><table><thead><tr><th>ID</th><th>Komoditas (Grup)</th><th>Kategori (Tipe)</th><th>Kode Spesifikasi</th><th>Nama Spesifikasi</th><th>Tipe Data</th><th>Required</th><th>Searchable</th><th>Total Unit Terisi</th><th>Order</th><th>Aksi</th></tr></thead><tbody>';
+    echo '<section class="panel">';
+    echo '<div class="split" style="margin-bottom:12px;">';
+    echo '<h2>Daftar Spesifikasi Aset</h2>';
+    echo '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
+    echo '<select id="filterTableGroup" onchange="filterSpecTable()" style="padding:5px 8px;font-size:12px;">';
+    echo '<option value="">Semua Komoditas</option>';
+    $groups = $pdo->query('SELECT id, group_code, group_name FROM asset_groups ORDER BY group_name')->fetchAll();
+    foreach ($groups as $g) {
+        echo '<option value="' . $g['id'] . '">' . e($g['group_code'] . ' - ' . $g['group_name']) . '</option>';
+    }
+    echo '</select>';
+    echo '<select id="filterTableType" onchange="filterSpecTable()" style="padding:5px 8px;font-size:12px;">';
+    echo '<option value="">Semua Kategori</option>';
+    $types = $pdo->query('SELECT id, type_code, type_name FROM asset_types ORDER BY type_name')->fetchAll();
+    foreach ($types as $t) {
+        echo '<option value="' . $t['id'] . '">' . e($t['type_code'] . ' - ' . $t['type_name']) . '</option>';
+    }
+    echo '</select>';
+    echo '<input id="filterTableSearch" type="search" placeholder="Cari kode/nama spesifikasi..." oninput="filterSpecTable()" style="padding:5px 8px;font-size:12px;width:200px;">';
+    echo '</div>';
+    echo '</div>';
+    
+    echo '<table><thead><tr><th>ID</th><th>Komoditas (Grup)</th><th>Kategori (Tipe)</th><th>Kode Spesifikasi</th><th>Nama Spesifikasi</th><th>Tipe Data</th><th>Required</th><th>Searchable</th><th>Total Unit Terisi</th><th>Order</th><th>Aksi</th></tr></thead><tbody id="specTableBody">';
 
-    $rows = $pdo->query('SELECT s.*, t.type_name, t.type_code, ag.group_name, ag.group_code,
+    $rows = $pdo->query('SELECT s.*, t.type_name, t.type_code, ag.id AS group_id, ag.group_name, ag.group_code,
         (SELECT COUNT(DISTINCT asp.asset_item_id) FROM asset_specifications asp WHERE asp.asset_type_specification_id = s.id AND asp.specification_value != "") AS unit_count
         FROM asset_type_specifications s 
         JOIN asset_types t ON t.id=s.asset_type_id 
@@ -2987,8 +3114,9 @@ function asset_specification_master_page(PDO $pdo, array $user): void
             ? '<a href="' . route_url('asset_items', ['type_id' => $r['asset_type_id']]) . '" class="badge ok" style="text-decoration:none;">' . $uCnt . ' Unit</a>' 
             : '<span class="muted">0 Unit</span>';
         $grpName = !empty($r['group_name']) ? ('<span class="badge" style="background:#e0f2fe;color:#0369a1;">' . e($r['group_code'] . ' - ' . $r['group_name']) . '</span>') : '-';
+        $searchData = strtolower($r['specification_code'] . ' ' . $r['specification_name'] . ' ' . $r['type_name'] . ' ' . ($r['group_name'] ?? ''));
 
-        echo '<tr>'
+        echo '<tr data-group-id="' . (int)($r['group_id'] ?? 0) . '" data-type-id="' . (int)$r['asset_type_id'] . '" data-search="' . e($searchData) . '">'
             . '<td>' . e($r['id']) . '</td>'
             . '<td>' . $grpName . '</td>'
             . '<td><strong>' . e($r['type_name']) . '</strong><br><span class="muted" style="font-size:11px;">' . e($r['type_code']) . '</span></td>'
