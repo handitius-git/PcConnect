@@ -1433,7 +1433,7 @@ function save_asset_master_item(PDO $pdo, int $id, array $post): int
     if ($id) {
         $pdo->prepare('UPDATE asset_items SET master_item_id=?,brand_id=?,asset_code=?,asset_group_id=?,asset_type_id=?,asset_status_id=?,asset_mode=?,asset_name=?,brand=?,model=?,custodian_name=?,custodian_nik=?,notes=?,company_id=?,location_id=?,location_label=?,installed_at=?,purchase_value=?,warranty_until=?,source_pc_id=?,asset_type=? WHERE id=?')->execute([...$p, $c['type']['type_name'], $id]);
     } else {
-        $pdo->prepare("INSERT INTO asset_items(master_item_id,brand_id,asset_code,asset_group_id,asset_type_id,asset_status_id,asset_mode,asset_name,brand,model,custodian_name,custodian_nik,notes,company_id,location_id,location_label,installed_at,purchase_value,warranty_until,source_pc_id,asset_type,asset_category,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Legacy','active')")->execute([...$p, $c['type']['type_name']]);
+        $pdo->prepare("INSERT INTO asset_items(master_item_id,brand_id,asset_code,asset_group_id,asset_type_id,asset_status_id,asset_mode,asset_name,brand,model,custodian_name,custodian_nik,notes,company_id,location_id,location_label,installed_at,purchase_value,warranty_until,source_pc_id,asset_type,asset_category,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Legacy','active')")->execute([...$p, $c['type']['type_name']]);
         $id = (int)$pdo->lastInsertId();
     }
     foreach ($c['identifiers'] as $x) {
