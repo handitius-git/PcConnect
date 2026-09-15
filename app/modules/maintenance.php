@@ -2197,7 +2197,7 @@ function export_excel(PDO $pdo, string $type): never
     if (!$user) {
         redirect_to('login');
     }
-    $maintenanceTypes = ['reports', 'maintenance', 'maintenance_status', 'jobs', 'technicians'];
+    $maintenanceTypes = ['reports', 'maintenance', 'maintenance_status', 'jobs', 'technicians', 'asset_movements'];
     if (($user['role'] ?? '') === 'technician' && $type !== 'reports') {
         http_response_code(403);
         exit('Akses ditolak.');
@@ -2335,6 +2335,56 @@ function export_excel(PDO $pdo, string $type): never
     if ($type === 'asset_bundles') {
         $rows = $pdo->query('SELECT b.maintenance_asset_code, c.company_name, b.bundle_type, b.bundle_name, b.employee_nik, b.owner_name, b.location_label, b.latitude, b.longitude, b.location_radius_m, b.status, b.notes FROM asset_bundles b LEFT JOIN asset_companies c ON c.id=b.company_id ORDER BY b.maintenance_asset_code')->fetchAll();
         output_tsv(['No Aset Pemeliharaan', 'Company', 'Bundle Type', 'Nama Bundle', 'NIK', 'Pengguna', 'Lokasi', 'Latitude', 'Longitude', 'Radius', 'Status', 'Notes'], $rows);
+        exit;
+    }
+
+    if ($type === 'asset_movements') {
+        $q = trim((string)($_GET['q'] ?? ''));
+        $startDate = trim((string)($_GET['start_date'] ?? ''));
+        $endDate = trim((string)($_GET['end_date'] ?? ''));
+        $where = ['1=1'];
+        $params = [];
+        if ($q !== '') {
+            $where[] = '(ai.asset_code LIKE ? OR ai.asset_name LIKE ? OR mv.reason LIKE ? OR mv.pic LIKE ? OR fp.asset_code LIKE ? OR tp.asset_code LIKE ?)';
+            for ($k = 0; $k < 6; $k++) { $params[] = "%{$q}%"; }
+        }
+        if ($startDate !== '') {
+            $where[] = 'mv.movement_date >= ?';
+            $params[] = $startDate;
+        }
+        if ($endDate !== '') {
+            $where[] = 'mv.movement_date <= ?';
+            $params[] = $endDate;
+        }
+        $sql = 'SELECT mv.*, ai.asset_code, ai.asset_name, ai.asset_type, fp.asset_code from_parent_code, fp.asset_name from_parent_name, tp.asset_code to_parent_code, tp.asset_name to_parent_name, fc.company_name from_company, tc.company_name to_company 
+                FROM asset_movements mv 
+                JOIN asset_items ai ON ai.id=mv.asset_item_id 
+                LEFT JOIN asset_items fp ON fp.id=mv.from_parent_asset_item_id 
+                LEFT JOIN asset_items tp ON tp.id=mv.to_parent_asset_item_id 
+                LEFT JOIN asset_companies fc ON fc.id=mv.from_company_id 
+                LEFT JOIN asset_companies tc ON tc.id=mv.to_company_id 
+                WHERE ' . implode(' AND ', $where) . ' 
+                ORDER BY mv.movement_date DESC, mv.id DESC';
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $exportRows = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $from = $r['from_parent_code'] ? ($r['from_parent_code'] . ' - ' . $r['from_parent_name']) : '-';
+            $to = $r['to_parent_code'] ? ($r['to_parent_code'] . ' - ' . $r['to_parent_name']) : '-';
+            $company = ($r['from_company'] || $r['to_company']) ? (($r['from_company'] ?: '-') . ' -> ' . ($r['to_company'] ?: '-')) : '-';
+            $exportRows[] = [
+                $r['movement_date'],
+                $r['asset_code'],
+                $r['asset_name'],
+                $r['asset_type'] ?? '-',
+                $from,
+                $to,
+                $company,
+                $r['reason'] ?: '-',
+                $r['pic'] ?: '-',
+            ];
+        }
+        output_tsv(['Tanggal Mutasi', 'Kode Aset', 'Nama Aset', 'Kategori/Tipe', 'Bundle Asal', 'Bundle Tujuan', 'Company', 'Alasan / Keterangan', 'PIC / Petugas'], $exportRows);
         exit;
     }
 

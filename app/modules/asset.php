@@ -1743,7 +1743,7 @@ function asset_item_member_manager_html(PDO $pdo, int $itemId): string
             . '<td>' . e($row['role_name'] ?: '-') . '</td>'
             . '<td>' . e($row['company_name'] ?: '-') . '</td>'
             . '<td>' . e($row['attached_at']) . '</td>'
-            . '<td>' . e($row['detached_at'] ?: '<span class="badge ok" style="font-size:11px;">Aktif</span>') . '</td>'
+            . '<td>' . ($row['detached_at'] ? e($row['detached_at']) : '<span class="badge ok" style="font-size:11px;">Aktif</span>') . '</td>'
             . '<td>';
 
         if (!$isDetached) {
@@ -2248,26 +2248,95 @@ function handle_asset_movement_transaction(PDO $pdo, array $user): void
     }
 }
 
-function asset_movement_rows(PDO $pdo): array
+function asset_movement_rows(PDO $pdo, string $q = '', string $startDate = '', string $endDate = ''): array
 {
     if (!db_table_exists($pdo, 'asset_movements')) {
         return [];
     }
-    return $pdo->query('SELECT mv.*, ai.asset_code, ai.asset_name, fb.maintenance_asset_code from_bundle, tb.maintenance_asset_code to_bundle, fp.asset_code from_parent_code, fp.asset_name from_parent_name, tp.asset_code to_parent_code, tp.asset_name to_parent_name, fc.company_name from_company, tc.company_name to_company FROM asset_movements mv JOIN asset_items ai ON ai.id=mv.asset_item_id LEFT JOIN asset_bundles fb ON fb.id=mv.from_bundle_id LEFT JOIN asset_bundles tb ON tb.id=mv.to_bundle_id LEFT JOIN asset_items fp ON fp.id=mv.from_parent_asset_item_id LEFT JOIN asset_items tp ON tp.id=mv.to_parent_asset_item_id LEFT JOIN asset_companies fc ON fc.id=mv.from_company_id LEFT JOIN asset_companies tc ON tc.id=mv.to_company_id ORDER BY mv.movement_date DESC, mv.id DESC')->fetchAll();
+    $where = ['1=1'];
+    $params = [];
+    if ($q !== '') {
+        $where[] = '(ai.asset_code LIKE ? OR ai.asset_name LIKE ? OR mv.reason LIKE ? OR mv.pic LIKE ? OR fp.asset_code LIKE ? OR tp.asset_code LIKE ?)';
+        for ($k = 0; $k < 6; $k++) { $params[] = "%{$q}%"; }
+    }
+    if ($startDate !== '') {
+        $where[] = 'mv.movement_date >= ?';
+        $params[] = $startDate;
+    }
+    if ($endDate !== '') {
+        $where[] = 'mv.movement_date <= ?';
+        $params[] = $endDate;
+    }
+    $sql = 'SELECT mv.*, ai.asset_code, ai.asset_name, ai.asset_type, 
+                   fb.maintenance_asset_code from_bundle, tb.maintenance_asset_code to_bundle, 
+                   fp.asset_code from_parent_code, fp.asset_name from_parent_name, 
+                   tp.asset_code to_parent_code, tp.asset_name to_parent_name, 
+                   fc.company_name from_company, tc.company_name to_company 
+            FROM asset_movements mv 
+            JOIN asset_items ai ON ai.id=mv.asset_item_id 
+            LEFT JOIN asset_bundles fb ON fb.id=mv.from_bundle_id 
+            LEFT JOIN asset_bundles tb ON tb.id=mv.to_bundle_id 
+            LEFT JOIN asset_items fp ON fp.id=mv.from_parent_asset_item_id 
+            LEFT JOIN asset_items tp ON tp.id=mv.to_parent_asset_item_id 
+            LEFT JOIN asset_companies fc ON fc.id=mv.from_company_id 
+            LEFT JOIN asset_companies tc ON tc.id=mv.to_company_id 
+            WHERE ' . implode(' AND ', $where) . ' 
+            ORDER BY mv.movement_date DESC, mv.id DESC';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
 function asset_movements_table(array $rows): string
 {
     if (!$rows) {
-        return '<p>Belum ada mutasi/tukar pasang.</p>';
+        return '<p class="muted" style="padding:16px 0;">Belum ada data riwayat mutasi aset yang sesuai.</p>';
     }
-    $html = '<table><tr><th>Tanggal</th><th>Asset</th><th>Dari Gabungan</th><th>Ke Gabungan</th><th>Company</th><th>Alasan</th><th>PIC</th></tr>';
+    $html = '<div style="overflow-x:auto;"><table>'
+        . '<thead><tr>'
+        . '<th>Tanggal</th>'
+        . '<th>Aksi / Status Mutasi</th>'
+        . '<th>Unit Aset</th>'
+        . '<th>Bundle Asal</th>'
+        . '<th>Bundle Tujuan</th>'
+        . '<th>Company</th>'
+        . '<th>Alasan / Keterangan</th>'
+        . '<th>PIC / Petugas</th>'
+        . '</tr></thead><tbody>';
+
     foreach ($rows as $row) {
-        $from = $row['from_parent_code'] ? $row['from_parent_code'] . ' - ' . $row['from_parent_name'] : ($row['from_bundle'] ?: '-');
-        $to = $row['to_parent_code'] ? $row['to_parent_code'] . ' - ' . $row['to_parent_name'] : ($row['to_bundle'] ?: '-');
-        $html .= '<tr><td>' . e($row['movement_date']) . '</td><td><strong>' . e($row['asset_code']) . '</strong><br>' . e($row['asset_name']) . '</td><td>' . e($from) . '</td><td>' . e($to) . '</td><td>' . e(($row['from_company'] ?: '-') . ' -> ' . ($row['to_company'] ?: '-')) . '</td><td>' . e($row['reason'] ?: '-') . '</td><td>' . e($row['pic'] ?: '-') . '</td></tr>';
+        $fromPid = (int)($row['from_parent_asset_item_id'] ?? 0);
+        $toPid = (int)($row['to_parent_asset_item_id'] ?? 0);
+
+        if ($fromPid > 0 && $toPid > 0) {
+            $badge = '<span class="badge" style="background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;">Pindah Bundle</span>';
+        } elseif ($toPid > 0) {
+            $badge = '<span class="badge ok">Dipasang ke Bundle</span>';
+        } elseif ($fromPid > 0) {
+            $badge = '<span class="badge" style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca;">Dilepas (Kembali Single)</span>';
+        } elseif (!empty($row['to_company_id']) || !empty($row['from_company_id'])) {
+            $badge = '<span class="badge" style="background:#e0f2fe;color:#0369a1;">Mutasi Company</span>';
+        } else {
+            $badge = '<span class="badge">Mutasi Aset</span>';
+        }
+
+        $from = $row['from_parent_code'] ? ($row['from_parent_code'] . ' - ' . $row['from_parent_name']) : ($row['from_bundle'] ?: '-');
+        $to = $row['to_parent_code'] ? ($row['to_parent_code'] . ' - ' . $row['to_parent_name']) : ($row['to_bundle'] ?: '-');
+        $comp = ($row['from_company'] || $row['to_company']) ? (($row['from_company'] ?: '-') . ' -> ' . ($row['to_company'] ?: '-')) : '-';
+
+        $html .= '<tr>'
+            . '<td>' . e($row['movement_date']) . '</td>'
+            . '<td>' . $badge . '</td>'
+            . '<td><strong><a href="' . route_url('asset_item_form', ['id' => $row['asset_item_id']]) . '">' . e($row['asset_code']) . '</a></strong><br><span class="muted">' . e($row['asset_name']) . '</span></td>'
+            . '<td>' . e($from) . '</td>'
+            . '<td>' . e($to) . '</td>'
+            . '<td>' . e($comp) . '</td>'
+            . '<td>' . nl2br(e($row['reason'] ?: '-')) . '</td>'
+            . '<td>' . e($row['pic'] ?: '-') . '</td>'
+            . '</tr>';
     }
-    return $html . '</table>';
+    $html .= '</tbody></table></div>';
+    return $html;
 }
 
 if (!function_exists('asset_group_options')) {
@@ -4108,7 +4177,6 @@ function handle_route_asset_item_form(PDO $pdo): void
     if ($id > 0) {
         echo asset_item_maintenance_link_panel_html($pdo, $id);
         echo asset_item_member_manager_html($pdo, $id);
-        echo asset_item_history_panel_html($pdo, $id);
     }
     render_footer();
 }
@@ -4403,16 +4471,50 @@ function handle_route_asset_repair_form(PDO $pdo): void
 
 function handle_route_asset_movements(PDO $pdo): void
 {
-    $user = require_role(['admin']);
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $user = require_role(['admin', 'maintenance_admin']);
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_full_admin($user)) {
         handle_asset_movement_transaction($pdo, $user);
         redirect_to('asset_movements');
     }
-    render_header('Mutasi / Tukar Pasang', $user);
+    $q = trim((string)($_GET['q'] ?? ''));
+    $startDate = trim((string)($_GET['start_date'] ?? ''));
+    $endDate = trim((string)($_GET['end_date'] ?? ''));
+
+    render_header('Report Mutasi Aset', $user);
     echo asset_nav_html();
-    $rows = asset_movement_rows($pdo);
-    echo asset_movement_transaction_form_html($pdo, $user);
-    echo '<section class="panel"><h1>Riwayat Mutasi / Tukar Pasang</h1><p class="muted">Riwayat terbentuk dari transaksi di atas dan relasi asset.</p>' . asset_movements_table($rows) . '</section>';
+    $rows = asset_movement_rows($pdo, $q, $startDate, $endDate);
+
+    $exportParams = ['type' => 'asset_movements'];
+    if ($q !== '') $exportParams['q'] = $q;
+    if ($startDate !== '') $exportParams['start_date'] = $startDate;
+    if ($endDate !== '') $exportParams['end_date'] = $endDate;
+
+    echo '<section class="panel">'
+        . '<div class="split" style="align-items:center;">'
+        . '  <div>'
+        . '    <h1 style="margin:0;">Report Mutasi Aset</h1>'
+        . '    <p class="muted" style="margin:4px 0 0 0;">Laporan riwayat mutasi aset, perubahan keanggotaan bundle, pelepasan unit single, dan perpindahan antar unit.</p>'
+        . '  </div>'
+        . '  <div class="actions">'
+        . '    <a class="btn" href="' . route_url('export_excel', $exportParams) . '">Export Excel</a>'
+        . '  </div>'
+        . '</div>'
+        . '<form method="get" class="actions" style="margin:16px 0 14px 0;align-items:flex-end;">'
+        . '<input type="hidden" name="route" value="asset_movements">'
+        . '<label style="margin:0;">Tanggal Mulai<input type="date" name="start_date" value="' . e($startDate) . '"></label>'
+        . '<label style="margin:0;">Tanggal Akhir<input type="date" name="end_date" value="' . e($endDate) . '"></label>'
+        . '<label style="margin:0;flex:1;min-width:200px;">Cari (Kode / Nama / Alasan / PIC)<input name="q" value="' . e($q) . '" placeholder="Ketik kata kunci pencarian..."></label>'
+        . '<button class="btn primary" style="height:38px;align-self:flex-end;">Filter</button>'
+        . ($q !== '' || $startDate !== '' || $endDate !== '' ? '<a class="btn" href="' . route_url('asset_movements') . '" style="height:38px;align-self:flex-end;">Reset</a>' : '')
+        . '</form>'
+        . asset_movements_table($rows)
+        . '</section>';
+
+    if (is_full_admin($user)) {
+        echo '<details class="panel" style="margin-top:16px;"><summary style="cursor:pointer;font-weight:600;color:#1e293b;padding:4px 0;">⚙️ Form Transaksi Mutasi Manual / Tukar Pasang</summary>'
+            . '<div style="margin-top:12px;">' . asset_movement_transaction_form_html($pdo, $user) . '</div>'
+            . '</details>';
+    }
     render_footer();
 }
 
