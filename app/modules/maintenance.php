@@ -1410,12 +1410,17 @@ function handle_route_jobs(PDO $pdo): void
     $isEditing = ($editingDesk !== null);
     $editDeskId = $isEditing ? (int)$editingDesk['id'] : 0;
     $editDeskName = $isEditing ? (string)$editingDesk['job_desk_name'] : '';
-    $editGroupId = $isEditing ? (int)($editingDesk['asset_group_id'] ?? 0) : 0;
-    $editTypeId = $isEditing ? (int)($editingDesk['asset_type_id'] ?? 0) : 0;
+    $editGroupId = $isEditing ? (int)($editingDesk['asset_group_id'] ?? 0) : (int)($_GET['group_id'] ?? 0);
+    $editTypeId = $isEditing ? (int)($editingDesk['asset_type_id'] ?? 0) : (int)($_GET['type_id'] ?? 0);
     $editDesc = $isEditing ? (string)($editingDesk['description'] ?? '') : '';
+
+    $filterGroupId = $editGroupId;
+    $filterTypeId = $editTypeId;
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = (string)($_POST['action'] ?? '');
+        $postGroupId = (int)($_POST['asset_group_id'] ?? $filterGroupId);
+        $postTypeId = (int)($_POST['asset_type_id'] ?? $filterTypeId);
 
         // --- TAMBAH JOB DESK PREVENTIVE MAINTENANCE ---
         if ($action === 'add_desk') {
@@ -1451,7 +1456,7 @@ function handle_route_jobs(PDO $pdo): void
             $existId = $chk->fetchColumn();
             if ($existId) {
                 flash("Job Desk dengan nama '{$deskName}' sudah ada (ID: #{$existId}).", 'err');
-                redirect_to('jobs', ['manage_desk_id' => $existId]);
+                redirect_to('jobs', array_filter(['group_id' => $groupId, 'type_id' => $typeId, 'manage_desk_id' => $existId]));
             }
 
             $stmtIns = $pdo->prepare('INSERT INTO preventive_job_desks (job_desk_name, asset_group_id, asset_type_id, description) VALUES (?, ?, ?, ?)');
@@ -1464,7 +1469,7 @@ function handle_route_jobs(PDO $pdo): void
             $newDeskId = (int)$pdo->lastInsertId();
 
             flash("Job Desk Preventive Maintenance '{$deskName}' (ID: #{$newDeskId}) berhasil dibuat. Silakan isi daftar pekerjaan / task di bawah.");
-            redirect_to('jobs', ['manage_desk_id' => $newDeskId]);
+            redirect_to('jobs', array_filter(['group_id' => $groupId, 'type_id' => $typeId, 'manage_desk_id' => $newDeskId]));
         }
 
         // --- EDIT JOB DESK PREVENTIVE MAINTENANCE ---
@@ -1506,7 +1511,7 @@ function handle_route_jobs(PDO $pdo): void
 
                 flash("Job Desk Preventive Maintenance '{$newDesk}' berhasil diperbarui.");
             }
-            redirect_to('jobs', ['manage_desk_id' => $deskId]);
+            redirect_to('jobs', array_filter(['group_id' => $groupId, 'type_id' => $typeId, 'manage_desk_id' => $deskId]));
         }
 
         // --- HAPUS JOB DESK PREVENTIVE MAINTENANCE ---
@@ -1543,7 +1548,7 @@ function handle_route_jobs(PDO $pdo): void
 
                 flash("Job Desk '{$deskName}' berhasil dihapus.");
             }
-            redirect_to('jobs');
+            redirect_to('jobs', array_filter(['group_id' => $postGroupId, 'type_id' => $postTypeId]));
         }
 
         // --- TAMBAH JOB TASK KE JOB DESK ---
@@ -1563,8 +1568,8 @@ function handle_route_jobs(PDO $pdo): void
                     $stmtInsTask->execute([
                         $taskTitle,
                         $taskDesc !== '' ? $taskDesc : null,
-                        $curDesk['asset_group_id'] ?: null,
-                        $curDesk['asset_type_id'] ?: null,
+                        $curDesk['asset_group_id'] ?: ($postGroupId ?: null),
+                        $curDesk['asset_type_id'] ?: ($postTypeId ?: null),
                         $curDesk['job_desk_name'],
                         $estMinutes,
                     ]);
@@ -1573,7 +1578,7 @@ function handle_route_jobs(PDO $pdo): void
                     flash('Nama pekerjaan / job task wajib diisi.', 'err');
                 }
             }
-            redirect_to('jobs', ['manage_desk_id' => $manageDeskId]);
+            redirect_to('jobs', array_filter(['group_id' => $postGroupId, 'type_id' => $postTypeId, 'manage_desk_id' => $manageDeskId]));
         }
 
         // --- UPDATE ESTIMASI / NAMA TASK ---
@@ -1589,7 +1594,7 @@ function handle_route_jobs(PDO $pdo): void
                     ->execute([$title, $estMinutes, $desc !== '' ? $desc : null, $taskId]);
                 flash('Pekerjaan / task berhasil diperbarui.');
             }
-            redirect_to('jobs', ['manage_desk_id' => $manageDeskId]);
+            redirect_to('jobs', array_filter(['group_id' => $postGroupId, 'type_id' => $postTypeId, 'manage_desk_id' => $manageDeskId]));
         }
 
         // --- TOGGLE AKTIF / NON-AKTIF TASK ---
@@ -1600,7 +1605,7 @@ function handle_route_jobs(PDO $pdo): void
                 $pdo->prepare('UPDATE maintenance_jobs SET is_active = 1 - is_active WHERE id = ?')->execute([$taskId]);
                 flash('Status pekerjaan diperbarui.');
             }
-            redirect_to('jobs', ['manage_desk_id' => $manageDeskId]);
+            redirect_to('jobs', array_filter(['group_id' => $postGroupId, 'type_id' => $postTypeId, 'manage_desk_id' => $manageDeskId]));
         }
 
         // --- HAPUS JOB TASK ---
@@ -1618,7 +1623,7 @@ function handle_route_jobs(PDO $pdo): void
                     flash('Pekerjaan berhasil dihapus.');
                 }
             }
-            redirect_to('jobs', ['manage_desk_id' => $manageDeskId]);
+            redirect_to('jobs', array_filter(['group_id' => $postGroupId, 'type_id' => $postTypeId, 'manage_desk_id' => $manageDeskId]));
         }
 
         // --- SALIN TUGAS DARI JOB DESK UMUM ---
@@ -1640,8 +1645,8 @@ function handle_route_jobs(PDO $pdo): void
                         $ins->execute([
                             $dj['title'],
                             $dj['description'],
-                            $curDesk['asset_group_id'] ?: null,
-                            $curDesk['asset_type_id'] ?: null,
+                            $curDesk['asset_group_id'] ?: ($postGroupId ?: null),
+                            $curDesk['asset_type_id'] ?: ($postTypeId ?: null),
                             $targetDeskName,
                             $dj['estimated_minutes'],
                         ]);
@@ -1650,13 +1655,25 @@ function handle_route_jobs(PDO $pdo): void
                 }
                 flash("Berhasil menyalin {$copied} tugas standar ke '{$targetDeskName}'.");
             }
-            redirect_to('jobs', ['manage_desk_id' => $manageDeskId]);
+            redirect_to('jobs', array_filter(['group_id' => $postGroupId, 'type_id' => $postTypeId, 'manage_desk_id' => $manageDeskId]));
         }
     }
 
     render_header('Job Desk Preventive Maintenance', $user);
 
     // Ambil semua daftar job desk dengan join aman tanpa error collation 1267
+    $whereParts = [];
+    $queryParams = [];
+    if ($filterGroupId > 0) {
+        $whereParts[] = 'd.asset_group_id = ?';
+        $queryParams[] = $filterGroupId;
+    }
+    if ($filterTypeId > 0) {
+        $whereParts[] = 'd.asset_type_id = ?';
+        $queryParams[] = $filterTypeId;
+    }
+    $whereSql = !empty($whereParts) ? ('WHERE ' . implode(' AND ', $whereParts)) : '';
+
     $desksQuery = 'SELECT 
         d.id AS desk_id,
         d.job_desk_name,
@@ -1690,39 +1707,48 @@ function handle_route_jobs(PDO $pdo): void
         JOIN maintenance_jobs j2 ON j2.id = sj.job_id 
         GROUP BY j2.job_desk_name
     ) sj_sub ON sj_sub.job_desk_name COLLATE utf8mb4_unicode_ci = d.job_desk_name COLLATE utf8mb4_unicode_ci
+    ' . $whereSql . '
     GROUP BY d.id, d.job_desk_name, d.asset_group_id, d.asset_type_id, d.description, g.group_code, g.group_name, t.type_code, t.type_name
     ORDER BY g.group_name, t.type_name, d.job_desk_name';
 
-    $deskRows = $pdo->query($desksQuery)->fetchAll(PDO::FETCH_ASSOC);
+    $stmtDesks = $pdo->prepare($desksQuery);
+    $stmtDesks->execute($queryParams);
+    $deskRows = $stmtDesks->fetchAll(PDO::FETCH_ASSOC);
 
     // Tentukan Job Desk yang sedang aktif dipilih untuk pengelolaan Job Tasks
     $manageDeskId = (int)($_GET['manage_desk_id'] ?? 0);
-    if ($manageDeskId === 0) {
-        if ($editDeskId > 0) {
-            $manageDeskId = $editDeskId;
-        } elseif (!empty($deskRows)) {
-            $manageDeskId = (int)$deskRows[0]['desk_id'];
-        }
-    }
-
     $activeDesk = null;
     $activeDeskTasks = [];
-    if ($manageDeskId > 0) {
-        foreach ($deskRows as $r) {
-            if ((int)$r['desk_id'] === $manageDeskId) {
-                $activeDesk = $r;
-                break;
+
+    if (!empty($deskRows)) {
+        if ($manageDeskId > 0) {
+            foreach ($deskRows as $r) {
+                if ((int)$r['desk_id'] === $manageDeskId) {
+                    $activeDesk = $r;
+                    break;
+                }
             }
         }
-        if ($activeDesk) {
-            $isUmum = ($activeDesk['job_desk_name'] === 'Job Desk Umum');
-            $sqlTasks = $isUmum 
-                ? 'SELECT * FROM maintenance_jobs WHERE job_desk_name = ? OR job_desk_name IS NULL OR job_desk_name = "" ORDER BY is_active DESC, id ASC'
-                : 'SELECT * FROM maintenance_jobs WHERE job_desk_name = ? ORDER BY is_active DESC, id ASC';
-            $stmtTasks = $pdo->prepare($sqlTasks);
-            $stmtTasks->execute([$activeDesk['job_desk_name']]);
-            $activeDeskTasks = $stmtTasks->fetchAll(PDO::FETCH_ASSOC);
+        if (!$activeDesk && $editDeskId > 0) {
+            foreach ($deskRows as $r) {
+                if ((int)$r['desk_id'] === $editDeskId) {
+                    $activeDesk = $r;
+                    break;
+                }
+            }
         }
+        if (!$activeDesk) {
+            $activeDesk = $deskRows[0];
+        }
+        $manageDeskId = (int)$activeDesk['desk_id'];
+
+        $isUmum = ($activeDesk['job_desk_name'] === 'Job Desk Umum');
+        $sqlTasks = $isUmum 
+            ? 'SELECT * FROM maintenance_jobs WHERE job_desk_name = ? OR job_desk_name IS NULL OR job_desk_name = "" ORDER BY is_active DESC, id ASC'
+            : 'SELECT * FROM maintenance_jobs WHERE job_desk_name = ? ORDER BY is_active DESC, id ASC';
+        $stmtTasks = $pdo->prepare($sqlTasks);
+        $stmtTasks->execute([$activeDesk['job_desk_name']]);
+        $activeDeskTasks = $stmtTasks->fetchAll(PDO::FETCH_ASSOC);
     }
 
     // FORM TAMBAH / EDIT JOB DESK PREVENTIVE MAINTENANCE
@@ -1732,7 +1758,7 @@ function handle_route_jobs(PDO $pdo): void
     echo '<section class="grid two"><div class="panel">';
     echo '<div class="split" style="align-items:center;margin-bottom:12px;">'
         . '<h1 style="margin:0;font-size:18px;">' . e($formTitle) . '</h1>'
-        . ($isEditing ? '<a class="btn" href="' . route_url('jobs') . '">+ Tambah Job Desk Baru</a>' : '')
+        . ($isEditing ? '<a class="btn" href="' . route_url('jobs', array_filter(['group_id' => $filterGroupId, 'type_id' => $filterTypeId])) . '">+ Tambah Job Desk Baru</a>' : '')
         . '</div>';
 
     echo '<form method="post">'
@@ -1767,18 +1793,52 @@ function handle_route_jobs(PDO $pdo): void
         . '</label>'
         . '<div class="actions" style="margin-top:14px;">'
         . '<button class="btn primary">' . ($isEditing ? 'Perbarui Job Desk' : 'Simpan Job Desk') . '</button>'
-        . ($isEditing ? '<a class="btn" href="' . route_url('jobs') . '">Batal Edit</a>' : '')
+        . ($isEditing ? '<a class="btn" href="' . route_url('jobs', array_filter(['group_id' => $filterGroupId, 'type_id' => $filterTypeId])) . '">Batal Edit</a>' : '')
         . '</div>'
         . '</form>'
         . '</div>';
 
     // TABEL DAFTAR JOB DESK PREVENTIVE MAINTENANCE
+    $filterBadges = [];
+    if ($filterGroupId > 0) {
+        $stmtG = $pdo->prepare('SELECT group_code, group_name FROM asset_groups WHERE id = ?');
+        $stmtG->execute([$filterGroupId]);
+        $gInfo = $stmtG->fetch(PDO::FETCH_ASSOC);
+        if ($gInfo) {
+            $filterBadges[] = 'Komoditas: <strong>' . e($gInfo['group_name']) . '</strong>';
+        }
+    }
+    if ($filterTypeId > 0) {
+        $stmtT = $pdo->prepare('SELECT type_code, type_name FROM asset_types WHERE id = ?');
+        $stmtT->execute([$filterTypeId]);
+        $tInfo = $stmtT->fetch(PDO::FETCH_ASSOC);
+        if ($tInfo) {
+            $filterBadges[] = 'Kategori: <strong>' . e($tInfo['type_name']) . '</strong>';
+        }
+    }
+
+    $filterInfoHtml = '';
+    if (!empty($filterBadges)) {
+        $filterInfoHtml = '<div style="margin:4px 0 10px 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+            . '<span class="badge ok" style="font-size:12px;">' . implode(' &bull; ', $filterBadges) . '</span>'
+            . '<a class="btn" href="' . route_url('jobs') . '" style="padding:3px 8px;font-size:11px;">✕ Tampilkan Semua Job Desk</a>'
+            . '</div>';
+    }
+
     echo '<div class="panel">'
         . '<div class="split"><h2>Daftar Job Desk Preventive Maintenance</h2><div class="actions"><a class="btn" href="' . route_url('export_excel', ['type' => 'jobs']) . '">Export Excel</a></div></div>'
+        . $filterInfoHtml
         . '<p class="muted" style="margin-top:-6px;margin-bottom:12px;">Pilih Job Desk untuk mengisi atau mengelola daftar pekerjaannya (Job Tasks).</p>';
 
     if (!$deskRows) {
-        echo '<p class="muted">Belum ada Job Desk tersimpan. Silakan tambahkan pada form di samping.</p>';
+        if (!empty($filterBadges)) {
+            echo '<div style="padding:20px;text-align:center;background:#fff;border:1px dashed #cbd5e1;border-radius:8px;">'
+                . '<p class="muted" style="margin:0 0 6px 0;">Belum ada Job Desk untuk kategori ini.</p>'
+                . '<p style="font-size:13px;color:#64748b;margin:0;">Silakan isi formulir di sebelah kiri dan klik <strong>Simpan Job Desk</strong> untuk membuat Job Desk baru bagi kategori ini.</p>'
+                . '</div>';
+        } else {
+            echo '<p class="muted">Belum ada Job Desk tersimpan. Silakan tambahkan pada form di samping.</p>';
+        }
     } else {
         echo '<div style="overflow-x:auto;"><table><tr><th>ID</th><th>Nama Job Desk</th><th>Asset Group / Type</th><th>Tasks</th><th>Dipakai</th><th>Aksi</th></tr>';
         foreach ($deskRows as $d) {
@@ -1812,6 +1872,8 @@ function handle_route_jobs(PDO $pdo): void
                 . '<input type="hidden" name="action" value="delete_desk">'
                 . '<input type="hidden" name="desk_id" value="' . $dId . '">'
                 . '<input type="hidden" name="job_desk_name" value="' . e($dName) . '">'
+                . '<input type="hidden" name="asset_group_id" value="' . $filterGroupId . '">'
+                . '<input type="hidden" name="asset_type_id" value="' . $filterTypeId . '">'
                 . '<button class="btn danger">Hapus</button>'
                 . '</form>';
 
@@ -1823,8 +1885,8 @@ function handle_route_jobs(PDO $pdo): void
                 . '<td><span class="badge">' . (int)$d['job_count'] . ' task</span><br><span class="muted" style="font-size:11px;">~' . (int)$d['total_minutes'] . ' mnt</span></td>'
                 . '<td>' . $usageBadge . '</td>'
                 . '<td><div class="actions" style="display:flex;gap:4px;align-items:center;">'
-                . '<a class="btn ' . ($isActive ? 'primary' : '') . '" href="' . route_url('jobs', ['manage_desk_id' => $dId]) . '" title="Isi & Kelola Pekerjaan">📋 Isi Tasks</a>'
-                . '<a class="btn" href="' . route_url('jobs', ['edit_id' => $dId, 'manage_desk_id' => $dId]) . '">Edit</a>'
+                . '<a class="btn ' . ($isActive ? 'primary' : '') . '" href="' . route_url('jobs', array_filter(['group_id' => $filterGroupId, 'type_id' => $filterTypeId, 'manage_desk_id' => $dId])) . '" title="Isi & Kelola Pekerjaan">📋 Isi Tasks</a>'
+                . '<a class="btn" href="' . route_url('jobs', array_filter(['group_id' => $filterGroupId, 'type_id' => $filterTypeId, 'edit_id' => $dId, 'manage_desk_id' => $dId])) . '">Edit</a>'
                 . $deleteBtn
                 . '</div></td>'
                 . '</tr>';
@@ -1847,7 +1909,7 @@ function handle_route_jobs(PDO $pdo): void
 
         echo '<div class="panel" style="margin-top:20px;border-top:3px solid #2563eb;">';
         $copyHeaderBtn = ($actName !== 'Job Desk Umum')
-            ? '<form method="post" style="display:inline;"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="copy_default_tasks"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><button class="btn" style="padding:5px 10px;font-size:12px;background:#f0fdf4;border:1px solid #86efac;color:#166534;font-weight:600;" title="Salin tugas-tugas standar yang belum ada ke Job Desk ini">+ Salin Tugas Standar</button></form>'
+            ? '<form method="post" style="display:inline;"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="copy_default_tasks"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><input type="hidden" name="asset_group_id" value="' . $filterGroupId . '"><input type="hidden" name="asset_type_id" value="' . $filterTypeId . '"><button class="btn" style="padding:5px 10px;font-size:12px;background:#f0fdf4;border:1px solid #86efac;color:#166534;font-weight:600;" title="Salin tugas-tugas standar yang belum ada ke Job Desk ini">+ Salin Tugas Standar</button></form>'
             : '';
         echo '<div class="split" style="align-items:center;margin-bottom:14px;">'
             . '<div>'
@@ -1869,6 +1931,8 @@ function handle_route_jobs(PDO $pdo): void
             . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
             . '<input type="hidden" name="action" value="add_task">'
             . '<input type="hidden" name="manage_desk_id" value="' . $actId . '">'
+            . '<input type="hidden" name="asset_group_id" value="' . $filterGroupId . '">'
+            . '<input type="hidden" name="asset_type_id" value="' . $filterTypeId . '">'
             . '<label>Nama Pekerjaan / Job Task *'
             . '<input name="title" required placeholder="Contoh: Pembersihan Fan & Casing Unit" style="font-weight:600;">'
             . '</label>'
@@ -1890,7 +1954,7 @@ function handle_route_jobs(PDO $pdo): void
         echo '<div>';
         if (!$activeDeskTasks) {
             $copyEmptyBtn = ($actName !== 'Job Desk Umum')
-                ? '<form method="post" style="margin-top:12px;"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="copy_default_tasks"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><button class="btn primary" style="font-size:13px;">📥 Salin 12 Tugas Standar dari Job Desk Umum</button></form>'
+                ? '<form method="post" style="margin-top:12px;"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="copy_default_tasks"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><input type="hidden" name="asset_group_id" value="' . $filterGroupId . '"><input type="hidden" name="asset_type_id" value="' . $filterTypeId . '"><button class="btn primary" style="font-size:13px;">📥 Salin 12 Tugas Standar dari Job Desk Umum</button></form>'
                 : '';
             echo '<div style="padding:28px;text-align:center;background:#fff;border:1px dashed #cbd5e1;border-radius:8px;">'
                 . '<p class="muted" style="margin:0 0 8px 0;">Belum ada item pekerjaan untuk Job Desk <strong>' . e($actName) . '</strong>.</p>'
@@ -1907,9 +1971,9 @@ function handle_route_jobs(PDO $pdo): void
                 $tDesc = (string)($task['description'] ?? '');
                 $tActive = !empty($task['is_active']);
 
-                $toggleBtn = '<form method="post" style="display:inline"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="toggle_task"><input type="hidden" name="id" value="' . $tId . '"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><button class="btn" style="padding:4px 8px;font-size:11px;">' . ($tActive ? 'Nonaktifkan' : 'Aktifkan') . '</button></form>';
+                $toggleBtn = '<form method="post" style="display:inline"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="toggle_task"><input type="hidden" name="id" value="' . $tId . '"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><input type="hidden" name="asset_group_id" value="' . $filterGroupId . '"><input type="hidden" name="asset_type_id" value="' . $filterTypeId . '"><button class="btn" style="padding:4px 8px;font-size:11px;">' . ($tActive ? 'Nonaktifkan' : 'Aktifkan') . '</button></form>';
 
-                $delTaskBtn = '<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus pekerjaan &quot;' . e($tTitle) . '&quot;?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete_task"><input type="hidden" name="id" value="' . $tId . '"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><button class="btn danger" style="padding:4px 8px;font-size:11px;">Hapus</button></form>';
+                $delTaskBtn = '<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus pekerjaan &quot;' . e($tTitle) . '&quot;?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete_task"><input type="hidden" name="id" value="' . $tId . '"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><input type="hidden" name="asset_group_id" value="' . $filterGroupId . '"><input type="hidden" name="asset_type_id" value="' . $filterTypeId . '"><button class="btn danger" style="padding:4px 8px;font-size:11px;">Hapus</button></form>';
 
                 echo '<tr>'
                     . '<td style="width:36px;text-align:center;">' . $tNo++ . '</td>'
@@ -1925,6 +1989,15 @@ function handle_route_jobs(PDO $pdo): void
 
         echo '</section>';
         echo '</div>';
+    } elseif ($filterGroupId > 0 || $filterTypeId > 0) {
+        echo '<div class="panel" style="margin-top:20px;border-top:3px solid #f59e0b;background:#fffbeb;">'
+            . '<div class="split" style="align-items:center;">'
+            . '<div>'
+            . '<h3 style="margin:0 0 6px 0;color:#b45309;">⚠️ Belum Ada Job Desk untuk Kategori Ini</h3>'
+            . '<p style="margin:0;color:#78350f;font-size:13px;">Belum ada Job Desk Preventive Maintenance yang terdaftar untuk Komoditas dan Kategori yang dipilih. Silakan isi formulir di atas dan klik <strong>Simpan Job Desk</strong> untuk membuatnya, kemudian tambahkan daftar pekerjaan / tugas (Job Tasks).</p>'
+            . '</div>'
+            . '</div>'
+            . '</div>';
     }
 
     echo '<script>
@@ -1971,7 +2044,13 @@ function handle_route_jobs(PDO $pdo): void
                 });
         });
 
-        typeSelect.addEventListener("change", updateGeneratedJobDeskName);
+        typeSelect.addEventListener("change", function() {
+            updateGeneratedJobDeskName();
+            if (!isEditMode && this.value) {
+                var gid = groupSelect ? groupSelect.value : "";
+                window.location.href = "index.php?route=jobs&group_id=" + encodeURIComponent(gid) + "&type_id=" + encodeURIComponent(this.value);
+            }
+        });
         if (!isEditMode) {
             updateGeneratedJobDeskName();
         }
