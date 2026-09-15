@@ -1558,26 +1558,152 @@ function asset_group_item_options(PDO $pdo, ?int $selected = null): string
     return $html;
 }
 
-function asset_item_member_manager_html(PDO $pdo, int $parentId): string
+function asset_item_member_manager_html(PDO $pdo, int $itemId): string
 {
-    $parent = asset_item_row($pdo, $parentId);
-    if (!$parent) {
+    $item = asset_item_row($pdo, $itemId);
+    if (!$item) {
         return '';
     }
-    if (($parent['asset_mode'] ?? 'standalone') !== 'group') {
-        return '<section class="panel"><h2>Anggota Unit Aset Bundle</h2><p class="muted">Ubah Mode Asset menjadi <strong>Bundle (Parent Asset)</strong> lalu simpan jika unit aset ini akan berisi CPU, monitor, UPS, atau item lain.</p></section>';
+
+    $activeParent = active_parent_asset_item($pdo, $itemId);
+    $isParent = (($item['asset_mode'] ?? 'standalone') === 'group');
+
+    // Dialog Modal Pisahkan / Lepaskan (bisa dipanggil dari child view maupun parent view)
+    $detachModalHtml = '
+    <dialog id="modalDetachMember" style="border:none;border-radius:10px;box-shadow:0 15px 35px rgba(0,0,0,0.25);padding:24px;max-width:520px;width:92%;margin:auto;">
+      <form method="post" action="' . route_url('asset_item_member_action') . '" style="margin:0;">
+        <input type="hidden" name="csrf" value="' . csrf_token() . '">
+        <input type="hidden" name="action" value="detach">
+        <input type="hidden" name="parent_asset_item_id" id="detachParentId" value="">
+        <input type="hidden" name="member_id" id="detachMemberId" value="">
+        <input type="hidden" name="child_asset_item_id" id="detachChildId" value="">
+        <input type="hidden" name="return_id" id="detachReturnId" value="">
+
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;border-bottom:1px solid #fee2e2;padding-bottom:10px;">
+          <span style="font-size:24px;">✂️</span>
+          <div>
+            <h3 style="margin:0;color:#991b1b;font-size:18px;">Pisahkan / Lepaskan Unit Aset</h3>
+            <p class="muted" style="margin:2px 0 0 0;font-size:12px;">Unit yang dilepaskan akan kembali menjadi unit <strong>Single (Mandiri)</strong>.</p>
+          </div>
+        </div>
+
+        <p style="font-size:13px;color:#374151;margin-bottom:14px;background:#fff1f2;padding:10px 12px;border-radius:6px;border-left:4px solid #f43f5e;">
+          Unit aset: <strong id="detachAssetLabel" style="color:#881337;"></strong> akan dilepaskan dari keanggotaan bundle. Riwayat pelepasan akan otomatis dicatat ke History Mutasi.
+        </p>
+
+        <div style="margin-bottom:12px;">
+          <label style="display:block;font-weight:600;font-size:13px;margin-bottom:4px;">Tanggal Pelepasan *</label>
+          <input type="date" name="detached_at" id="detachDate" value="' . e(date('Y-m-d')) . '" required style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;">
+        </div>
+
+        <div style="margin-bottom:18px;">
+          <label style="display:block;font-weight:600;font-size:13px;margin-bottom:4px;">Alasan / Keterangan Pelepasan *</label>
+          <input type="text" name="reason" id="detachReason" value="Dilepas menjadi unit single" placeholder="Misal: Dilepas untuk digunakan mandiri, unit diganti, dll." required style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;">
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;gap:10px;border-top:1px solid #f1f5f9;padding-top:14px;">
+          <button type="button" class="btn" onclick="document.getElementById(\'modalDetachMember\').close()">Batal</button>
+          <button type="submit" class="btn danger" style="font-weight:600;">✂️ Pisahkan / Lepaskan Sekarang</button>
+        </div>
+      </form>
+    </dialog>
+    <script>
+    function triggerDetachMember(memberId, parentId, childId, assetLabel, returnId) {
+        var modal = document.getElementById("modalDetachMember");
+        if (modal && typeof modal.showModal === "function") {
+            document.getElementById("detachMemberId").value = memberId || "";
+            document.getElementById("detachParentId").value = parentId || "";
+            document.getElementById("detachChildId").value = childId || "";
+            document.getElementById("detachReturnId").value = returnId || "";
+            document.getElementById("detachAssetLabel").innerText = assetLabel || "ini";
+            document.getElementById("detachDate").value = "' . date('Y-m-d') . '";
+            document.getElementById("detachReason").value = "Dilepas menjadi unit single";
+            modal.showModal();
+        } else {
+            var reason = prompt("Pisahkan / Lepaskan unit aset " + assetLabel + " dari bundle?\\nUnit akan kembali berstatus Single.\\n\\nAlasan pelepasan:", "Dilepas menjadi unit single");
+            if (reason !== null) {
+                var form = document.createElement("form");
+                form.method = "POST";
+                form.action = "' . route_url('asset_item_member_action') . '";
+                var fCsrf = document.createElement("input"); fCsrf.type = "hidden"; fCsrf.name = "csrf"; fCsrf.value = "' . csrf_token() . '"; form.appendChild(fCsrf);
+                var fAct = document.createElement("input"); fAct.type = "hidden"; fAct.name = "action"; fAct.value = "detach"; form.appendChild(fAct);
+                var fPid = document.createElement("input"); fPid.type = "hidden"; fPid.name = "parent_asset_item_id"; fPid.value = parentId; form.appendChild(fPid);
+                var fMid = document.createElement("input"); fMid.type = "hidden"; fMid.name = "member_id"; fMid.value = memberId; form.appendChild(fMid);
+                var fCid = document.createElement("input"); fCid.type = "hidden"; fCid.name = "child_asset_item_id"; fCid.value = childId; form.appendChild(fCid);
+                var fRid = document.createElement("input"); fRid.type = "hidden"; fRid.name = "return_id"; fRid.value = returnId; form.appendChild(fRid);
+                var fDat = document.createElement("input"); fDat.type = "hidden"; fDat.name = "detached_at"; fDat.value = "' . date('Y-m-d') . '"; form.appendChild(fDat);
+                var fRsn = document.createElement("input"); fRsn.type = "hidden"; fRsn.name = "reason"; fRsn.value = reason || "Dilepas menjadi unit single"; form.appendChild(fRsn);
+                document.body.appendChild(form);
+                form.submit();
+            }
+        }
     }
+    </script>
+    ';
+
+    // KASUS 1: Unit ini sedang aktif sebagai Child dari sebuah Parent Bundle
+    if ($activeParent) {
+        $pId = (int)$activeParent['parent_asset_item_id'];
+        $mId = (int)$activeParent['id'];
+        $pCode = $activeParent['parent_asset_code'] ?? ('#' . $pId);
+        $pName = $activeParent['parent_asset_name'] ?? '';
+        $role = $activeParent['role_name'] ?: 'Anggota';
+        $attDate = $activeParent['attached_at'] ?: '-';
+        $itemLabel = addslashes(($item['asset_code'] ?? '') . ' - ' . ($item['asset_name'] ?? ''));
+
+        $html = '<section class="panel" style="border-left:4px solid #f59e0b;background:#fffbeb;">'
+            . '<div class="split" style="align-items:center;">'
+            . '  <div>'
+            . '    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">'
+            . '      <span class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;font-weight:600;">Bundle (Child Asset)</span>'
+            . '      <h2 style="margin:0;font-size:18px;">Status Keanggotaan Bundle</h2>'
+            . '    </div>'
+            . '    <p style="margin:6px 0 0 0;font-size:14px;color:#1e293b;">'
+            . '      Unit aset ini saat ini terdaftar sebagai anggota di dalam bundle parent: '
+            . '      <a href="' . route_url('asset_item_form', ['id' => $pId]) . '" style="font-weight:700;color:#0369a1;text-decoration:underline;">'
+            . '        ' . e($pCode . ' - ' . $pName) . ' ↗'
+            . '      </a>'
+            . '    </p>'
+            . '    <div style="margin-top:6px;font-size:13px;color:#475569;">'
+            . '      <span><strong>Role / Fungsi:</strong> ' . e($role) . '</span> &bull; '
+            . '      <span><strong>Tanggal Pasang:</strong> ' . e($attDate) . '</span>'
+            . '    </div>'
+            . '    <p class="muted" style="margin:6px 0 0 0;font-size:12px;">'
+            . '      ℹ️ Unit status child tidak dapat dimasukkan ke Pemeliharaan secara terpisah. Jika dilepaskan, unit ini akan kembali menjadi <strong>Single (Mandiri)</strong>.'
+            . '    </p>'
+            . '  </div>'
+            . '  <div style="margin-top:10px;">'
+            . '    <button type="button" class="btn danger" style="font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 16px;" onclick="triggerDetachMember(' . $mId . ', ' . $pId . ', ' . $itemId . ', \'' . e($itemLabel) . '\', ' . $itemId . ')">'
+            . '      <span>✂️</span> Pisahkan / Lepaskan dari Bundle Ini'
+            . '    </button>'
+            . '  </div>'
+            . '</div>'
+            . '</section>'
+            . $detachModalHtml;
+
+        return $html;
+    }
+
+    // KASUS 2: Unit ini BUKAN parent (mode standalone) dan bukan child aktif
+    if (!$isParent) {
+        return '<section class="panel">'
+            . '<h2>Anggota Unit Aset Bundle</h2>'
+            . '<p class="muted">Unit aset ini saat ini berstatus <strong>Single (Mandiri)</strong>. Ubah Mode Asset menjadi <strong>Bundle (Parent Asset)</strong> pada form di atas lalu simpan jika unit aset ini akan membawahi CPU, monitor, UPS, atau unit lainnya.</p>'
+            . '</section>';
+    }
+
+    // KASUS 3: Unit ini adalah PARENT BUNDLE
     $stmt = $pdo->prepare('SELECT m.*, c.asset_code, c.asset_name, c.asset_type, c.asset_mode, ac.company_name FROM asset_item_members m JOIN asset_items c ON c.id=m.child_asset_item_id LEFT JOIN asset_companies ac ON ac.id=c.company_id WHERE m.parent_asset_item_id=? ORDER BY m.detached_at IS NULL DESC, m.attached_at DESC, m.id DESC');
-    $stmt->execute([$parentId]);
-    
+    $stmt->execute([$itemId]);
+
     $html = '<section class="panel">'
         . '<div class="split" style="align-items:center;margin-bottom:14px;">'
         . '  <div>'
         . '    <h2 style="margin:0;">Anggota Unit Aset Bundle</h2>'
-        . '    <p class="muted" style="margin:4px 0 0 0;">Kelola unit aset yang tergabung dalam bundle <strong>' . e($parent['asset_code']) . ' - ' . e($parent['asset_name']) . '</strong>. Unit aset anggota otomatis berstatus <strong>Bundle (Child Asset)</strong>.</p>'
+        . '    <p class="muted" style="margin:4px 0 0 0;">Kelola unit aset yang tergabung dalam bundle <strong>' . e($item['asset_code']) . ' - ' . e($item['asset_name']) . '</strong>. Unit aset anggota otomatis berstatus <strong>Bundle (Child Asset)</strong>.</p>'
         . '  </div>'
         . '  <div>'
-        . '    <a class="btn primary" href="' . route_url('asset_item_form', ['parent_id' => $parentId]) . '" style="display:inline-flex;align-items:center;gap:6px;font-weight:600;">'
+        . '    <a class="btn primary" href="' . route_url('asset_item_form', ['parent_id' => $itemId]) . '" style="display:inline-flex;align-items:center;gap:6px;font-weight:600;">'
         . '      <span>➕</span> Tambah Unit Aset Baru Sebagai Anggota'
         . '    </a>'
         . '  </div>'
@@ -1585,21 +1711,25 @@ function asset_item_member_manager_html(PDO $pdo, int $parentId): string
         . '<form method="post" action="' . route_url('asset_item_member_action') . '" style="background:#f8fafc;padding:14px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:16px;">'
         . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
         . '<input type="hidden" name="action" value="attach">'
-        . '<input type="hidden" name="parent_asset_item_id" value="' . e($parentId) . '">'
+        . '<input type="hidden" name="parent_asset_item_id" value="' . e($itemId) . '">'
+        . '<input type="hidden" name="return_id" value="' . e($itemId) . '">'
         . '<div class="grid four">'
-        . '<label>Unit Aset Anggota (Eksisting)<select name="child_asset_item_id" required>' . asset_child_item_options($pdo, $parentId) . '</select></label>'
+        . '<label>Unit Aset Anggota (Eksisting)<select name="child_asset_item_id" required>' . asset_child_item_options($pdo, $itemId) . '</select></label>'
         . '<label>Role / Fungsi<input name="role_name" placeholder="CPU / Monitor / UPS / Keyboard"></label>'
         . '<label>Tanggal Pasang<input type="date" name="attached_at" value="' . e(date('Y-m-d')) . '"></label>'
         . '<label>Catatan<input name="notes" placeholder="Keterangan tambahan"></label>'
         . '</div>'
         . '<button class="btn primary">Gabungkan Unit Aset Eksisting</button>'
         . '</form>'
-        . '<table><tr><th>Unit Aset</th><th>Mode Asset</th><th>Role</th><th>Company</th><th>Pasang</th><th>Lepas</th><th>Aksi</th></tr>';
+        . '<div style="overflow-x:auto;"><table><thead><tr><th>Unit Aset</th><th>Mode Asset</th><th>Role</th><th>Company</th><th>Pasang</th><th>Lepas</th><th>Aksi</th></tr></thead><tbody>';
 
+    $hasMembers = false;
     foreach ($stmt as $row) {
+        $hasMembers = true;
         $rawMode = (string)($row['asset_mode'] ?? 'standalone');
         $childId = (int)$row['child_asset_item_id'];
         $isDetached = !empty($row['detached_at']);
+        $rowLabel = addslashes(($row['asset_code'] ?? '') . ' - ' . ($row['asset_name'] ?? ''));
 
         $modeBadge = $rawMode === 'group' 
             ? '<span class="badge ok">Bundle (Parent)</span>' 
@@ -1608,7 +1738,7 @@ function asset_item_member_manager_html(PDO $pdo, int $parentId): string
                 : '<span class="badge">Single</span>');
 
         $html .= '<tr' . ($isDetached ? ' style="opacity:0.65;background:#fcfcfc;"' : '') . '>'
-            . '<td><strong>' . e($row['asset_code']) . '</strong><br>' . e($row['asset_name']) . ' <span class="muted">(' . e($row['asset_type']) . ')</span></td>'
+            . '<td><strong><a href="' . route_url('asset_item_form', ['id' => $childId]) . '">' . e($row['asset_code']) . '</a></strong><br>' . e($row['asset_name']) . ' <span class="muted">(' . e($row['asset_type']) . ')</span></td>'
             . '<td>' . $modeBadge . '</td>'
             . '<td>' . e($row['role_name'] ?: '-') . '</td>'
             . '<td>' . e($row['company_name'] ?: '-') . '</td>'
@@ -1617,15 +1747,7 @@ function asset_item_member_manager_html(PDO $pdo, int $parentId): string
             . '<td>';
 
         if (!$isDetached) {
-            $html .= '<form method="post" action="' . route_url('asset_item_member_action') . '" onsubmit="return confirm(\'Pisahkan unit aset ' . e($row['asset_code']) . ' dari bundle ini?\')">'
-                . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
-                . '<input type="hidden" name="action" value="detach">'
-                . '<input type="hidden" name="parent_asset_item_id" value="' . e($parentId) . '">'
-                . '<input type="hidden" name="member_id" value="' . e($row['id']) . '">'
-                . '<input type="hidden" name="detached_at" value="' . e(date('Y-m-d')) . '">'
-                . '<input type="hidden" name="reason" value="Dilepas dari bundle">'
-                . '<button class="btn danger" style="padding:4px 10px;font-size:12px;">Pisahkan</button>'
-                . '</form>';
+            $html .= '<button type="button" class="btn danger" style="padding:4px 10px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:4px;" onclick="triggerDetachMember(' . (int)$row['id'] . ', ' . (int)$itemId . ', ' . (int)$childId . ', \'' . e($rowLabel) . '\', ' . (int)$itemId . ')"><span>✂️</span> Pisahkan / Lepaskan</button>';
         } else {
             // Cek apakah saat ini sedang aktif di bundle lain
             $currParent = active_parent_asset_item($pdo, $childId);
@@ -1634,7 +1756,7 @@ function asset_item_member_manager_html(PDO $pdo, int $parentId): string
                     . '<form method="post" action="' . route_url('asset_item_member_action') . '" onsubmit="return confirm(\'Unit ini sedang aktif di bundle ' . e($currParent['parent_asset_code']) . '. Pindahkan dan gabungkan kembali ke bundle ini?\')">'
                     . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
                     . '<input type="hidden" name="action" value="attach">'
-                    . '<input type="hidden" name="parent_asset_item_id" value="' . e($parentId) . '">'
+                    . '<input type="hidden" name="parent_asset_item_id" value="' . e($itemId) . '">'
                     . '<input type="hidden" name="child_asset_item_id" value="' . e($childId) . '">'
                     . '<input type="hidden" name="role_name" value="' . e($row['role_name'] ?: '') . '">'
                     . '<button class="btn" style="padding:4px 8px;font-size:11px;">🔗 Tarik & Gabung</button>'
@@ -1643,7 +1765,7 @@ function asset_item_member_manager_html(PDO $pdo, int $parentId): string
                 $html .= '<form method="post" action="' . route_url('asset_item_member_action') . '">'
                     . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
                     . '<input type="hidden" name="action" value="attach">'
-                    . '<input type="hidden" name="parent_asset_item_id" value="' . e($parentId) . '">'
+                    . '<input type="hidden" name="parent_asset_item_id" value="' . e($itemId) . '">'
                     . '<input type="hidden" name="child_asset_item_id" value="' . e($childId) . '">'
                     . '<input type="hidden" name="role_name" value="' . e($row['role_name'] ?: '') . '">'
                     . '<button class="btn ok" style="padding:4px 10px;font-size:12px;">🔗 Gabung Kembali</button>'
@@ -1652,7 +1774,11 @@ function asset_item_member_manager_html(PDO $pdo, int $parentId): string
         }
         $html .= '</td></tr>';
     }
-    return $html . '</table></section>';
+    if (!$hasMembers) {
+        $html .= '<tr><td colspan="7" class="muted" style="text-align:center;padding:16px;">Belum ada anggota yang digabungkan dalam bundle ini.</td></tr>';
+    }
+    $html .= '</tbody></table></div></section>' . $detachModalHtml;
+    return $html;
 }
 
 function asset_item_maintenance_link_panel_html(PDO $pdo, int $assetItemId): string
@@ -1667,6 +1793,102 @@ function asset_item_maintenance_link_panel_html(PDO $pdo, int $assetItemId): str
         $html .= '<tr><td>' . e($label) . '</td></tr>';
     }
     return $html . '</table></section>';
+}
+
+function asset_item_history_panel_html(PDO $pdo, int $itemId): string
+{
+    if (!db_table_exists($pdo, 'asset_movements')) {
+        return '';
+    }
+    $stmt = $pdo->prepare('SELECT mv.*, 
+               ai.asset_code, ai.asset_name, ai.asset_type,
+               fp.asset_code AS from_parent_code, fp.asset_name AS from_parent_name,
+               tp.asset_code AS to_parent_code, tp.asset_name AS to_parent_name,
+               fb.maintenance_asset_code AS from_bundle_code,
+               tb.maintenance_asset_code AS to_bundle_code,
+               fc.company_name AS from_company,
+               tc.company_name AS to_company
+        FROM asset_movements mv
+        JOIN asset_items ai ON ai.id = mv.asset_item_id
+        LEFT JOIN asset_items fp ON fp.id = mv.from_parent_asset_item_id
+        LEFT JOIN asset_items tp ON tp.id = mv.to_parent_asset_item_id
+        LEFT JOIN asset_bundles fb ON fb.id = mv.from_bundle_id
+        LEFT JOIN asset_bundles tb ON tb.id = mv.to_bundle_id
+        LEFT JOIN asset_companies fc ON fc.id = mv.from_company_id
+        LEFT JOIN asset_companies tc ON tc.id = mv.to_company_id
+        WHERE mv.asset_item_id = ? 
+           OR mv.from_parent_asset_item_id = ? 
+           OR mv.to_parent_asset_item_id = ?
+        ORDER BY mv.movement_date DESC, mv.id DESC');
+    $stmt->execute([$itemId, $itemId, $itemId]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $html = '<section class="panel">'
+        . '<div class="split" style="align-items:center;margin-bottom:12px;">'
+        . '  <div>'
+        . '    <h2 style="margin:0;">Riwayat Keanggotaan Bundle & Mutasi Aset</h2>'
+        . '    <p class="muted" style="margin:4px 0 0 0;">Catatan riwayat saat unit dipasang ke bundle, dipisahkan kembali menjadi single, atau mutasi relasi lainnya.</p>'
+        . '  </div>'
+        . '</div>';
+
+    if (empty($rows)) {
+        return $html . '<p class="muted">Belum ada riwayat mutasi atau perubahan keanggotaan bundle untuk unit aset ini.</p></section>';
+    }
+
+    $html .= '<div style="overflow-x:auto;"><table>'
+        . '<thead><tr>'
+        . '<th>Tanggal</th>'
+        . '<th>Aksi / Status Mutasi</th>'
+        . '<th>Unit Aset</th>'
+        . '<th>Bundle Asal</th>'
+        . '<th>Bundle Tujuan</th>'
+        . '<th>Alasan / Keterangan</th>'
+        . '<th>PIC / Petugas</th>'
+        . '</tr></thead><tbody>';
+
+    foreach ($rows as $r) {
+        $cId = (int)$r['asset_item_id'];
+        $fromPid = (int)($r['from_parent_asset_item_id'] ?? 0);
+        $toPid = (int)($r['to_parent_asset_item_id'] ?? 0);
+
+        if ($cId === $itemId) {
+            if ($fromPid > 0 && $toPid > 0) {
+                $badge = '<span class="badge" style="background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;">Pindah Bundle</span>';
+            } elseif ($toPid > 0) {
+                $badge = '<span class="badge ok">Dipasang ke Bundle</span>';
+            } elseif ($fromPid > 0) {
+                $badge = '<span class="badge" style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca;">Dilepas (Kembali Single)</span>';
+            } elseif (!empty($r['to_company_id']) || !empty($r['from_company_id'])) {
+                $badge = '<span class="badge" style="background:#e0f2fe;color:#0369a1;">Mutasi Company</span>';
+            } else {
+                $badge = '<span class="badge">Mutasi Aset</span>';
+            }
+        } else {
+            if ($toPid === $itemId) {
+                $badge = '<span class="badge ok">➕ Anggota Masuk</span>';
+            } elseif ($fromPid === $itemId) {
+                $badge = '<span class="badge danger">✂️ Anggota Dilepas</span>';
+            } else {
+                $badge = '<span class="badge">Relasi Bundle</span>';
+            }
+        }
+
+        $fromText = $r['from_parent_code'] ? ($r['from_parent_code'] . ' - ' . $r['from_parent_name']) : ($r['from_bundle_code'] ?: '-');
+        $toText = $r['to_parent_code'] ? ($r['to_parent_code'] . ' - ' . $r['to_parent_name']) : ($r['to_bundle_code'] ?: '-');
+
+        $html .= '<tr>'
+            . '<td>' . e($r['movement_date']) . '</td>'
+            . '<td>' . $badge . '</td>'
+            . '<td><strong><a href="' . route_url('asset_item_form', ['id' => $cId]) . '">' . e($r['asset_code']) . '</a></strong><br><span class="muted">' . e($r['asset_name']) . ' (' . e($r['asset_type']) . ')</span></td>'
+            . '<td>' . e($fromText) . '</td>'
+            . '<td>' . e($toText) . '</td>'
+            . '<td>' . nl2br(e($r['reason'] ?: '-')) . '</td>'
+            . '<td>' . e($r['pic'] ?: '-') . '</td>'
+            . '</tr>';
+    }
+
+    $html .= '</tbody></table></div></section>';
+    return $html;
 }
 
 function asset_bundle_defaults(): array
@@ -3886,6 +4108,7 @@ function handle_route_asset_item_form(PDO $pdo): void
     if ($id > 0) {
         echo asset_item_maintenance_link_panel_html($pdo, $id);
         echo asset_item_member_manager_html($pdo, $id);
+        echo asset_item_history_panel_html($pdo, $id);
     }
     render_footer();
 }
@@ -3895,6 +4118,72 @@ function handle_route_asset_item_member_action(PDO $pdo): void
     $user = require_role(['admin']);
     $parentId = (int)($_POST['parent_asset_item_id'] ?? 0);
     $action = (string)($_POST['action'] ?? '');
+    $returnId = (int)($_POST['return_id'] ?? 0);
+
+    if ($action === 'detach') {
+        $memberId = (int)($_POST['member_id'] ?? 0);
+        $member = $memberId > 0 ? asset_item_member_row($pdo, $memberId) : null;
+        if (!$member && !empty($_POST['child_asset_item_id'])) {
+            $childId = (int)$_POST['child_asset_item_id'];
+            $active = active_parent_asset_item($pdo, $childId);
+            if ($active) {
+                $member = $active;
+                $memberId = (int)$active['id'];
+                $parentId = (int)$active['parent_asset_item_id'];
+            }
+        }
+        if (!$member && $parentId > 0 && !empty($_POST['child_asset_item_id'])) {
+            $childId = (int)$_POST['child_asset_item_id'];
+            $stmt = $pdo->prepare('SELECT * FROM asset_item_members WHERE parent_asset_item_id=? AND child_asset_item_id=? AND detached_at IS NULL ORDER BY id DESC LIMIT 1');
+            $stmt->execute([$parentId, $childId]);
+            $member = $stmt->fetch();
+            if ($member) {
+                $memberId = (int)$member['id'];
+            }
+        }
+        if ($member) {
+            $childId = (int)$member['child_asset_item_id'];
+            $parentId = (int)$member['parent_asset_item_id'];
+            $date = normalize_date_input((string)($_POST['detached_at'] ?? date('Y-m-d')));
+            $reason = trim((string)($_POST['reason'] ?? ''));
+            if ($reason === '') {
+                $reason = 'Dilepas menjadi unit single';
+            }
+            $childAsset = asset_item_row($pdo, $childId);
+            $parentAsset = asset_item_row($pdo, $parentId);
+            $childCode = $childAsset['asset_code'] ?? ('#' . $childId);
+            $parentCode = $parentAsset['asset_code'] ?? ('#' . $parentId);
+
+            $noteAppend = "\n[Dilepas dari bundle " . $parentCode . " menjadi unit single pada " . $date . " oleh " . ($user['name'] ?? 'Admin') . " - Alasan: " . $reason . "]";
+            $pdo->prepare('UPDATE asset_item_members SET detached_at=?, notes=CONCAT(COALESCE(notes,""), ?) WHERE id=?')->execute([$date, $noteAppend, $memberId]);
+
+            $pdo->prepare('INSERT INTO asset_movements (asset_item_id, from_parent_asset_item_id, movement_date, reason, pic) VALUES (?, ?, ?, ?, ?)')
+                ->execute([$childId, $parentId, $date, $reason, $user['name'] ?? 'Admin']);
+
+            // Pastikan unit child kembali menjadi single jika tidak ada parent aktif lainnya
+            $otherParent = active_parent_asset_item($pdo, $childId);
+            if (!$otherParent) {
+                $pdo->prepare("UPDATE asset_items SET asset_mode='standalone' WHERE id=?")->execute([$childId]);
+            }
+
+            // Lepaskan dari maintenance asset bila pernah terhubung
+            if (function_exists('detach_asset_item_from_maintenance_assets')) {
+                detach_asset_item_from_maintenance_assets($pdo, $childId, null, $date, 'Dilepas dari bundle ' . $parentCode);
+            }
+
+            flash("Unit aset {$childCode} berhasil dipisahkan/dilepaskan dari bundle dan kembali menjadi unit single.");
+            if ($returnId <= 0) {
+                $returnId = $parentId;
+            }
+            redirect_to('asset_item_form', ['id' => $returnId]);
+            return;
+        } else {
+            flash('Data keanggotaan unit dalam bundle tidak ditemukan.', 'err');
+            redirect_to('asset_item_form', ['id' => $returnId > 0 ? $returnId : ($parentId > 0 ? $parentId : 1)]);
+            return;
+        }
+    }
+
     if ($parentId <= 0) {
         redirect_to('asset_items');
     }
@@ -3906,6 +4195,7 @@ function handle_route_asset_item_member_action(PDO $pdo): void
         flash('Anggota hanya bisa dipasang pada Asset Item dengan mode Asset Gabungan.', 'err');
         redirect_to('asset_item_form', ['id' => $parentId]);
     }
+
     if ($action === 'attach') {
         $childId = (int)($_POST['child_asset_item_id'] ?? 0);
         if ($childId <= 0 || $childId === $parentId) {
@@ -3935,10 +4225,10 @@ function handle_route_asset_item_member_action(PDO $pdo): void
             $oldParentCode = $oldParent['parent_asset_code'] ?? ('#' . $oldParentId);
             $pdo->prepare('UPDATE asset_item_members SET detached_at=?, notes=CONCAT(COALESCE(notes,""), ?) WHERE id=?')
                 ->execute([$date, "\nDipindahkan ke bundle " . ($parent['asset_code'] ?? '#' . $parentId), (int)$oldParent['id']]);
-            $pdo->prepare('INSERT INTO asset_movements (asset_item_id, from_parent_asset_item_id, to_parent_asset_item_id, movement_date, reason, pic) VALUES (?, ?, ?, ?, ?)')
-                ->execute([$childId, $oldParentId, $parentId, $date, 'Dipindahkan dari bundle ' . $oldParentCode . ' ke bundle ' . ($parent['asset_code'] ?? ''), $user['name'] ?? '']);
+            $pdo->prepare('INSERT INTO asset_movements (asset_item_id, from_parent_asset_item_id, to_parent_asset_item_id, movement_date, reason, pic) VALUES (?, ?, ?, ?, ?, ?)')
+                ->execute([$childId, $oldParentId, $parentId, $date, 'Dipindahkan dari bundle ' . $oldParentCode . ' ke bundle ' . ($parent['asset_code'] ?? ''), $user['name'] ?? 'Admin']);
         } else {
-            $pdo->prepare('INSERT INTO asset_movements (asset_item_id, to_parent_asset_item_id, movement_date, reason, pic) VALUES (?, ?, ?, ?, ?)')->execute([$childId, $parentId, $date, 'Pasang ke asset gabungan ' . ($parent['asset_code'] ?? ''), $user['name'] ?? '']);
+            $pdo->prepare('INSERT INTO asset_movements (asset_item_id, to_parent_asset_item_id, movement_date, reason, pic) VALUES (?, ?, ?, ?, ?)')->execute([$childId, $parentId, $date, 'Pasang ke asset gabungan ' . ($parent['asset_code'] ?? ''), $user['name'] ?? 'Admin']);
         }
         $pdo->prepare('INSERT INTO asset_item_members (parent_asset_item_id, child_asset_item_id, role_name, attached_at, notes) VALUES (?, ?, ?, ?, ?)')->execute([$parentId, $childId, $role, $date, $notes]);
         $pdo->prepare("UPDATE asset_items SET asset_mode='child' WHERE id=?")->execute([$childId]);
@@ -3950,23 +4240,10 @@ function handle_route_asset_item_member_action(PDO $pdo): void
 
         flash('Asset item berhasil digabungkan.');
     }
-    if ($action === 'detach') {
-        $memberId = (int)($_POST['member_id'] ?? 0);
-        $member = asset_item_member_row($pdo, $memberId);
-        if ($member && (int)$member['parent_asset_item_id'] === $parentId) {
-            $date = normalize_date_input((string)($_POST['detached_at'] ?? date('Y-m-d')));
-            $reason = trim((string)($_POST['reason'] ?? 'Dilepas dari asset gabungan'));
-            $childId = (int)$member['child_asset_item_id'];
-            $pdo->prepare('UPDATE asset_item_members SET detached_at=?, notes=CONCAT(COALESCE(notes,""), ?) WHERE id=?')->execute([$date, "\nDetached: " . $reason, $memberId]);
-            $pdo->prepare('INSERT INTO asset_movements (asset_item_id, from_parent_asset_item_id, movement_date, reason, pic) VALUES (?, ?, ?, ?, ?)')->execute([$childId, $parentId, $date, $reason, $user['name'] ?? '']);
-            $childActive = active_parent_asset_item($pdo, $childId);
-            if (!$childActive) {
-                $pdo->prepare("UPDATE asset_items SET asset_mode='standalone' WHERE id=?")->execute([$childId]);
-            }
-            flash('Asset item berhasil dipisahkan.');
-        }
+    if ($returnId <= 0) {
+        $returnId = $parentId;
     }
-    redirect_to('asset_item_form', ['id' => $parentId]);
+    redirect_to('asset_item_form', ['id' => $returnId]);
 }
 
 function handle_route_asset_bundles(PDO $pdo): void

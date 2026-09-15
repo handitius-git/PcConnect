@@ -676,24 +676,6 @@ function detach_asset_item_from_maintenance_assets(PDO $pdo, int $assetItemId, ?
         $pdo->prepare('UPDATE maintenance_asset_items SET detached_at=?, notes=CONCAT(COALESCE(notes,""), ?) WHERE id=?')->execute([$date, "\n" . $note, (int)$memberId]);
         $count++;
     }
-
-    $parent = active_parent_asset_item($pdo, $assetItemId);
-    if ($parent) {
-        $parentId = (int)$parent['parent_asset_item_id'];
-        if ($maintenanceAssetId) {
-            $stmt = $pdo->prepare('SELECT COUNT(*) FROM maintenance_asset_items WHERE asset_item_id=? AND maintenance_asset_id=? AND detached_at IS NULL');
-            $stmt->execute([$parentId, $maintenanceAssetId]);
-            $parentLinked = (int)$stmt->fetchColumn() > 0;
-        } else {
-            $stmt = $pdo->prepare('SELECT COUNT(*) FROM maintenance_asset_items WHERE asset_item_id=? AND detached_at IS NULL');
-            $stmt->execute([$parentId]);
-            $parentLinked = (int)$stmt->fetchColumn() > 0;
-        }
-        if ($parentLinked) {
-            $pdo->prepare('UPDATE asset_item_members SET detached_at=?, notes=CONCAT(COALESCE(notes,""), ?) WHERE id=?')->execute([$date, "\n" . $note, (int)$parent['id']]);
-            $count++;
-        }
-    }
     return $count;
 }
 
