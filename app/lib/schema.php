@@ -2,20 +2,22 @@
 
 declare(strict_types=1);
 
-function db_table_exists(PDO $pdo, string $table): bool
-{
-    static $cache = [];
-    if (isset($cache[$table])) {
+if (!function_exists('db_table_exists')) {
+    function db_table_exists(PDO $pdo, string $table): bool
+    {
+        static $cache = [];
+        if (isset($cache[$table])) {
+            return $cache[$table];
+        }
+        try {
+            $stmt = $pdo->prepare('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?');
+            $stmt->execute([$table]);
+            $cache[$table] = (int)$stmt->fetchColumn() > 0;
+        } catch (Throwable $e) {
+            $cache[$table] = false;
+        }
         return $cache[$table];
     }
-    try {
-        $stmt = $pdo->prepare('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?');
-        $stmt->execute([$table]);
-        $cache[$table] = (int)$stmt->fetchColumn() > 0;
-    } catch (Throwable $e) {
-        $cache[$table] = false;
-    }
-    return $cache[$table];
 }
 
 function db_column_exists(PDO $pdo, string $table, string $column): bool
