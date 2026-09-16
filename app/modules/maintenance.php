@@ -1175,145 +1175,537 @@ function handle_route_schedule_form(PDO $pdo): void
 
     render_header('Tambah Schedule', $user);
 
-    $whereMa = "WHERE ma.status != 'inactive' AND (ma.pc_id IS NULL OR ma.pc_id = '' OR (p.asset_item_id IS NOT NULL AND p.asset_item_id > 0))";
-    $paramsMa = [];
-    if ($selectedGroupId > 0) {
-        $whereMa .= " AND (ma.asset_group_id = ? OR (ma.asset_group_id IS NULL AND ? = (SELECT id FROM asset_groups WHERE group_code='IT' LIMIT 1)))";
-        $paramsMa[] = $selectedGroupId;
-        $paramsMa[] = $selectedGroupId;
+    $targetAssetId = (int)($_GET['maintenance_asset_id'] ?? $_GET['asset_id'] ?? 0);
+    $assetParam = trim((string)($_GET['asset'] ?? ''));
+    if ($targetAssetId === 0 && $assetParam !== '') {
+        $stCode = $pdo->prepare('SELECT id FROM maintenance_assets WHERE maintenance_asset_code = ? OR pc_id = ? OR printer_id = ? LIMIT 1');
+        $stCode->execute([$assetParam, $assetParam, $assetParam]);
+        $targetAssetId = (int)($stCode->fetchColumn() ?: 0);
     }
-    $sqlMa = "SELECT ma.*, 
-                     COALESCE(ag.group_name, 'IT Asset') group_name, 
-                     COALESCE(ag.group_code, 'IT') group_code,
-                     COALESCE(p.computer_name, pr.printer_name, ma.name) display_name,
-                     COALESCE(p.owner_name, pr.location, ma.owner_name, ma.location_label) display_sub
+
+    $assetGroups = $pdo->query('SELECT id, group_code, group_name FROM asset_groups ORDER BY group_name')->fetchAll(PDO::FETCH_ASSOC);
+    $assetTypes = $pdo->query('SELECT id, asset_group_id, type_code, type_name FROM asset_types ORDER BY type_name')->fetchAll(PDO::FETCH_ASSOC);
+
+    // ID default group & type untuk PC dan Printer warisan (fallback)
+    $itGroupId = 0;
+    $cmpTypeId = 0;
+    $prtTypeId = 0;
+    foreach ($assetGroups as $ag) {
+        if ($ag['group_code'] === 'IT') { $itGroupId = (int)$ag['id']; break; }
+    }
+    foreach ($assetTypes as $at) {
+        if ($at['type_code'] === 'CMP') { $cmpTypeId = (int)$at['id']; }
+        if ($at['type_code'] === 'PRT') { $prtTypeId = (int)$at['id']; }
+    }
+
+    $sqlMa = "SELECT ma.id, ma.maintenance_asset_code, ma.name, ma.asset_group_id, ma.asset_type_id, ma.job_desk_name,
+                     ma.pc_id, ma.printer_id,
+                     ag.group_name, ag.group_code,
+                     at.type_name, at.type_code,
+                     COALESCE(p.computer_name, pr.printer_name, ma.name) AS display_name,
+                     COALESCE(p.owner_name, pr.location, ma.owner_name, ma.location_label) AS display_sub
               FROM maintenance_assets ma
               LEFT JOIN asset_groups ag ON ag.id = ma.asset_group_id
+              LEFT JOIN asset_types at ON at.id = ma.asset_type_id
               LEFT JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci
               LEFT JOIN printers pr ON pr.prn_id COLLATE utf8mb4_unicode_ci = ma.printer_id COLLATE utf8mb4_unicode_ci
-              $whereMa
-              ORDER BY COALESCE(ag.group_name, 'IT Asset'), ma.maintenance_asset_code";
-    $stmtMa = $pdo->prepare($sqlMa);
-    $stmtMa->execute($paramsMa);
-    $maintenanceAssets = $stmtMa->fetchAll();
+              WHERE ma.status != 'inactive' AND (ma.pc_id IS NULL OR ma.pc_id = '' OR (p.asset_item_id IS NOT NULL AND p.asset_item_id > 0))
+              ORDER BY COALESCE(ag.group_name, 'IT Asset'), at.type_name, ma.maintenance_asset_code";
+    $maintenanceAssets = $pdo->query($sqlMa)->fetchAll(PDO::FETCH_ASSOC);
 
-    $techs = $pdo->query("SELECT id, name FROM users WHERE role='technician' AND is_active=1 ORDER BY name")->fetchAll();
-
-    $jobsSql = 'SELECT j.*, g.group_name, g.group_code, t.type_name, t.type_code 
-                FROM maintenance_jobs j 
-                LEFT JOIN asset_groups g ON g.id=j.asset_group_id 
-                LEFT JOIN asset_types t ON t.id=j.asset_type_id 
-                WHERE j.is_active=1';
-    $jobsParams = [];
-    if ($selectedGroupId > 0) {
-        $jobsSql .= ' AND (j.asset_group_id = ? OR j.asset_group_id IS NULL)';
-        $jobsParams[] = $selectedGroupId;
-    }
-    $jobsSql .= ' ORDER BY COALESCE(j.job_desk_name, g.group_name, "zzz"), j.title';
-    $stmtJobs = $pdo->prepare($jobsSql);
-    $stmtJobs->execute($jobsParams);
-    $jobs = $stmtJobs->fetchAll();
-
-    echo '<section class="panel"><h1>Tambah Schedule Maintenance</h1><form method="get"><input type="hidden" name="route" value="schedule_form"><div class="grid three"><label>Filter Asset Group<select name="asset_group_id" onchange="this.form.submit()"><option value="0">Semua Asset Group</option>' . asset_group_options($pdo, $selectedGroupId, false) . '</select></label><label>&nbsp;<button class="btn primary">Terapkan Filter</button></label></div></form></section>';
-
-    echo '<section class="panel"><form method="post"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="asset_group_id" value="' . e($selectedGroupId) . '"><div class="grid three">';
-    echo '<label>Aset Maintenance (Terdaftar)<select name="maintenance_asset_id" required>';
-    if (!$maintenanceAssets) {
-        echo '<option value="">Tidak ada aset maintenance tersedia untuk filter ini</option>';
-    } else {
-        $currentGroup = null;
-        foreach ($maintenanceAssets as $maRow) {
-            $grp = $maRow['group_code'] ? ($maRow['group_code'] . ' - ' . $maRow['group_name']) : $maRow['group_name'];
-            if ($currentGroup !== $grp) {
-                if ($currentGroup !== null) {
-                    echo '</optgroup>';
-                }
-                $currentGroup = $grp;
-                echo '<optgroup label="' . e($currentGroup) . '">';
+    foreach ($maintenanceAssets as &$maRow) {
+        if (empty($maRow['asset_group_id']) && (!empty($maRow['pc_id']) || !empty($maRow['printer_id']))) {
+            $maRow['asset_group_id'] = $itGroupId ?: 1;
+            $maRow['group_code'] = 'IT';
+            $maRow['group_name'] = 'IT Asset';
+        }
+        if (empty($maRow['asset_type_id'])) {
+            if (!empty($maRow['pc_id'])) {
+                $maRow['asset_type_id'] = $cmpTypeId ?: 1;
+                $maRow['type_code'] = 'CMP';
+                $maRow['type_name'] = 'Computer';
+            } elseif (!empty($maRow['printer_id'])) {
+                $maRow['asset_type_id'] = $prtTypeId ?: 3;
+                $maRow['type_code'] = 'PRT';
+                $maRow['type_name'] = 'Printer';
             }
-            $subInfo = trim(($maRow['display_name'] ? $maRow['display_name'] . ' ' : '') . ($maRow['display_sub'] ? '(' . $maRow['display_sub'] . ')' : ''));
-            $optLabel = $maRow['maintenance_asset_code'] . ' - ' . ($subInfo ?: $maRow['name']);
-            $selected = ((int)($_GET['maintenance_asset_id'] ?? 0) === (int)$maRow['id'] || (int)($_POST['maintenance_asset_id'] ?? 0) === (int)$maRow['id']) ? ' selected' : '';
-            $deskAttr = !empty($maRow['job_desk_name']) ? ' data-job-desk="' . e($maRow['job_desk_name']) . '"' : '';
-            echo '<option value="' . (int)$maRow['id'] . '"' . $deskAttr . $selected . '>' . e($optLabel) . '</option>';
         }
-        if ($currentGroup !== null) {
-            echo '</optgroup>';
+    }
+    unset($maRow);
+
+    // Ambil daftar Master Job Desk terdaftar
+    $sqlDesks = "SELECT d.id AS desk_id, d.job_desk_name, d.asset_group_id, d.asset_type_id, d.description,
+                        g.group_code, g.group_name, t.type_code, t.type_name,
+                        COUNT(j.id) AS job_count,
+                        COALESCE(SUM(j.estimated_minutes), 0) AS total_minutes
+                 FROM preventive_job_desks d
+                 LEFT JOIN asset_groups g ON g.id = d.asset_group_id
+                 LEFT JOIN asset_types t ON t.id = d.asset_type_id
+                 LEFT JOIN maintenance_jobs j ON (
+                     j.job_desk_name COLLATE utf8mb4_unicode_ci = d.job_desk_name COLLATE utf8mb4_unicode_ci
+                     OR (d.job_desk_name = 'Job Desk Umum' AND (j.job_desk_name IS NULL OR j.job_desk_name = ''))
+                 ) AND j.is_active = 1
+                 GROUP BY d.id, d.job_desk_name, d.asset_group_id, d.asset_type_id, d.description, g.group_code, g.group_name, t.type_code, t.type_name
+                 ORDER BY g.group_name, t.type_name, d.job_desk_name";
+    $preventiveDesks = $pdo->query($sqlDesks)->fetchAll(PDO::FETCH_ASSOC);
+
+    // Ambil semua daftar pekerjaan aktif dikelompokkan per nama job desk
+    $jobsSql = "SELECT j.*, g.group_name, g.group_code, t.type_name, t.type_code 
+                FROM maintenance_jobs j 
+                LEFT JOIN asset_groups g ON g.id = j.asset_group_id 
+                LEFT JOIN asset_types t ON t.id = j.asset_type_id 
+                WHERE j.is_active = 1
+                ORDER BY COALESCE(j.job_desk_name, 'Job Desk Umum'), j.id ASC";
+    $allJobs = $pdo->query($jobsSql)->fetchAll(PDO::FETCH_ASSOC);
+
+    $jobsByDesk = [];
+    foreach ($allJobs as $job) {
+        $dName = trim((string)($job['job_desk_name'] ?? ''));
+        if ($dName === '') {
+            $dName = 'Job Desk Umum';
         }
+        $jobsByDesk[$dName][] = $job;
+    }
+
+    $techs = $pdo->query("SELECT id, name FROM users WHERE role='technician' AND is_active=1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+
+    echo '<section class="panel">'
+        . '<div class="split" style="align-items:center; margin-bottom: 16px;">'
+        . '<div>'
+        . '<h1 style="margin: 0; font-size: 20px;">Tambah Schedule Maintenance</h1>'
+        . '<p class="muted" style="margin: 4px 0 0 0;">Susun jadwal preventive maintenance berdasarkan Komoditas & Kategori aset untuk menentukan Job Desk yang tepat.</p>'
+        . '</div>'
+        . '<div class="actions">'
+        . '<a class="btn" href="' . route_url('maintenance') . '">← Kembali ke Jadwal Maintenance</a>'
+        . '</div>'
+        . '</div>';
+
+    echo '<form method="post" id="formSchedule">'
+        . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
+        . '<input type="hidden" name="asset_group_id" id="postAssetGroupId" value="' . e($selectedGroupId) . '">';
+
+    // BAGIAN 1: PEMILIHAN KOMODITAS, KATEGORI, DAN ASET MAINTENANCE
+    echo '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 20px;">'
+        . '<div style="font-weight: 700; font-size: 15px; color: #1e3a8a; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">'
+        . '<span>🎯 1. Tentukan Komoditas, Kategori, & Target Aset</span>'
+        . '</div>'
+        . '<div class="grid three">'
+        . '<label>Komoditas (Asset Group)'
+        . '<select id="schedGroupSelect" name="filter_group_id">'
+        . '<option value="">-- Semua Komoditas --</option>';
+    foreach ($assetGroups as $ag) {
+        $sel = ($selectedGroupId === (int)$ag['id']) ? ' selected' : '';
+        echo '<option value="' . (int)$ag['id'] . '"' . $sel . '>' . e($ag['group_code'] . ' - ' . $ag['group_name']) . '</option>';
     }
     echo '</select></label>';
 
-    echo '<label>Teknisi<select name="technician_id" required><option value="">Pilih Teknisi</option>';
+    echo '<label>Kategori (Asset Type)'
+        . '<select id="schedTypeSelect" name="filter_type_id">'
+        . '<option value="">-- Semua Kategori --</option>';
+    foreach ($assetTypes as $at) {
+        echo '<option value="' . (int)$at['id'] . '" data-group-id="' . (int)$at['asset_group_id'] . '">' . e($at['type_code'] . ' - ' . $at['type_name']) . '</option>';
+    }
+    echo '</select></label>';
+
+    echo '<label>Aset Maintenance (Terdaftar) *'
+        . '<select id="schedAssetSelect" name="maintenance_asset_id" required>'
+        . '<option value="">-- Pilih Aset Maintenance --</option>';
+    foreach ($maintenanceAssets as $maRow) {
+        $mId = (int)$maRow['id'];
+        $mCode = $maRow['maintenance_asset_code'];
+        $mName = $maRow['display_name'] ?: $maRow['name'];
+        $mSub = $maRow['display_sub'] ?: '';
+        $mDesk = $maRow['job_desk_name'] ?: '';
+        $mGid = (int)$maRow['asset_group_id'];
+        $mTid = (int)$maRow['asset_type_id'];
+        $mGname = $maRow['group_name'] ?: 'IT Asset';
+        $mTname = $maRow['type_name'] ?: '';
+
+        $optLabel = $mCode . ' - ' . $mName . ($mSub ? ' (' . $mSub . ')' : '');
+        $selected = ($targetAssetId === $mId) ? ' selected' : '';
+
+        echo '<option value="' . $mId . '"'
+            . ' data-code="' . e($mCode) . '"'
+            . ' data-group-id="' . $mGid . '"'
+            . ' data-type-id="' . $mTid . '"'
+            . ' data-group-name="' . e($mGname) . '"'
+            . ' data-type-name="' . e($mTname) . '"'
+            . ' data-job-desk="' . e($mDesk) . '"'
+            . ' data-sub="' . e($mSub) . '"'
+            . $selected . '>'
+            . e($optLabel)
+            . '</option>';
+    }
+    echo '</select></label>'
+        . '</div>'
+        . '<div id="assetSelectedNotice" style="display:none; margin-top: 10px; font-size: 13px; color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 8px 12px;"></div>'
+        . '</div>';
+
+    // BAGIAN 2: PEMILIHAN JOB DESK PREVENTIVE MAINTENANCE
+    echo '<div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 16px; margin-bottom: 20px;">'
+        . '<div style="font-weight: 700; font-size: 15px; color: #1e40af; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">'
+        . '<span>📋 2. Pilih Job Desk Preventive Maintenance yang Sesuai</span>'
+        . '<span id="jobDeskStatsBadge" class="badge ok" style="font-size: 12px; padding: 5px 12px; display: none;"></span>'
+        . '</div>'
+        . '<div class="grid two" style="align-items: center;">'
+        . '<label style="margin: 0;">Job Desk Terpilih *'
+        . '<select id="schedJobDeskSelect" name="selected_job_desk" required style="font-weight: 700; font-size: 14px; color: #0f172a; padding: 8px 12px; background: #fff;">'
+        . '<option value="">-- Pilih Job Desk --</option>';
+
+    foreach ($preventiveDesks as $pd) {
+        $pId = (int)$pd['desk_id'];
+        $pName = $pd['job_desk_name'];
+        $pGid = (int)$pd['asset_group_id'];
+        $pTid = (int)$pd['asset_type_id'];
+        $pCount = (int)$pd['job_count'];
+        $pMinutes = (int)$pd['total_minutes'];
+        $pLabel = $pName . ' (' . $pCount . ' task, ~' . $pMinutes . ' mnt)';
+
+        echo '<option value="' . e($pName) . '"'
+            . ' data-desk-id="' . $pId . '"'
+            . ' data-desk-name="' . e($pName) . '"'
+            . ' data-group-id="' . $pGid . '"'
+            . ' data-type-id="' . $pTid . '"'
+            . ' data-job-count="' . $pCount . '"'
+            . ' data-minutes="' . $pMinutes . '">'
+            . e($pLabel)
+            . '</option>';
+    }
+
+    echo '</select></label>'
+        . '<div style="display: flex; gap: 8px; align-items: flex-end; padding-bottom: 2px;">'
+        . '<a id="linkKelolaDesk" href="' . route_url('jobs') . '" target="_blank" class="btn" style="padding: 7px 12px; font-size: 12px; background: #fff;" title="Buka kelola Master Job Desk">+ Master Job Desk ↗</a>'
+        . '</div>'
+        . '</div>';
+
+    // CONTAINER CHECKLIST PEKERJAAN (JOB TASKS)
+    echo '<div style="margin-top: 16px;">'
+        . '<div class="split" style="align-items: center; margin-bottom: 10px;">'
+        . '<span style="font-weight: 600; font-size: 14px; color: #1e293b;">Checklist Rincian Pekerjaan (Job Tasks):</span>'
+        . '<div class="actions">'
+        . '<button type="button" class="btn" onclick="toggleActiveDeskJobs(true)" style="padding: 4px 10px; font-size: 12px; cursor: pointer;">Pilih Semua</button>'
+        . '<button type="button" class="btn" onclick="toggleActiveDeskJobs(false)" style="padding: 4px 10px; font-size: 12px; cursor: pointer;">Batal Pilih</button>'
+        . '</div>'
+        . '</div>'
+        . '<div id="jobTasksContainer">';
+
+    foreach ($jobsByDesk as $dName => $deskTasks) {
+        $firstTask = $deskTasks[0];
+        $tGid = (int)($firstTask['asset_group_id'] ?? 0);
+        $tTid = (int)($firstTask['asset_type_id'] ?? 0);
+
+        echo '<div class="job-desk-task-group" data-desk-name="' . e($dName) . '" data-group-id="' . $tGid . '" data-type-id="' . $tTid . '" style="display:none;">'
+            . '<div class="grid two">';
+
+        foreach ($deskTasks as $task) {
+            $tId = (int)$task['id'];
+            $tTitle = $task['title'];
+            $tEst = (int)$task['estimated_minutes'];
+            $tDesc = trim((string)($task['description'] ?? ''));
+
+            echo '<label class="job-desk-card" style="display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; cursor: pointer; margin: 0; user-select: none;">'
+                . '<input type="checkbox" class="job-checkbox" name="jobs[]" value="' . $tId . '" checked style="width: 18px; height: 18px; min-width: 18px; cursor: pointer; margin-top: 3px; flex-shrink: 0;">'
+                . '<div style="flex-grow: 1; min-width: 0;">'
+                . '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">'
+                . '<span style="font-weight: 600; color: #0f172a; line-height: 1.35;">' . e($tTitle) . '</span>'
+                . '<span class="badge" style="font-size: 11px; font-weight:700;">~' . $tEst . ' mnt</span>'
+                . '</div>'
+                . ($tDesc !== '' ? ('<p class="muted" style="font-size: 11px; margin: 4px 0 0 0; line-height: 1.3;">' . e($tDesc) . '</p>') : '')
+                . '</div>'
+                . '</label>';
+        }
+
+        echo '</div></div>';
+    }
+
+    echo '</div>'
+        . '<div id="noJobDeskPrompt" style="padding: 24px; text-align: center; background: #fff; border: 1px dashed #93c5fd; border-radius: 8px;">'
+        . '<p class="muted" style="margin: 0 0 6px 0;">Silakan pilih <strong>Komoditas & Kategori</strong> atau pilih <strong>Job Desk</strong> di atas untuk memuat daftar checklist pekerjaan.</p>'
+        . '</div>'
+        . '</div>'
+        . '</div>';
+
+    // BAGIAN 3: PENUGASAN TEKNISI, TANGGAL & CATATAN
+    echo '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 20px;">'
+        . '<div style="font-weight: 700; font-size: 15px; color: #334155; margin-bottom: 12px;">'
+        . '<span>📅 3. Penugasan Teknisi & Jadwal Pelaksanaan</span>'
+        . '</div>'
+        . '<div class="grid two">'
+        . '<label>Teknisi yang Bertugas *'
+        . '<select name="technician_id" required>'
+        . '<option value="">-- Pilih Teknisi --</option>';
     foreach ($techs as $tech) {
         echo '<option value="' . e($tech['id']) . '">' . e($tech['name']) . '</option>';
     }
-    echo '</select></label><label>Tanggal<input type="date" name="scheduled_date" required value="' . e(date('Y-m-d')) . '"></label></div>';
-    echo '<div class="split" style="margin: 22px 0 10px; align-items: center;">'
-        . '<label style="margin: 0; font-size: 16px; font-weight: 700;">Pilih Job Desk</label>'
-        . '<div class="actions">'
-        . '<button type="button" class="btn" onclick="toggleAllJobs(true)" style="padding: 6px 12px; font-size: 13px; cursor: pointer;">Pilih Semua (Select All)</button>'
-        . '<button type="button" class="btn" onclick="toggleAllJobs(false)" style="padding: 6px 12px; font-size: 13px; cursor: pointer;">Batal Pilih (Unselect All)</button>'
+    echo '</select></label>'
+        . '<label>Tanggal Rencana Maintenance *'
+        . '<input type="date" name="scheduled_date" required value="' . e(date('Y-m-d')) . '">'
+        . '</label>'
         . '</div>'
+        . '<label style="margin-top: 12px;">Catatan / Instruksi Khusus (Opsional)'
+        . '<textarea name="notes" placeholder="Catatan instruksi tambahan untuk teknisi pelaksana..." rows="2"></textarea>'
+        . '</label>'
         . '</div>';
-    echo '<div id="jobListContainer">';
-    if (!$jobs) {
-        echo '<p class="muted">' . e($selectedGroupId > 0 ? 'Belum ada job desk aktif untuk Asset Group ini.' : 'Belum ada job desk aktif.') . '</p>';
-    } else {
-        $groupedJobs = [];
-        foreach ($jobs as $job) {
-            $dName = $job['job_desk_name'] ?: ('Job Desk ' . ($job['group_name'] ?: 'Umum'));
-            $groupedJobs[$dName][] = $job;
-        }
-        foreach ($groupedJobs as $deskTitle => $deskJobs) {
-            echo '<div class="job-desk-group" data-desk-name="' . e($deskTitle) . '" style="margin-bottom: 16px; padding: 4px;">'
-                . '<div style="background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; padding: 7px 12px; margin-bottom: 8px; font-weight: 700; color: #1e293b; display: flex; justify-content: space-between; align-items: center;">'
-                . '<span>' . e($deskTitle) . '</span>'
-                . '<span class="badge">' . count($deskJobs) . ' item</span>'
-                . '</div>'
-                . '<div class="grid two">';
-            foreach ($deskJobs as $job) {
-                $badge = !empty($job['group_code']) ? '<span class="badge ok" style="font-size: 11px; margin-left: 8px;">' . e($job['group_code']) . '</span>' : '';
-                $est = !empty($job['estimated_minutes']) ? '<span class="muted" style="font-size: 12px; font-weight: normal; margin-left: 6px;">(~' . (int)$job['estimated_minutes'] . ' mnt)</span>' : '';
-                echo '<label class="job-desk-card" style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; cursor: pointer; margin: 0; font-weight: normal; user-select: none;">'
-                    . '<input type="checkbox" class="job-checkbox" name="jobs[]" value="' . e($job['id']) . '" checked style="width: 20px; height: 20px; min-width: 20px; cursor: pointer; margin: 0; flex-shrink: 0;">'
-                    . '<div style="flex-grow: 1; display: flex; justify-content: space-between; align-items: center; gap: 8px; min-width: 0;">'
-                    . '<span style="font-weight: 600; color: #1e293b; line-height: 1.35;">' . e($job['title']) . $est . '</span>'
-                    . $badge
-                    . '</div>'
-                    . '</label>';
-            }
-            echo '</div></div>';
+
+    echo '<div style="margin-top: 20px;">'
+        . '<button class="btn primary" style="font-size: 15px; padding: 10px 24px;">💾 Simpan Schedule Maintenance</button>'
+        . '</div>'
+        . '</form>'
+        . '</section>';
+
+    echo '<script>
+(function(){
+    var groupSelect = document.getElementById("schedGroupSelect");
+    var typeSelect = document.getElementById("schedTypeSelect");
+    var assetSelect = document.getElementById("schedAssetSelect");
+    var deskSelect = document.getElementById("schedJobDeskSelect");
+    var statsBadge = document.getElementById("jobDeskStatsBadge");
+    var promptEmpty = document.getElementById("noJobDeskPrompt");
+    var assetNotice = document.getElementById("assetSelectedNotice");
+    var linkKelolaDesk = document.getElementById("linkKelolaDesk");
+    var hiddenPostGroupId = document.getElementById("postAssetGroupId");
+    var taskGroups = document.querySelectorAll(".job-desk-task-group");
+
+    // Filter opsi kategori berdasarkan Komoditas (group)
+    function filterTypeOptions(keepSelected) {
+        var gid = groupSelect ? groupSelect.value : "";
+        var currentTypeId = typeSelect ? typeSelect.value : "";
+        Array.from(typeSelect.options).forEach(function(opt, idx) {
+            if (idx === 0) { opt.style.display = ""; return; }
+            var optGid = opt.getAttribute("data-group-id");
+            var match = (!gid || optGid === gid);
+            opt.style.display = match ? "" : "none";
+        });
+        if (!keepSelected && typeSelect.selectedIndex > 0 && typeSelect.options[typeSelect.selectedIndex].style.display === "none") {
+            typeSelect.value = "";
         }
     }
-    echo '</div>';
-    echo '<script>'
-        . 'function toggleAllJobs(checked){'
-        . 'document.querySelectorAll(".job-checkbox").forEach(function(cb){cb.checked=checked;});'
-        . '}'
-        . 'var assetSelect = document.querySelector("select[name=\"maintenance_asset_id\"]");'
-        . 'function applyJobDeskForSelectedAsset(){'
-        . 'if(!assetSelect)return;'
-        . 'var opt = assetSelect.options[assetSelect.selectedIndex];'
-        . 'if(!opt)return;'
-        . 'var assignedDesk = opt.getAttribute("data-job-desk");'
-        . 'if(assignedDesk){'
-        . 'var hasMatch = false;'
-        . 'document.querySelectorAll(".job-desk-group").forEach(function(grp){'
-        . 'var gDesk = grp.getAttribute("data-desk-name");'
-        . 'var isMatch = (gDesk === assignedDesk);'
-        . 'if(isMatch) hasMatch = true;'
-        . 'grp.querySelectorAll(".job-checkbox").forEach(function(cb){cb.checked = isMatch;});'
-        . 'grp.style.border = isMatch ? "2px solid #3b82f6" : "none";'
-        . 'grp.style.borderRadius = isMatch ? "8px" : "0";'
-        . '});'
-        . '}'
-        . '}'
-        . 'if(assetSelect){'
-        . 'assetSelect.addEventListener("change", applyJobDeskForSelectedAsset);'
-        . 'applyJobDeskForSelectedAsset();'
-        . '}'
-        . '</script>';
-    echo '<label style="margin-top: 18px;">Catatan<textarea name="notes"></textarea></label><button class="btn primary">Simpan Schedule</button></form></section>';
+
+    // Filter opsi aset berdasarkan Komoditas dan Kategori
+    function filterAssetOptions() {
+        var gid = groupSelect ? groupSelect.value : "";
+        var tid = typeSelect ? typeSelect.value : "";
+        var isCurrentStillValid = false;
+
+        Array.from(assetSelect.options).forEach(function(opt, idx) {
+            if (idx === 0) { opt.style.display = ""; return; }
+            var optGid = opt.getAttribute("data-group-id");
+            var optTid = opt.getAttribute("data-type-id");
+            var matchG = (!gid || optGid === gid);
+            var matchT = (!tid || optTid === tid);
+            var show = matchG && matchT;
+            opt.style.display = show ? "" : "none";
+            if (show && opt.value === assetSelect.value) {
+                isCurrentStillValid = true;
+            }
+        });
+
+        if (!isCurrentStillValid && assetSelect.selectedIndex > 0) {
+            assetSelect.value = "";
+            updateAssetNotice();
+        }
+    }
+
+    // Filter opsi Job Desk berdasarkan Komoditas dan Kategori, lalu pilih yang paling pas
+    function filterJobDeskOptions(preferredDeskName) {
+        var gid = groupSelect ? groupSelect.value : "";
+        var tid = typeSelect ? typeSelect.value : "";
+        var firstMatchValue = "";
+        var exactMatchValue = "";
+        var typeMatchValue = "";
+
+        Array.from(deskSelect.options).forEach(function(opt, idx) {
+            if (idx === 0) { opt.style.display = ""; return; }
+            var optGid = opt.getAttribute("data-group-id");
+            var optTid = opt.getAttribute("data-type-id");
+            var optDeskName = opt.getAttribute("data-desk-name");
+
+            var matchG = (!gid || optGid === gid || !optGid || optGid === "0");
+            var matchT = (!tid || optTid === tid || !optTid || optTid === "0");
+            var show = matchG && matchT;
+
+            opt.style.display = show ? "" : "none";
+            if (show) {
+                if (!firstMatchValue) firstMatchValue = opt.value;
+                if (preferredDeskName && (optDeskName === preferredDeskName || opt.value === preferredDeskName)) {
+                    exactMatchValue = opt.value;
+                }
+                if (tid && optTid === tid && !typeMatchValue) {
+                    typeMatchValue = opt.value;
+                }
+            }
+        });
+
+        var targetVal = exactMatchValue || preferredDeskName || typeMatchValue || firstMatchValue || "";
+        if (targetVal) {
+            deskSelect.value = targetVal;
+        } else if (deskSelect.selectedIndex > 0 && deskSelect.options[deskSelect.selectedIndex].style.display === "none") {
+            deskSelect.value = "";
+        }
+
+        applySelectedJobDeskTasks();
+        updateManageDeskLink();
+    }
+
+    function updateManageDeskLink() {
+        if (!linkKelolaDesk) return;
+        var gid = groupSelect ? groupSelect.value : "";
+        var tid = typeSelect ? typeSelect.value : "";
+        var url = "index.php?route=jobs";
+        if (gid) url += "&group_id=" + encodeURIComponent(gid);
+        if (tid) url += "&type_id=" + encodeURIComponent(tid);
+        linkKelolaDesk.href = url;
+    }
+
+    function updateAssetNotice() {
+        if (!assetNotice) return;
+        var opt = assetSelect.options[assetSelect.selectedIndex];
+        if (!opt || !opt.value) {
+            assetNotice.style.display = "none";
+            assetNotice.innerHTML = "";
+            return;
+        }
+        var code = opt.getAttribute("data-code") || "";
+        var grp = opt.getAttribute("data-group-name") || "";
+        var typ = opt.getAttribute("data-type-name") || "";
+        var desk = opt.getAttribute("data-job-desk") || "(Belum ada penugasan default)";
+        var sub = opt.getAttribute("data-sub") || "";
+        assetNotice.style.display = "block";
+        assetNotice.innerHTML = "✅ <strong>Target Terpilih:</strong> " + code + " &bull; <strong>Komoditas:</strong> " + grp + " &bull; <strong>Kategori:</strong> " + typ + (sub ? (" &bull; <em>" + sub + "</em>") : "") + " &bull; <strong>Job Desk Default Aset:</strong> " + desk;
+    }
+
+    function applySelectedJobDeskTasks() {
+        var selectedOpt = deskSelect.options[deskSelect.selectedIndex];
+        var deskName = selectedOpt ? selectedOpt.getAttribute("data-desk-name") : "";
+        var count = selectedOpt ? selectedOpt.getAttribute("data-job-count") : "0";
+        var mins = selectedOpt ? selectedOpt.getAttribute("data-minutes") : "0";
+        var hasVisibleDesk = false;
+
+        taskGroups.forEach(function(grp) {
+            var gDesk = grp.getAttribute("data-desk-name");
+            var isMatch = (deskName && gDesk === deskName);
+            grp.style.display = isMatch ? "block" : "none";
+            var cbs = grp.querySelectorAll(".job-checkbox");
+            if (isMatch) {
+                hasVisibleDesk = true;
+                cbs.forEach(function(cb) {
+                    cb.disabled = false;
+                    cb.checked = true;
+                });
+            } else {
+                cbs.forEach(function(cb) {
+                    cb.disabled = true;
+                    cb.checked = false;
+                });
+            }
+        });
+
+        if (promptEmpty) {
+            promptEmpty.style.display = hasVisibleDesk ? "none" : "block";
+        }
+        if (statsBadge) {
+            if (hasVisibleDesk && parseInt(count) > 0) {
+                statsBadge.style.display = "inline-block";
+                statsBadge.textContent = "Total: " + count + " Tasks (~" + mins + " Menit)";
+            } else {
+                statsBadge.style.display = "none";
+            }
+        }
+    }
+
+    window.toggleActiveDeskJobs = function(checked) {
+        taskGroups.forEach(function(grp) {
+            if (grp.style.display !== "none") {
+                grp.querySelectorAll(".job-checkbox").forEach(function(cb) {
+                    if (!cb.disabled) cb.checked = checked;
+                });
+            }
+        });
+    };
+
+    if (groupSelect) {
+        groupSelect.addEventListener("change", function() {
+            if (hiddenPostGroupId) hiddenPostGroupId.value = this.value;
+            filterTypeOptions(false);
+            filterAssetOptions();
+            filterJobDeskOptions("");
+        });
+    }
+
+    if (typeSelect) {
+        typeSelect.addEventListener("change", function() {
+            if (this.value) {
+                var opt = this.options[this.selectedIndex];
+                var optGid = opt.getAttribute("data-group-id");
+                if (optGid && groupSelect && groupSelect.value !== optGid) {
+                    groupSelect.value = optGid;
+                    if (hiddenPostGroupId) hiddenPostGroupId.value = optGid;
+                    filterTypeOptions(true);
+                }
+            }
+            filterAssetOptions();
+            filterJobDeskOptions("");
+        });
+    }
+
+    if (assetSelect) {
+        assetSelect.addEventListener("change", function() {
+            var opt = this.options[this.selectedIndex];
+            if (opt && opt.value) {
+                var optGid = opt.getAttribute("data-group-id");
+                var optTid = opt.getAttribute("data-type-id");
+                var optDesk = opt.getAttribute("data-job-desk");
+
+                if (optGid && groupSelect && groupSelect.value !== optGid) {
+                    groupSelect.value = optGid;
+                    if (hiddenPostGroupId) hiddenPostGroupId.value = optGid;
+                    filterTypeOptions(true);
+                }
+                if (optTid && typeSelect && typeSelect.value !== optTid) {
+                    typeSelect.value = optTid;
+                }
+                updateAssetNotice();
+                filterJobDeskOptions(optDesk);
+            } else {
+                updateAssetNotice();
+                filterJobDeskOptions("");
+            }
+        });
+    }
+
+    if (deskSelect) {
+        deskSelect.addEventListener("change", function() {
+            applySelectedJobDeskTasks();
+            updateManageDeskLink();
+        });
+    }
+
+    // Inisialisasi awal saat halaman dimuat
+    if (assetSelect && assetSelect.value) {
+        var initialOpt = assetSelect.options[assetSelect.selectedIndex];
+        if (initialOpt && initialOpt.value) {
+            var optGid = initialOpt.getAttribute("data-group-id");
+            var optTid = initialOpt.getAttribute("data-type-id");
+            var optDesk = initialOpt.getAttribute("data-job-desk");
+            if (optGid && groupSelect) {
+                groupSelect.value = optGid;
+                if (hiddenPostGroupId) hiddenPostGroupId.value = optGid;
+                filterTypeOptions(true);
+            }
+            if (optTid && typeSelect) {
+                typeSelect.value = optTid;
+            }
+            filterAssetOptions();
+            updateAssetNotice();
+            filterJobDeskOptions(optDesk);
+        }
+    } else {
+        filterTypeOptions(true);
+        filterAssetOptions();
+        filterJobDeskOptions("");
+    }
+})();
+</script>';
     render_footer();
 }
 
