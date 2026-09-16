@@ -589,6 +589,30 @@ window.reloadAssetForm = async function(){
                 spf.innerHTML = "<div class=\"muted\" style=\"grid-column:1/-1;padding:8px 0;font-size:13px;\">ℹ️ Tidak ada spesifikasi khusus untuk kategori ini. Daftarkan di menu <strong>Setup &rarr; Master &rarr; Spesifikasi Aset</strong> jika diperlukan.</div>";
             }
         }
+        var bSel = document.getElementById("assetBrandId");
+        if(bSel && gid > 0){
+            var curBrand = bSel.value;
+            try {
+                var bUrl = "index.php?route=api_asset_brands&group_id=" + gid;
+                if(tid > 0) bUrl += "&type_id=" + tid;
+                if(curBrand) bUrl += "&selected_id=" + encodeURIComponent(curBrand);
+                var bResp = await fetch(bUrl);
+                var bList = await bResp.json();
+                if(Array.isArray(bList) && bList.length > 0){
+                    var bOpts = "<option value=\"\">-- Pilih Brand / Merk --</option>";
+                    var bFound = false;
+                    bList.forEach(function(b){
+                        var isSel = String(b.id) === String(curBrand);
+                        if(isSel) bFound = true;
+                        var codeSuffix = b.brand_code ? (" (" + b.brand_code + ")") : "";
+                        var catSuffix = b.type_name ? (" [" + b.type_name + "]") : "";
+                        bOpts += "<option value=\"" + b.id + "\"" + (isSel ? " selected" : "") + " data-group=\"" + (b.asset_group_id || 0) + "\" data-type=\"" + (b.asset_type_id || 0) + "\" data-code=\"" + (b.brand_code || "").replace(/"/g, "&quot;") + "\" data-name=\"" + (b.brand_name || "").replace(/"/g, "&quot;") + "\">" + (b.brand_name || "") + codeSuffix + catSuffix + "</option>";
+                    });
+                    bSel.innerHTML = bOpts;
+                    if(curBrand && bFound) bSel.value = curBrand;
+                }
+            } catch(e){}
+        }
     } catch(e){
         console.error("reloadAssetForm error:", e);
     }
@@ -673,6 +697,17 @@ if(agEl){
 var atEl = document.getElementById("assetType");
 if(atEl){
     atEl.addEventListener("change", function(){ window.reloadAssetForm(); });
+}
+var bSelEl = document.getElementById("assetBrandId");
+var bInEl = document.getElementById("assetBrandInput");
+if(bSelEl && bInEl){
+    bSelEl.addEventListener("change", function(){
+        var opt = bSelEl.selectedOptions ? bSelEl.selectedOptions[0] : null;
+        if(opt && opt.value){
+            var name = opt.getAttribute("data-name");
+            if(name) bInEl.value = name;
+        }
+    });
 }
 if(agEl && parseInt(agEl.value, 10) > 0 && atEl && atEl.options.length <= 1){
     window.onGroupSelectChanged(true);
@@ -2482,13 +2517,35 @@ function asset_brand_options(PDO $pdo, int $selected = 0, bool $includeEmpty = t
             LEFT JOIN asset_types t ON t.id = b.asset_type_id 
             WHERE b.is_active = 1';
     $params = [];
-    if ($groupId > 0) {
-        $sql .= ' AND (b.asset_group_id = ? OR b.asset_group_id IS NULL)';
-        $params[] = $groupId;
-    }
-    if ($typeId > 0) {
-        $sql .= ' AND (b.asset_type_id = ? OR b.asset_type_id IS NULL)';
-        $params[] = $typeId;
+    if ($groupId > 0 && $typeId > 0) {
+        if ($selected > 0) {
+            $sql .= ' AND (((b.asset_group_id = ? OR b.asset_group_id IS NULL) AND (b.asset_type_id = ? OR b.asset_type_id IS NULL)) OR b.id = ?)';
+            $params[] = $groupId;
+            $params[] = $typeId;
+            $params[] = $selected;
+        } else {
+            $sql .= ' AND (b.asset_group_id = ? OR b.asset_group_id IS NULL) AND (b.asset_type_id = ? OR b.asset_type_id IS NULL)';
+            $params[] = $groupId;
+            $params[] = $typeId;
+        }
+    } elseif ($groupId > 0) {
+        if ($selected > 0) {
+            $sql .= ' AND ((b.asset_group_id = ? OR b.asset_group_id IS NULL) OR b.id = ?)';
+            $params[] = $groupId;
+            $params[] = $selected;
+        } else {
+            $sql .= ' AND (b.asset_group_id = ? OR b.asset_group_id IS NULL)';
+            $params[] = $groupId;
+        }
+    } elseif ($typeId > 0) {
+        if ($selected > 0) {
+            $sql .= ' AND ((b.asset_type_id = ? OR b.asset_type_id IS NULL) OR b.id = ?)';
+            $params[] = $typeId;
+            $params[] = $selected;
+        } else {
+            $sql .= ' AND (b.asset_type_id = ? OR b.asset_type_id IS NULL)';
+            $params[] = $typeId;
+        }
     }
     $sql .= ' ORDER BY b.brand_name ASC';
     $stmt = $pdo->prepare($sql);
@@ -2503,6 +2560,7 @@ function asset_brand_options(PDO $pdo, int $selected = 0, bool $includeEmpty = t
         $h .= '<option value="' . $r['id'] . '"' . ((int)$r['id'] === $selected ? ' selected' : '') 
             . ' data-group="' . (int)($r['asset_group_id'] ?? 0) . '"'
             . ' data-type="' . (int)($r['asset_type_id'] ?? 0) . '"'
+            . ' data-code="' . e($r['brand_code'] ?? '') . '"'
             . ' data-name="' . e($r['brand_name']) . '">' 
             . e($r['brand_name'] . ($r['brand_code'] ? ' (' . $r['brand_code'] . ')' : '') . $catInfo) 
             . '</option>';
@@ -3938,10 +3996,18 @@ function handle_route_asset_master_items(PDO $pdo): void
     echo '</div></div>';
 
     echo '<form method="post" style="margin-top:14px"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="id" value="' . (int)($edit['id'] ?? 0) . '">';
+    $editBrandId = (int)($edit['brand_id'] ?? 0);
+    $editGroupId = (int)($edit['asset_group_id'] ?? 0);
+    $editTypeId = (int)($edit['asset_type_id'] ?? 0);
+    $brandLabel = ($editGroupId > 0 || $editTypeId > 0) ? '- Pilih Brand / Merk -' : '- Pilih Komoditas & Kategori Terlebih Dahulu -';
+    $brandHtml = ($editGroupId > 0 || $editTypeId > 0)
+        ? asset_brand_options($pdo, $editBrandId, true, $brandLabel, $editGroupId, $editTypeId)
+        : '<option value="">' . $brandLabel . '</option>';
+
     echo '<div class="grid three">';
-    echo '<label>Komoditas (Grup Aset) *<select id="miGroup" name="asset_group_id" onchange="onMiGroupChanged()" required>' . asset_group_options($pdo, (int)($edit['asset_group_id'] ?? 0), true, '- Pilih Komoditas -') . '</select></label>';
-    echo '<label>Kategori (Tipe Aset) *<select id="miType" name="asset_type_id" onchange="onMiTypeChanged()" required>' . asset_type_options($pdo, (int)($edit['asset_type_id'] ?? 0), (int)($edit['asset_group_id'] ?? 0)) . '</select></label>';
-    echo '<label>Brand / Merk<select id="miBrandId" name="brand_id">' . asset_brand_options($pdo, (int)($edit['brand_id'] ?? 0)) . '</select></label>';
+    echo '<label>Komoditas (Grup Aset) *<select id="miGroup" name="asset_group_id" onchange="onMiGroupChanged()" required>' . asset_group_options($pdo, $editGroupId, true, '- Pilih Komoditas -') . '</select></label>';
+    echo '<label>Kategori (Tipe Aset) *<select id="miType" name="asset_type_id" onchange="onMiTypeChanged()" required>' . asset_type_options($pdo, $editTypeId, $editGroupId, true, '- Pilih Kategori -', true) . '</select></label>';
+    echo '<label style="display:flex;flex-direction:column;gap:4px;"><span style="display:flex;justify-content:space-between;align-items:center;"><span>Brand / Merk</span><a href="' . route_url('asset_brands', ($editGroupId > 0 ? ['group_id' => $editGroupId, 'type_id' => $editTypeId] : [])) . '" id="linkManageBrands" target="_blank" style="font-size:12px;color:#0284c7;text-decoration:none;font-weight:600;" title="Kelola Master Merk di tab baru">⚙️ Master Merk ↗</a></span><select id="miBrandId" name="brand_id">' . $brandHtml . '</select></label>';
     echo '</div>';
     echo '<div class="grid three">';
     echo '<label>Kode Barang / SKU<input id="miItemCode" name="item_code" value="' . e($edit['item_code'] ?? '') . '" placeholder="Auto jika dikosongkan (contoh: IT-LPT-LEN-001)"></label>';
@@ -3976,10 +4042,11 @@ function handle_route_asset_master_items(PDO $pdo): void
     echo '<form method="get" class="actions" style="margin:0">';
     echo '<input type="hidden" name="route" value="asset_master_items">';
     echo '<select name="group_id" onchange="this.form.submit()">' . asset_group_options($pdo, $filterGroup, true, 'Semua Komoditas') . '</select>';
-    echo '<select name="brand_id" onchange="this.form.submit()">' . asset_brand_options($pdo, $filterBrand, true, 'Semua Brand') . '</select>';
+    echo '<select name="type_id" onchange="this.form.submit()">' . asset_type_options($pdo, $filterType, $filterGroup, true, 'Semua Kategori', true) . '</select>';
+    echo '<select name="brand_id" onchange="this.form.submit()">' . asset_brand_options($pdo, $filterBrand, true, 'Semua Brand', $filterGroup, $filterType) . '</select>';
     echo '<input name="q" value="' . e($filterQ) . '" placeholder="Cari nama / model / SKU..." style="width:200px">';
     echo '<button class="btn">Filter</button>';
-    if ($filterGroup || $filterBrand || $filterQ !== '') {
+    if ($filterGroup || $filterType || $filterBrand || $filterQ !== '') {
         echo '<a class="btn" href="' . route_url('asset_master_items') . '">Reset</a>';
     }
     echo '</form>';
@@ -4083,6 +4150,66 @@ function handle_route_asset_master_items(PDO $pdo): void
         }
     };
 
+    window.loadMiBrands = async function(preferredBrandId){
+        var miGroup = document.getElementById("miGroup");
+        var miType = document.getElementById("miType");
+        var miBrand = document.getElementById("miBrandId");
+        var linkManage = document.getElementById("linkManageBrands");
+        if(!miBrand) return;
+
+        var gid = miGroup ? (parseInt(miGroup.value, 10) || 0) : 0;
+        var tid = miType ? (parseInt(miType.value, 10) || 0) : 0;
+        var curVal = (preferredBrandId !== undefined) ? preferredBrandId : (miBrand.value || "");
+
+        if(linkManage){
+            var mUrl = "index.php?route=asset_brands";
+            var qParts = [];
+            if(gid > 0) qParts.push("group_id=" + gid);
+            if(tid > 0) qParts.push("type_id=" + tid);
+            if(qParts.length > 0) mUrl += "&" + qParts.join("&");
+            linkManage.href = mUrl;
+        }
+
+        if(gid === 0 && tid === 0){
+            miBrand.innerHTML = "<option value=\"\">- Pilih Komoditas & Kategori Terlebih Dahulu -</option>";
+            return;
+        }
+
+        var loadingText = (tid > 0) ? "⏳ Memuat Brand Kategori..." : "⏳ Memuat Brand Komoditas...";
+        miBrand.innerHTML = "<option value=\"\">" + loadingText + "</option>";
+
+        try {
+            var url = "index.php?route=api_asset_brands";
+            var params = [];
+            if(gid > 0) params.push("group_id=" + gid);
+            if(tid > 0) params.push("type_id=" + tid);
+            if(curVal) params.push("selected_id=" + encodeURIComponent(curVal));
+            if(params.length > 0) url += "&" + params.join("&");
+
+            var resp = await fetch(url);
+            var brands = await resp.json();
+            var opts = "<option value=\"\">- Pilih Brand / Merk -</option>";
+            var found = false;
+            if(Array.isArray(brands) && brands.length > 0){
+                brands.forEach(function(b){
+                    var isSel = String(b.id) === String(curVal);
+                    if(isSel) found = true;
+                    var codeSuffix = b.brand_code ? (" (" + b.brand_code + ")") : "";
+                    var catSuffix = b.type_name ? (" [" + b.type_name + "]") : "";
+                    opts += "<option value=\"" + b.id + "\"" + (isSel ? " selected" : "") + " data-group=\"" + (b.asset_group_id || 0) + "\" data-type=\"" + (b.asset_type_id || 0) + "\" data-code=\"" + (b.brand_code || "").replace(/"/g, "&quot;") + "\" data-name=\"" + (b.brand_name || "").replace(/"/g, "&quot;") + "\">" + (b.brand_name || "") + codeSuffix + catSuffix + "</option>";
+                });
+            } else {
+                opts = "<option value=\"\">- Belum ada merk untuk kategori ini -</option>";
+            }
+            miBrand.innerHTML = opts;
+            if(curVal && found){
+                miBrand.value = curVal;
+            }
+        } catch(err){
+            miBrand.innerHTML = "<option value=\"\">Gagal memuat merk: " + err.message + "</option>";
+        }
+    };
+
     window.onMiGroupChanged = async function(){
         var miGroup = document.getElementById("miGroup");
         var miType = document.getElementById("miType");
@@ -4091,6 +4218,7 @@ function handle_route_asset_master_items(PDO $pdo): void
         if(gid === 0){
             miType.innerHTML = "<option value=\"\">- Pilih Komoditas Terlebih Dahulu -</option>";
             window.loadMiSpecifications(0, 0);
+            await window.loadMiBrands("");
             return;
         }
         miType.innerHTML = "<option value=\"\">Memuat Kategori...</option>";
@@ -4107,16 +4235,20 @@ function handle_route_asset_master_items(PDO $pdo): void
             }
             miType.innerHTML = opts;
             window.loadMiSpecifications(0, gid);
+            await window.loadMiBrands("");
         } catch(e) {
             miType.innerHTML = "<option value=\"\">Gagal memuat kategori</option>";
         }
     };
 
-    window.onMiTypeChanged = function(){
+    window.onMiTypeChanged = async function(){
         var miGroup = document.getElementById("miGroup");
         var miType = document.getElementById("miType");
         if(miGroup && miType){
-            window.loadMiSpecifications(miType.value, miGroup.value);
+            var gid = parseInt(miGroup.value, 10) || 0;
+            var tid = parseInt(miType.value, 10) || 0;
+            window.loadMiSpecifications(tid, gid);
+            await window.loadMiBrands();
         }
     };
 
@@ -4235,13 +4367,14 @@ function handle_route_asset_master_items(PDO $pdo): void
             var aiReq = await fetch(aiUrl);
             var aiRes = await aiReq.json();
 
-            // Populate Brand
+            // Populate Brand (synchronized with group & type)
+            await window.loadMiBrands(aiRes && aiRes.ok ? aiRes.brand_id : 0);
             var bSel = document.getElementById("miBrandId");
             if(bSel){
                 var bMatched = false;
                 if(aiRes && aiRes.ok && aiRes.brand_id){
                     bSel.value = aiRes.brand_id;
-                    bMatched = true;
+                    if(String(bSel.value) === String(aiRes.brand_id)) bMatched = true;
                 }
                 if(!bMatched){
                     var targetBrand = (aiRes && aiRes.ok && aiRes.brand_name) ? aiRes.brand_name : mfr;

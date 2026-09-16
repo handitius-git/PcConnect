@@ -530,16 +530,40 @@ function handle_route_api_asset_brands(PDO $pdo): void
     require_login();
     $groupId = (int)($_GET['group_id'] ?? 0);
     $typeId = (int)($_GET['type_id'] ?? 0);
+    $selectedId = (int)($_GET['selected_id'] ?? 0);
 
     $where = ["b.is_active = 1"];
     $params = [];
-    if ($groupId > 0) {
-        $where[] = "(b.asset_group_id = ? OR b.asset_group_id IS NULL)";
-        $params[] = $groupId;
-    }
-    if ($typeId > 0) {
-        $where[] = "(b.asset_type_id = ? OR b.asset_type_id IS NULL)";
-        $params[] = $typeId;
+    if ($groupId > 0 && $typeId > 0) {
+        if ($selectedId > 0) {
+            $where[] = "(((b.asset_group_id = ? OR b.asset_group_id IS NULL) AND (b.asset_type_id = ? OR b.asset_type_id IS NULL)) OR b.id = ?)";
+            $params[] = $groupId;
+            $params[] = $typeId;
+            $params[] = $selectedId;
+        } else {
+            $where[] = "(b.asset_group_id = ? OR b.asset_group_id IS NULL)";
+            $params[] = $groupId;
+            $where[] = "(b.asset_type_id = ? OR b.asset_type_id IS NULL)";
+            $params[] = $typeId;
+        }
+    } elseif ($groupId > 0) {
+        if ($selectedId > 0) {
+            $where[] = "((b.asset_group_id = ? OR b.asset_group_id IS NULL) OR b.id = ?)";
+            $params[] = $groupId;
+            $params[] = $selectedId;
+        } else {
+            $where[] = "(b.asset_group_id = ? OR b.asset_group_id IS NULL)";
+            $params[] = $groupId;
+        }
+    } elseif ($typeId > 0) {
+        if ($selectedId > 0) {
+            $where[] = "((b.asset_type_id = ? OR b.asset_type_id IS NULL) OR b.id = ?)";
+            $params[] = $typeId;
+            $params[] = $selectedId;
+        } else {
+            $where[] = "(b.asset_type_id = ? OR b.asset_type_id IS NULL)";
+            $params[] = $typeId;
+        }
     }
 
     $sql = "SELECT b.id, b.asset_group_id, b.asset_type_id, b.brand_code, b.brand_name, 
