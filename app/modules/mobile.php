@@ -124,7 +124,20 @@ function mobile_schedule(PDO $pdo): void
     expire_stale_mobile_work_or_logout($pdo, $user);
     sync_completed_mobile_schedules($pdo, (int)$user['id']);
     render_mobile_header('Schedule', $user);
-    $stmt = $pdo->prepare("SELECT s.*, COALESCE(s.pc_id,s.printer_id) asset_id, COALESCE(p.owner_name, pr.printer_name) owner_name, COALESCE(p.computer_name, pr.location) computer_name, EXISTS (SELECT 1 FROM maintenance_reports r WHERE r.schedule_id=s.id) has_report FROM maintenance_schedules s LEFT JOIN pcs p ON p.pc_id=s.pc_id LEFT JOIN printers pr ON pr.prn_id=s.printer_id WHERE s.technician_id=? AND s.status<>'completed' ORDER BY s.scheduled_date ASC, s.id ASC");
+    $stmt = $pdo->prepare("SELECT s.*, 
+        COALESCE(ai.asset_code, ma.maintenance_asset_code, s.pc_id, s.printer_id, CONCAT('ASET #', s.maintenance_asset_id)) AS asset_id, 
+        COALESCE(ma.owner_name, ai.custodian_name, p.owner_name, pr.printer_name, '-') AS owner_name, 
+        COALESCE(ma.name, ai.asset_name, p.computer_name, pr.printer_name, pr.location, '-') AS computer_name, 
+        COALESCE(ma.location_label, ai.location_label, p.location_label, pr.location, '') AS location_label,
+        ma.maintenance_asset_code,
+        EXISTS (SELECT 1 FROM maintenance_reports r WHERE r.schedule_id=s.id) AS has_report 
+        FROM maintenance_schedules s 
+        LEFT JOIN maintenance_assets ma ON ma.id = s.maintenance_asset_id
+        LEFT JOIN asset_items ai ON ai.id = ma.asset_item_id
+        LEFT JOIN pcs p ON (p.pc_id = s.pc_id OR (s.pc_id IS NULL AND ma.pc_id IS NOT NULL AND p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci))
+        LEFT JOIN printers pr ON (pr.prn_id = s.printer_id OR (s.printer_id IS NULL AND ma.printer_id IS NOT NULL AND pr.prn_id COLLATE utf8mb4_unicode_ci = ma.printer_id COLLATE utf8mb4_unicode_ci))
+        WHERE s.technician_id=? AND s.status<>'completed' 
+        ORDER BY s.scheduled_date ASC, s.id ASC");
     $stmt->execute([$user['id']]);
     echo '<section class="panel"><h1>Schedule Saya</h1><p class="muted">Pilih aset sesuai label PC/Printer, lalu scan QR sebelum mulai pekerjaan.</p></section>';
     $hasRows = false;
@@ -132,7 +145,17 @@ function mobile_schedule(PDO $pdo): void
         $hasRows = true;
         $canOpen = !empty($row['arrival_at']);
         $waitingEndScan = $canOpen && (int)($row['has_report'] ?? 0) === 1;
-        echo '<section class="panel"><div class="split"><div><strong>' . e($row['asset_id']) . '</strong><br><span class="muted">' . e($row['owner_name']) . ' - ' . e($row['computer_name'] ?: '-') . '</span><br><span class="muted">Tanggal kerja: ' . e($row['scheduled_date']) . '</span><br><span class="badge">' . e($row['asset_type'] ?? 'pc') . '</span> <span class="badge">' . e($row['status']) . '</span></div><div class="actions">';
+        $displayCode = (string)$row['asset_id'];
+        if (!empty($row['maintenance_asset_code']) && $row['maintenance_asset_code'] !== $displayCode) {
+            $codeHtml = e($displayCode) . ' <small class="muted" style="font-weight:normal;">(' . e($row['maintenance_asset_code']) . ')</small>';
+        } else {
+            $codeHtml = e($displayCode);
+        }
+        echo '<section class="panel"><div class="split"><div><strong>' . $codeHtml . '</strong><br><span class="muted">' . e($row['owner_name']) . ' - ' . e($row['computer_name'] ?: '-') . '</span>';
+        if (!empty($row['location_label'])) {
+            echo '<br><span class="muted" style="font-size:12px;">📍 ' . e($row['location_label']) . '</span>';
+        }
+        echo '<br><span class="muted">Tanggal kerja: ' . e($row['scheduled_date']) . '</span><br><span class="badge">' . e($row['asset_type'] ?? 'pc') . '</span> <span class="badge">' . e($row['status']) . '</span></div><div class="actions">';
         if ($waitingEndScan) {
             echo '<a class="btn good" href="' . route_url('mobile_scan', ['id' => $row['id'], 'phase' => 'end']) . '">Scan Selesai</a>';
         } else {
@@ -160,7 +183,21 @@ function mobile_scan(PDO $pdo): void
     if ($eqr !== '' && function_exists('qr_decrypt_payload')) {
         $decrypted = qr_decrypt_payload($eqr);
         if ($decrypted !== null && $decrypted !== '') {
-            $code = $decrypted;
+            $code = strtoupper(trim($decrypted));
+        }
+    }
+    if (str_starts_with($code, 'HTTP://') || str_starts_with($code, 'HTTPS://') || str_contains($code, '?')) {
+        $parsed = parse_url($code);
+        if (!empty($parsed['query'])) {
+            parse_str($parsed['query'], $qp);
+            if (!empty($qp['eqr']) && function_exists('qr_decrypt_payload')) {
+                $dec = qr_decrypt_payload($qp['eqr']);
+                if ($dec) {
+                    $code = strtoupper(trim($dec));
+                }
+            } elseif (!empty($qp['code'])) {
+                $code = strtoupper(trim($qp['code']));
+            }
         }
     }
     $scheduleId = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
@@ -177,34 +214,99 @@ function mobile_scan(PDO $pdo): void
     $user = require_role(['admin', 'technician']);
     expire_stale_mobile_work_or_logout($pdo, $user, $scheduleId > 0 ? $scheduleId : null);
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        [$assetType, $assetId] = find_asset_by_code($pdo, $code);
+        [$assetType, $assetId, $assetInfo] = find_asset_by_code($pdo, $code);
         if ($assetId === '') {
-            flash('INVALID QR. Kode asset tidak valid.', 'err');
-            redirect_to('mobile_scan');
+            flash('INVALID QR. Kode asset tidak valid atau tidak ditemukan.', 'err');
+            redirect_to('mobile_scan', $scheduleId > 0 ? ['id' => $scheduleId, 'phase' => $phase] : []);
         }
-        $assetColumn = $assetType === 'printer' ? 'printer_id' : 'pc_id';
+
+        $schedule = null;
         if ($scheduleId > 0) {
-            if ($user['role'] === 'admin') {
-                $stmt = $pdo->prepare("SELECT * FROM maintenance_schedules WHERE id=? AND $assetColumn=? LIMIT 1");
-                $stmt->execute([$scheduleId, $assetId]);
-            } else {
-                $stmt = $pdo->prepare("SELECT * FROM maintenance_schedules WHERE id=? AND $assetColumn=? AND technician_id=? LIMIT 1");
-                $stmt->execute([$scheduleId, $assetId, $user['id']]);
+            $schSql = "SELECT s.*, 
+                       ma.id AS ma_id, ma.maintenance_asset_code, ma.latitude AS ma_lat, ma.longitude AS ma_lng, 
+                       ma.location_radius_m AS ma_radius, ma.location_label AS ma_location_label, 
+                       ma.pc_id AS ma_pc_id, ma.printer_id AS ma_printer_id
+                       FROM maintenance_schedules s 
+                       LEFT JOIN maintenance_assets ma ON ma.id = s.maintenance_asset_id 
+                       WHERE s.id = ?";
+            $schParams = [$scheduleId];
+            if ($user['role'] !== 'admin') {
+                $schSql .= " AND s.technician_id = ?";
+                $schParams[] = $user['id'];
             }
+            $stmt = $pdo->prepare($schSql);
+            $stmt->execute($schParams);
+            $scheduleCandidate = $stmt->fetch();
+
+            if (!$scheduleCandidate) {
+                flash($user['role'] === 'admin' ? 'Schedule terbuka tidak ditemukan.' : 'Schedule tidak ada atau bukan penugasan Anda.', 'err');
+                redirect_to('mobile_schedule');
+            }
+
+            // Cek apakah scan cocok dengan target schedule
+            $isMatch = false;
+            if ($assetType === 'maintenance_asset') {
+                $isMatch = ((int)$scheduleCandidate['maintenance_asset_id'] === (int)$assetId)
+                    || (!empty($scheduleCandidate['pc_id']) && !empty($assetInfo['pc_id']) && $scheduleCandidate['pc_id'] === $assetInfo['pc_id'])
+                    || (!empty($scheduleCandidate['printer_id']) && !empty($assetInfo['printer_id']) && $scheduleCandidate['printer_id'] === $assetInfo['printer_id']);
+            } elseif ($assetType === 'printer') {
+                $isMatch = (!empty($scheduleCandidate['printer_id']) && $scheduleCandidate['printer_id'] === $assetId)
+                    || (!empty($scheduleCandidate['ma_printer_id']) && $scheduleCandidate['ma_printer_id'] === $assetId)
+                    || (!empty($assetInfo['maintenance_asset_id']) && (int)$assetInfo['maintenance_asset_id'] === (int)$scheduleCandidate['maintenance_asset_id']);
+            } else { // pc
+                $isMatch = (!empty($scheduleCandidate['pc_id']) && $scheduleCandidate['pc_id'] === $assetId)
+                    || (!empty($scheduleCandidate['ma_pc_id']) && $scheduleCandidate['ma_pc_id'] === $assetId)
+                    || (!empty($assetInfo['maintenance_asset_id']) && (int)$assetInfo['maintenance_asset_id'] === (int)$scheduleCandidate['maintenance_asset_id']);
+            }
+
+            if (!$isMatch) {
+                flash('QR Code yang di-scan tidak sesuai dengan target unit aset pada schedule ini.', 'err');
+                redirect_to('mobile_scan', ['id' => $scheduleId, 'phase' => $phase]);
+            }
+
+            $schedule = $scheduleCandidate;
         } else {
-            if ($user['role'] === 'admin') {
-                $stmt = $pdo->prepare("SELECT * FROM maintenance_schedules WHERE $assetColumn=? AND status<>'completed' ORDER BY scheduled_date ASC, id ASC LIMIT 1");
-                $stmt->execute([$assetId]);
-            } else {
-                $stmt = $pdo->prepare("SELECT * FROM maintenance_schedules WHERE $assetColumn=? AND technician_id=? AND status<>'completed' ORDER BY scheduled_date ASC, id ASC LIMIT 1");
-                $stmt->execute([$assetId, $user['id']]);
+            $findSql = "SELECT s.*, 
+                        ma.id AS ma_id, ma.maintenance_asset_code, ma.latitude AS ma_lat, ma.longitude AS ma_lng, 
+                        ma.location_radius_m AS ma_radius, ma.location_label AS ma_location_label,
+                        ma.pc_id AS ma_pc_id, ma.printer_id AS ma_printer_id
+                        FROM maintenance_schedules s 
+                        LEFT JOIN maintenance_assets ma ON ma.id = s.maintenance_asset_id 
+                        WHERE s.status <> 'completed'";
+            $findParams = [];
+            if ($user['role'] !== 'admin') {
+                $findSql .= " AND s.technician_id = ?";
+                $findParams[] = $user['id'];
+            }
+
+            if ($assetType === 'maintenance_asset') {
+                $findSql .= " AND (s.maintenance_asset_id = ? 
+                               OR (s.pc_id IS NOT NULL AND s.pc_id = ?) 
+                               OR (s.printer_id IS NOT NULL AND s.printer_id = ?))";
+                $findParams[] = (int)$assetId;
+                $findParams[] = !empty($assetInfo['pc_id']) ? $assetInfo['pc_id'] : '__none__';
+                $findParams[] = !empty($assetInfo['printer_id']) ? $assetInfo['printer_id'] : '__none__';
+            } elseif ($assetType === 'printer') {
+                $findSql .= " AND (s.printer_id = ? OR ma.printer_id = ?)";
+                $findParams[] = $assetId;
+                $findParams[] = $assetId;
+            } else { // pc
+                $findSql .= " AND (s.pc_id = ? OR ma.pc_id = ?)";
+                $findParams[] = $assetId;
+                $findParams[] = $assetId;
+            }
+
+            $findSql .= " ORDER BY s.scheduled_date ASC, s.id ASC LIMIT 1";
+            $findStmt = $pdo->prepare($findSql);
+            $findStmt->execute($findParams);
+            $schedule = $findStmt->fetch();
+
+            if (!$schedule) {
+                flash($user['role'] === 'admin' ? 'Schedule terbuka tidak ada untuk aset ini.' : 'Schedule terbuka tidak ada untuk aset ini atau bukan penugasan Anda.', 'err');
+                redirect_to('mobile_schedule');
             }
         }
-        $schedule = $stmt->fetch();
-        if (!$schedule) {
-            flash($user['role'] === 'admin' ? 'Schedule terbuka tidak ada untuk aset ini.' : 'Schedule tidak ada untuk aset ini atau bukan assignment Anda.', 'err');
-            redirect_to('mobile_schedule');
-        }
+
         $lat = ($_POST['lat'] ?? '') !== '' ? (float)$_POST['lat'] : null;
         $lng = ($_POST['lng'] ?? '') !== '' ? (float)$_POST['lng'] : null;
         if ($assetType === 'pc') {
@@ -215,6 +317,12 @@ function mobile_scan(PDO $pdo): void
             }
         } elseif ($assetType === 'printer') {
             $locationError = validate_printer_scan_location($pdo, $assetId, $lat, $lng);
+            if ($locationError !== null) {
+                flash($locationError, 'err');
+                redirect_to('mobile_scan', ['id' => $schedule['id'], 'phase' => $phase]);
+            }
+        } elseif ($assetType === 'maintenance_asset') {
+            $locationError = validate_maintenance_asset_scan_location($pdo, (int)$assetId, $lat, $lng);
             if ($locationError !== null) {
                 flash($locationError, 'err');
                 redirect_to('mobile_scan', ['id' => $schedule['id'], 'phase' => $phase]);
@@ -275,11 +383,24 @@ function mobile_job(PDO $pdo): void
     ensure_photo_challenge_schema($pdo);
     ensure_maintenance_work_schema($pdo);
     expire_stale_mobile_work_or_logout($pdo, $user, $id > 0 ? $id : null);
+    $jobSql = 'SELECT s.*, 
+        COALESCE(ai.asset_code, ma.maintenance_asset_code, s.pc_id, s.printer_id, CONCAT("ASET #", s.maintenance_asset_id)) AS asset_id, 
+        COALESCE(ma.owner_name, ai.custodian_name, p.owner_name, pr.printer_name, "-") AS owner_name, 
+        COALESCE(ma.name, ai.asset_name, p.computer_name, pr.printer_name, pr.location, "-") AS computer_name, 
+        COALESCE(p.physical_condition, pr.physical_condition) AS physical_condition, 
+        p.general_specs, p.benchmark, p.ai_recommendation,
+        ma.maintenance_asset_code, ma.location_label AS ma_location_label
+        FROM maintenance_schedules s 
+        LEFT JOIN maintenance_assets ma ON ma.id = s.maintenance_asset_id 
+        LEFT JOIN asset_items ai ON ai.id = ma.asset_item_id 
+        LEFT JOIN pcs p ON (p.pc_id = s.pc_id OR (s.pc_id IS NULL AND ma.pc_id IS NOT NULL AND p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci)) 
+        LEFT JOIN printers pr ON (pr.prn_id = s.printer_id OR (s.printer_id IS NULL AND ma.printer_id IS NOT NULL AND pr.prn_id COLLATE utf8mb4_unicode_ci = ma.printer_id COLLATE utf8mb4_unicode_ci)) 
+        WHERE s.id=?';
     if ($user['role'] === 'admin') {
-        $stmt = $pdo->prepare('SELECT s.*, COALESCE(s.pc_id,s.printer_id) asset_id, COALESCE(p.owner_name, pr.printer_name) owner_name, COALESCE(p.computer_name, pr.location) computer_name, COALESCE(p.physical_condition, pr.physical_condition) physical_condition, p.general_specs, p.benchmark, p.ai_recommendation FROM maintenance_schedules s LEFT JOIN pcs p ON p.pc_id=s.pc_id LEFT JOIN printers pr ON pr.prn_id=s.printer_id WHERE s.id=?');
+        $stmt = $pdo->prepare($jobSql);
         $stmt->execute([$id]);
     } else {
-        $stmt = $pdo->prepare('SELECT s.*, COALESCE(s.pc_id,s.printer_id) asset_id, COALESCE(p.owner_name, pr.printer_name) owner_name, COALESCE(p.computer_name, pr.location) computer_name, COALESCE(p.physical_condition, pr.physical_condition) physical_condition, p.general_specs, p.benchmark, p.ai_recommendation FROM maintenance_schedules s LEFT JOIN pcs p ON p.pc_id=s.pc_id LEFT JOIN printers pr ON pr.prn_id=s.printer_id WHERE s.id=? AND s.technician_id=?');
+        $stmt = $pdo->prepare($jobSql . ' AND s.technician_id=?');
         $stmt->execute([$id, $user['id']]);
     }
     $schedule = $stmt->fetch();
@@ -434,9 +555,13 @@ function mobile_job(PDO $pdo): void
                 $pdo->prepare("UPDATE maintenance_reports SET locked_at=NOW() WHERE schedule_id=? AND locked_at IS NULL")->execute([$id]);
                 $pdo->prepare("UPDATE maintenance_schedules SET status='completed', completed_at=NOW(), locked_at=NOW() WHERE id=?")->execute([$id]);
                 if (($schedule['asset_type'] ?? 'pc') === 'printer') {
-                    $pdo->prepare('UPDATE printers SET physical_condition=? WHERE prn_id=?')->execute([trim((string)($_POST['physical_condition'] ?? '')), $schedule['printer_id']]);
+                    if (!empty($schedule['printer_id'])) {
+                        $pdo->prepare('UPDATE printers SET physical_condition=? WHERE prn_id=?')->execute([trim((string)($_POST['physical_condition'] ?? '')), $schedule['printer_id']]);
+                    }
                 } else {
-                    $pdo->prepare('UPDATE pcs SET physical_condition=? WHERE pc_id=?')->execute([trim((string)($_POST['physical_condition'] ?? '')), $schedule['pc_id']]);
+                    if (!empty($schedule['pc_id'])) {
+                        $pdo->prepare('UPDATE pcs SET physical_condition=? WHERE pc_id=?')->execute([trim((string)($_POST['physical_condition'] ?? '')), $schedule['pc_id']]);
+                    }
                 }
                 $evidenceAudit = photo_evidence_audit_summary($pdo, array_merge($latestReport ?? [], ['schedule_id' => $id, 'photo_audit_meta' => json_encode($photoAuditMeta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), 'before_photos' => json_encode($before, JSON_UNESCAPED_SLASHES), 'after_photos' => json_encode($after, JSON_UNESCAPED_SLASHES)]));
                 $durationLogNote = ($realDurationMinutes < $minimumMinutes)
@@ -462,7 +587,15 @@ function mobile_job(PDO $pdo): void
     $jobsStmt->execute([$id]);
     $jobsList = $jobsStmt->fetchAll();
 
-    echo '<section class="panel"><h1>' . e($schedule['asset_id']) . '</h1><p>' . e($schedule['owner_name']) . ' - ' . e($schedule['computer_name'] ?: '-') . '</p><p class="muted">Tanggal kerja: ' . e($schedule['scheduled_date']) . '</p><span class="badge">' . e($schedule['asset_type'] ?? 'pc') . '</span> <span class="badge">' . e($schedule['status']) . '</span></section>';
+    $assetDisplayTitle = (string)$schedule['asset_id'];
+    if (!empty($schedule['maintenance_asset_code']) && $schedule['maintenance_asset_code'] !== $assetDisplayTitle) {
+        $assetDisplayTitle .= ' (' . $schedule['maintenance_asset_code'] . ')';
+    }
+    echo '<section class="panel"><h1>' . e($assetDisplayTitle) . '</h1><p><strong>' . e($schedule['owner_name']) . '</strong> - ' . e($schedule['computer_name'] ?: '-') . '</p>';
+    if (!empty($schedule['ma_location_label'])) {
+        echo '<p class="muted" style="margin-top:-6px;font-size:13px;">📍 ' . e($schedule['ma_location_label']) . '</p>';
+    }
+    echo '<p class="muted">Tanggal kerja: ' . e($schedule['scheduled_date']) . '</p><span class="badge">' . e($schedule['asset_type'] ?? 'pc') . '</span> <span class="badge">' . e($schedule['status']) . '</span></section>';
     echo smart_maintenance_card($schedule);
 
     if (!$hasBeforePhotos && !$locked) {
@@ -681,11 +814,28 @@ function mobile_history(PDO $pdo): void
     $user = require_technician();
     expire_stale_mobile_work_or_logout($pdo, $user);
     render_mobile_header('History', $user);
-    $stmt = $pdo->prepare("SELECT s.*, COALESCE(s.pc_id,s.printer_id) asset_id, COALESCE(p.owner_name, pr.printer_name) owner_name FROM maintenance_schedules s LEFT JOIN pcs p ON p.pc_id=s.pc_id LEFT JOIN printers pr ON pr.prn_id=s.printer_id WHERE s.technician_id=? ORDER BY s.scheduled_date DESC, s.id DESC LIMIT 80");
+    $stmt = $pdo->prepare("SELECT s.*, 
+        COALESCE(ai.asset_code, ma.maintenance_asset_code, s.pc_id, s.printer_id, CONCAT('ASET #', s.maintenance_asset_id)) AS asset_id, 
+        COALESCE(ma.owner_name, ai.custodian_name, p.owner_name, pr.printer_name, '-') AS owner_name,
+        COALESCE(ma.name, ai.asset_name, p.computer_name, pr.printer_name, pr.location, '-') AS computer_name,
+        ma.maintenance_asset_code
+        FROM maintenance_schedules s 
+        LEFT JOIN maintenance_assets ma ON ma.id = s.maintenance_asset_id 
+        LEFT JOIN asset_items ai ON ai.id = ma.asset_item_id 
+        LEFT JOIN pcs p ON (p.pc_id = s.pc_id OR (s.pc_id IS NULL AND ma.pc_id IS NOT NULL AND p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci)) 
+        LEFT JOIN printers pr ON (pr.prn_id = s.printer_id OR (s.printer_id IS NULL AND ma.printer_id IS NOT NULL AND pr.prn_id COLLATE utf8mb4_unicode_ci = ma.printer_id COLLATE utf8mb4_unicode_ci)) 
+        WHERE s.technician_id=? 
+        ORDER BY s.scheduled_date DESC, s.id DESC LIMIT 80");
     $stmt->execute([$user['id']]);
     echo '<section class="panel"><h1>History</h1></section>';
     foreach ($stmt as $row) {
-        echo '<section class="panel"><div class="split"><div><strong>' . e($row['asset_id']) . '</strong><br><span class="muted">' . e($row['scheduled_date']) . ' - ' . e($row['owner_name']) . '</span><br><span class="badge">' . e($row['status']) . '</span></div><a class="btn" href="' . route_url('mobile_job', ['id' => $row['id']]) . '">Buka</a></div></section>';
+        $displayCode = (string)$row['asset_id'];
+        if (!empty($row['maintenance_asset_code']) && $row['maintenance_asset_code'] !== $displayCode) {
+            $codeHtml = e($displayCode) . ' <small class="muted" style="font-weight:normal;">(' . e($row['maintenance_asset_code']) . ')</small>';
+        } else {
+            $codeHtml = e($displayCode);
+        }
+        echo '<section class="panel"><div class="split"><div><strong>' . $codeHtml . '</strong><br><span class="muted">' . e($row['scheduled_date']) . ' - ' . e($row['owner_name']) . ' (' . e($row['computer_name'] ?: '-') . ')</span><br><span class="badge">' . e($row['status']) . '</span></div><a class="btn" href="' . route_url('mobile_job', ['id' => $row['id']]) . '">Buka</a></div></section>';
     }
     render_mobile_footer();
 }

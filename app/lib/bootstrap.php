@@ -284,48 +284,146 @@ function parse_asset_code(string $code): array
     return ['', ''];
 }
 
+if (!function_exists('db_table_exists')) {
+    function db_table_exists(PDO $pdo, string $table): bool
+    {
+        static $cache = [];
+        if (isset($cache[$table])) {
+            return $cache[$table];
+        }
+        try {
+            $stmt = $pdo->prepare('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?');
+            $stmt->execute([$table]);
+            $cache[$table] = (int)$stmt->fetchColumn() > 0;
+        } catch (Throwable $e) {
+            $cache[$table] = false;
+        }
+        return $cache[$table];
+    }
+}
+
 function find_asset_by_code(PDO $pdo, string $code): array
 {
-    [$assetId, $security] = parse_asset_code($code);
-    if ($assetId === '') {
+    $clean = strtoupper(trim($code));
+    if ($clean === '') {
         return ['', '', []];
     }
+    [$assetId, $security] = parse_asset_code($clean);
+    if ($assetId === '') {
+        $assetId = $clean;
+        $security = '';
+    }
+
     if (db_table_exists($pdo, 'maintenance_assets')) {
-        $stmt = $pdo->prepare('SELECT * FROM maintenance_assets WHERE maintenance_asset_code=? AND status<>"inactive" LIMIT 1');
-        $stmt->execute([$assetId]);
+        $mntCode = str_starts_with($assetId, 'MNT-') ? $assetId : 'MNT-' . $assetId;
+        $hasAi = db_table_exists($pdo, 'asset_items');
+        if ($hasAi) {
+            $stmt = $pdo->prepare('SELECT ma.*, ai.asset_code item_asset_code 
+                                   FROM maintenance_assets ma 
+                                   LEFT JOIN asset_items ai ON ai.id = ma.asset_item_id 
+                                   WHERE (ma.maintenance_asset_code=? OR ma.maintenance_asset_code=? OR (ai.asset_code IS NOT NULL AND ai.asset_code=?)) 
+                                   AND ma.status<>"inactive" LIMIT 1');
+            $stmt->execute([$assetId, $mntCode, $assetId]);
+        } else {
+            $stmt = $pdo->prepare('SELECT ma.* FROM maintenance_assets ma 
+                                   WHERE (ma.maintenance_asset_code=? OR ma.maintenance_asset_code=?) 
+                                   AND ma.status<>"inactive" LIMIT 1');
+            $stmt->execute([$assetId, $mntCode]);
+        }
         $maintenanceAsset = $stmt->fetch();
-        if ($maintenanceAsset && hash_equals((string)$maintenanceAsset['security_code'], $security)) {
-            if (!empty($maintenanceAsset['printer_id'])) {
-                $stmt = $pdo->prepare('SELECT pr.*, ma.maintenance_asset_code, ma.id maintenance_asset_id FROM printers pr JOIN maintenance_assets ma ON ma.printer_id COLLATE utf8mb4_unicode_ci = pr.prn_id COLLATE utf8mb4_unicode_ci WHERE pr.prn_id=? LIMIT 1');
-                $stmt->execute([(string)$maintenanceAsset['printer_id']]);
-                $printer = $stmt->fetch();
-                return $printer ? ['printer', (string)$printer['prn_id'], $printer] : ['', '', []];
+
+        // Jika tidak cocok atau security code salah, coba cari langsung menggunakan kode utuh ($clean)
+        if (!$maintenanceAsset || ($security !== '' && !hash_equals((string)$maintenanceAsset['security_code'], $security))) {
+            $mntCodeClean = str_starts_with($clean, 'MNT-') ? $clean : 'MNT-' . $clean;
+            if ($hasAi) {
+                $stmt = $pdo->prepare('SELECT ma.*, ai.asset_code item_asset_code 
+                                       FROM maintenance_assets ma 
+                                       LEFT JOIN asset_items ai ON ai.id = ma.asset_item_id 
+                                       WHERE (ma.maintenance_asset_code=? OR ma.maintenance_asset_code=? OR (ai.asset_code IS NOT NULL AND ai.asset_code=?)) 
+                                       AND ma.status<>"inactive" LIMIT 1');
+                $stmt->execute([$clean, $mntCodeClean, $clean]);
+            } else {
+                $stmt = $pdo->prepare('SELECT ma.* FROM maintenance_assets ma 
+                                       WHERE (ma.maintenance_asset_code=? OR ma.maintenance_asset_code=?) 
+                                       AND ma.status<>"inactive" LIMIT 1');
+                $stmt->execute([$clean, $mntCodeClean]);
             }
-            if (!empty($maintenanceAsset['pc_id'])) {
-                $stmt = $pdo->prepare('SELECT p.*, ma.maintenance_asset_code, ma.id maintenance_asset_id FROM pcs p JOIN maintenance_assets ma ON ma.pc_id COLLATE utf8mb4_unicode_ci = p.pc_id COLLATE utf8mb4_unicode_ci WHERE p.pc_id=? LIMIT 1');
-                $stmt->execute([(string)$maintenanceAsset['pc_id']]);
-                $pc = $stmt->fetch();
-                return $pc ? ['pc', (string)$pc['pc_id'], $pc] : ['', '', []];
+            $cleanMa = $stmt->fetch();
+            if ($cleanMa) {
+                $maintenanceAsset = $cleanMa;
+                $security = ''; // Bersihkan security karena dicocokkan sebagai kode utuh aset
             }
-            return ['maintenance_asset', (string)$maintenanceAsset['id'], $maintenanceAsset];
+        }
+
+        if ($maintenanceAsset) {
+            $secValid = ($security === '') || hash_equals((string)$maintenanceAsset['security_code'], $security);
+            if ($secValid) {
+                if (!empty($maintenanceAsset['printer_id']) && db_table_exists($pdo, 'printers')) {
+                    $stmt = $pdo->prepare('SELECT pr.*, ma.maintenance_asset_code, ma.id maintenance_asset_id FROM printers pr JOIN maintenance_assets ma ON ma.printer_id COLLATE utf8mb4_unicode_ci = pr.prn_id COLLATE utf8mb4_unicode_ci WHERE pr.prn_id=? LIMIT 1');
+                    $stmt->execute([(string)$maintenanceAsset['printer_id']]);
+                    $printer = $stmt->fetch();
+                    if ($printer) {
+                        return ['printer', (string)$printer['prn_id'], $printer];
+                    }
+                }
+                if (!empty($maintenanceAsset['pc_id']) && db_table_exists($pdo, 'pcs')) {
+                    $stmt = $pdo->prepare('SELECT p.*, ma.maintenance_asset_code, ma.id maintenance_asset_id FROM pcs p JOIN maintenance_assets ma ON ma.pc_id COLLATE utf8mb4_unicode_ci = p.pc_id COLLATE utf8mb4_unicode_ci WHERE p.pc_id=? LIMIT 1');
+                    $stmt->execute([(string)$maintenanceAsset['pc_id']]);
+                    $pc = $stmt->fetch();
+                    if ($pc) {
+                        return ['pc', (string)$pc['pc_id'], $pc];
+                    }
+                }
+                return ['maintenance_asset', (string)$maintenanceAsset['id'], $maintenanceAsset];
+            }
         }
     }
-    if (substr($assetId, 0, 3) === 'PRN') {
+
+    if (substr($assetId, 0, 3) === 'PRN' && db_table_exists($pdo, 'printers')) {
         $stmt = $pdo->prepare('SELECT * FROM printers WHERE prn_id=?');
         $stmt->execute([$assetId]);
         $printer = $stmt->fetch();
-        if ($printer && hash_equals((string)$printer['security_code'], $security)) {
+        if ($printer && ($security === '' || hash_equals((string)$printer['security_code'], $security))) {
             return ['printer', $assetId, $printer];
         }
         return ['', '', []];
     }
-    $stmt = $pdo->prepare('SELECT * FROM pcs WHERE pc_id=?');
-    $stmt->execute([$assetId]);
-    $pc = $stmt->fetch();
-    if ($pc && hash_equals((string)$pc['security_code'], $security)) {
-        return ['pc', $assetId, $pc];
+
+    if (db_table_exists($pdo, 'pcs')) {
+        $stmt = $pdo->prepare('SELECT * FROM pcs WHERE pc_id=?');
+        $stmt->execute([$assetId]);
+        $pc = $stmt->fetch();
+        if ($pc && ($security === '' || hash_equals((string)$pc['security_code'], $security))) {
+            return ['pc', $assetId, $pc];
+        }
     }
+
     return ['', '', []];
+}
+
+function validate_maintenance_asset_scan_location(PDO $pdo, int $maintenanceAssetId, ?float $scanLat, ?float $scanLng): ?string
+{
+    if (!db_table_exists($pdo, 'maintenance_assets')) {
+        return null;
+    }
+    $stmt = $pdo->prepare('SELECT latitude, longitude, location_radius_m, location_label, name FROM maintenance_assets WHERE id=?');
+    $stmt->execute([$maintenanceAssetId]);
+    $ma = $stmt->fetch();
+    if (!$ma || $ma['latitude'] === null || $ma['longitude'] === null || $ma['latitude'] === '' || $ma['longitude'] === '') {
+        return null;
+    }
+    if ($scanLat === null || $scanLng === null) {
+        return 'GPS teknisi belum terbaca. Aktifkan izin Location/GPS di browser lalu scan ulang.';
+    }
+    $radius = max(1, (int)($ma['location_radius_m'] ?? 5));
+    if (!function_exists('geo_distance_m')) {
+        return null;
+    }
+    $distance = geo_distance_m((float)$ma['latitude'], (float)$ma['longitude'], $scanLat, $scanLng);
+    if ($distance > $radius) {
+        return 'Scan ditolak. Jarak dari titik aset ' . round($distance, 1) . ' meter, maksimal ' . $radius . ' meter' . ($ma['location_label'] ? ' (' . $ma['location_label'] . ')' : '') . '.';
+    }
+    return null;
 }
 
 function add_timeline(PDO $pdo, int $scheduleId, string $eventType, string $note = '', ?int $actorUserId = null): void

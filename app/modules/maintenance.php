@@ -1152,6 +1152,19 @@ function handle_route_schedule_form(PDO $pdo): void
 
         $pcId = !empty($ma['pc_id']) ? $ma['pc_id'] : null;
         $printerId = !empty($ma['printer_id']) ? $ma['printer_id'] : null;
+
+        // Auto-link ke PC jika ma.pc_id kosong tapi NIK cocok di tabel pcs
+        if (!$pcId && !empty($ma['employee_nik']) && db_table_exists($pdo, 'pcs')) {
+            $matchedPcStmt = $pdo->prepare('SELECT pc_id FROM pcs WHERE employee_nik = ? AND employee_nik <> "" LIMIT 1');
+            $matchedPcStmt->execute([$ma['employee_nik']]);
+            $foundPcId = (string)($matchedPcStmt->fetchColumn() ?: '');
+            if ($foundPcId !== '') {
+                $pcId = $foundPcId;
+                try {
+                    $pdo->prepare('UPDATE maintenance_assets SET pc_id = ? WHERE id = ?')->execute([$pcId, $maintenanceAssetId]);
+                } catch (Throwable $ignored) {}
+            }
+        }
         $assetType = $pcId ? 'pc' : ($printerId ? 'printer' : ($ma['maintenance_type'] ?: 'equipment'));
         $assetGroupId = (int)($ma['asset_group_id'] ?: $selectedGroupId);
         if ($assetGroupId <= 0 && ($pcId || $printerId)) {
