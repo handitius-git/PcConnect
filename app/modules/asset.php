@@ -2965,8 +2965,10 @@ function asset_identifier_master_page(PDO $pdo, array $user): void
             flash('Komoditas, Kategori, Kode Identifier, dan Nama Identifier wajib diisi.', 'err');
             redirect_to('asset_identifiers', $id ? ['id' => $id] : []);
         }
-        $p = [$type, $code, $name, $_POST['data_type'] ?? 'text', isset($_POST['is_required']) ? 1 : 0, isset($_POST['is_unique']) ? 1 : 0, isset($_POST['is_searchable']) ? 1 : 0, max(1, (int)($_POST['display_order'] ?? 1))];
-        $sql = $id ? 'UPDATE asset_type_identifiers SET asset_type_id=?,identifier_code=?,identifier_name=?,data_type=?,is_required=?,is_unique=?,is_searchable=?,display_order=? WHERE id=?' : 'INSERT INTO asset_type_identifiers(asset_type_id,identifier_code,identifier_name,data_type,is_required,is_unique,is_searchable,display_order) VALUES (?,?,?,?,?,?,?,?)';
+        $p = [$groupId, $type, $code, $name, $_POST['data_type'] ?? 'text', isset($_POST['is_required']) ? 1 : 0, isset($_POST['is_unique']) ? 1 : 0, isset($_POST['is_searchable']) ? 1 : 0, max(1, (int)($_POST['display_order'] ?? 1))];
+        $sql = $id 
+            ? 'UPDATE asset_type_identifiers SET asset_group_id=?,asset_type_id=?,identifier_code=?,identifier_name=?,data_type=?,is_required=?,is_unique=?,is_searchable=?,display_order=? WHERE id=?' 
+            : 'INSERT INTO asset_type_identifiers(asset_group_id,asset_type_id,identifier_code,identifier_name,data_type,is_required,is_unique,is_searchable,display_order) VALUES (?,?,?,?,?,?,?,?,?)';
         if ($id) {
             $p[] = $id;
         }
@@ -2982,31 +2984,84 @@ function asset_identifier_master_page(PDO $pdo, array $user): void
     $edit = null;
     $editGroupId = 0;
     if (($editId = (int)($_GET['id'] ?? 0)) > 0) {
-        $stmt = $pdo->prepare('SELECT ati.*, t.asset_group_id FROM asset_type_identifiers ati JOIN asset_types t ON t.id=ati.asset_type_id WHERE ati.id = ?');
+        $stmt = $pdo->prepare('SELECT ati.*, COALESCE(ati.asset_group_id, t.asset_group_id) AS effective_group_id 
+                               FROM asset_type_identifiers ati 
+                               JOIN asset_types t ON t.id = ati.asset_type_id 
+                               WHERE ati.id = ?');
         $stmt->execute([$editId]);
         $edit = $stmt->fetch(PDO::FETCH_ASSOC);
         if ($edit) {
-            $editGroupId = (int)$edit['asset_group_id'];
+            $editGroupId = (int)$edit['effective_group_id'];
         }
+    }
+
+    // Filter parameters
+    $filterGroup = (int)($_GET['group_id'] ?? 0);
+    $filterType = (int)($_GET['type_id'] ?? 0);
+    $filterQ = trim((string)($_GET['q'] ?? ''));
+
+    $where = ["1=1"];
+    $params = [];
+    if ($filterGroup > 0) {
+        $where[] = "(COALESCE(i.asset_group_id, t.asset_group_id) = ?)";
+        $params[] = $filterGroup;
+    }
+    if ($filterType > 0) {
+        $where[] = "i.asset_type_id = ?";
+        $params[] = $filterType;
+    }
+    if ($filterQ !== '') {
+        $where[] = "(i.identifier_code LIKE ? OR i.identifier_name LIKE ? OR t.type_name LIKE ?)";
+        $params[] = "%{$filterQ}%";
+        $params[] = "%{$filterQ}%";
+        $params[] = "%{$filterQ}%";
+    }
+
+    $sql = "SELECT i.*, t.type_name, t.type_code, t.asset_group_id AS t_group_id,
+            COALESCE(i.asset_group_id, t.asset_group_id) AS effective_group_id,
+            ag.group_name, ag.group_code,
+            (SELECT COUNT(DISTINCT aid.asset_item_id) FROM asset_identifiers aid WHERE aid.asset_type_identifier_id = i.id AND aid.identifier_value != '') AS unit_count
+            FROM asset_type_identifiers i 
+            JOIN asset_types t ON t.id = i.asset_type_id 
+            LEFT JOIN asset_groups ag ON ag.id = COALESCE(i.asset_group_id, t.asset_group_id)
+            WHERE " . implode(' AND ', $where) . "
+            ORDER BY COALESCE(ag.id, 999) ASC, t.type_name ASC, i.display_order ASC, i.id ASC";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Count per category
+    $catCounts = [];
+    $groupCounts = [];
+    foreach ($rows as $r) {
+        $tid = (int)$r['asset_type_id'];
+        $gid = (int)$r['effective_group_id'];
+        $catCounts[$tid] = ($catCounts[$tid] ?? 0) + 1;
+        $groupCounts[$gid] = ($groupCounts[$gid] ?? 0) + 1;
     }
 
     render_header('Identifier Aset', $user);
     echo asset_nav_html();
+
+    // Form Section
     echo '<section class="panel"><div class="split"><h1>' . ($edit ? 'Edit' : 'Tambah') . ' Identifier Aset</h1>';
     if ($edit) {
         echo '<a class="btn" href="' . route_url('asset_identifiers') . '">+ Tambah Identifier Baru</a>';
     }
-    echo '</div><form method="post" style="margin-top:14px"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="id" value="' . (int)($edit['id'] ?? 0) . '">';
+    echo '</div><form method="post" style="margin-top:14px"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" id="idfEditId" name="id" value="' . (int)($edit['id'] ?? 0) . '">';
     
-    // Harus isi Komoditas dan Kategori terlebih dahulu
+    // Group and Category selection
     echo '<div class="grid two">';
     echo '<label>Komoditas (Grup Aset) *<select id="idfGroup" name="asset_group_id" onchange="onIdfGroupChanged()" required>' . asset_group_options($pdo, $editGroupId, true, '- Pilih Komoditas (Grup Aset) -') . '</select></label>';
-    echo '<label>Kategori (Tipe Aset) *<select id="idfType" name="asset_type_id" required>' . asset_type_options($pdo, (int)($edit['asset_type_id'] ?? 0), $editGroupId, true, $editGroupId ? '- Pilih Kategori -' : '- Pilih Komoditas Terlebih Dahulu -') . '</select></label>';
+    echo '<label>Kategori (Tipe Aset) *<select id="idfType" name="asset_type_id" onchange="onIdfTypeChanged()" required>' . asset_type_options($pdo, (int)($edit['asset_type_id'] ?? 0), $editGroupId, true, $editGroupId ? '- Pilih Kategori -' : '- Pilih Komoditas Terlebih Dahulu -', true) . '</select></label>';
     echo '</div>';
 
+    // Existing Identifiers Notice in this category
+    echo '<div id="idfExistingNotice" style="display:none;margin-bottom:12px"></div>';
+
     echo '<div class="grid two">';
-    echo '<label>Kode Identifier *<input name="identifier_code" required value="' . e($edit['identifier_code'] ?? '') . '" placeholder="Contoh: SERIAL, MAC, IMEI, PLAT"></label>';
-    echo '<label>Nama Identifier *<input name="identifier_name" required value="' . e($edit['identifier_name'] ?? '') . '" placeholder="Contoh: Serial Number, MAC Address, Nomor Polisi"></label>';
+    echo '<label>Kode Identifier *<input id="idfCodeInput" name="identifier_code" required value="' . e($edit['identifier_code'] ?? '') . '" placeholder="Contoh: SERIAL, MAC, IMEI, PLAT, VIN, ENGINE, KIR" oninput="checkIdfCodeDuplicate()"><div id="idfCodeWarn" style="display:none;color:#dc2626;font-size:12px;margin-top:4px;font-weight:600;"></div></label>';
+    echo '<label>Nama Identifier *<input id="idfNameInput" name="identifier_name" required value="' . e($edit['identifier_name'] ?? '') . '" placeholder="Contoh: Serial Number, MAC Address, Nomor Polisi, Nomor Rangka"></label>';
     echo '</div>';
 
     echo '<div class="grid four">';
@@ -3025,14 +3080,19 @@ function asset_identifier_master_page(PDO $pdo, array $user): void
     if ($edit) {
         echo '<a class="btn" href="' . route_url('asset_identifiers') . '">Batal</a> ';
     }
-    echo '<button class="btn primary">Simpan Identifier</button>';
+    echo '<button class="btn primary" id="idfSubmitBtn">Simpan Identifier</button>';
     echo '</div></form></section>';
 
-    // JavaScript to dynamically populate Kategori when Komoditas changes
+    // JavaScript for dynamic loading, notice, and real-time client filtering
     echo '<script>
+    window.currentCategoryIdfs = [];
+
     window.onIdfGroupChanged = async function(){
         var idfGroup = document.getElementById("idfGroup");
         var idfType = document.getElementById("idfType");
+        var notice = document.getElementById("idfExistingNotice");
+        window.currentCategoryIdfs = [];
+        if(notice) notice.style.display = "none";
         if(!idfGroup || !idfType) return;
         var gid = parseInt(idfGroup.value, 10) || 0;
         if(gid === 0){
@@ -3052,44 +3112,222 @@ function asset_identifier_master_page(PDO $pdo, array $user): void
                 h = "<option value=\"\">- Belum ada kategori untuk komoditas ini -</option>";
             }
             idfType.innerHTML = h;
+            onIdfTypeChanged();
         } catch(e){
             console.error("Gagal load kategori:", e);
         }
     };
+
+    window.onIdfTypeChanged = async function(){
+        var idfType = document.getElementById("idfType");
+        var idfGroup = document.getElementById("idfGroup");
+        var notice = document.getElementById("idfExistingNotice");
+        if(!idfType || !notice) return;
+        var tid = parseInt(idfType.value, 10) || 0;
+        var gid = idfGroup ? (parseInt(idfGroup.value, 10) || 0) : 0;
+        if(tid <= 0){
+            notice.style.display = "none";
+            notice.innerHTML = "";
+            window.currentCategoryIdfs = [];
+            checkIdfCodeDuplicate();
+            return;
+        }
+        try {
+            var r = await fetch("index.php?route=api_asset_type_config&type_id=" + tid + "&group_id=" + gid);
+            var data = await r.json();
+            window.currentCategoryIdfs = (data && Array.isArray(data.identifiers)) ? data.identifiers : [];
+            if(window.currentCategoryIdfs.length > 0){
+                var badges = window.currentCategoryIdfs.map(function(item){
+                    var reqMark = item.is_required == 1 ? " *" : "";
+                    return "<span class=\"badge\" style=\"background:#e0f2fe;color:#0369a1;margin-right:5px;margin-bottom:4px;display:inline-block;padding:3px 8px;border:1px solid #bae6fd;font-size:11px;\">" + 
+                           "<strong>" + (item.identifier_code || "") + "</strong>: " + (item.identifier_name || "") + reqMark + "</span>";
+                }).join(" ");
+                notice.innerHTML = "<div style=\"padding:8px 12px;background:#f0f9ff;border-left:3px solid #0284c7;border-radius:4px;\">" +
+                                   "<strong style=\"color:#0369a1;font-size:12px;\">Identifier yang sudah terdaftar di kategori ini:</strong>" +
+                                   "<div style=\"margin-top:5px;display:flex;flex-wrap:wrap;\">" + badges + "</div>" +
+                                   "</div>";
+                notice.style.display = "block";
+            } else {
+                notice.style.display = "none";
+                notice.innerHTML = "";
+            }
+        } catch(e){
+            console.error("Gagal load identifier:", e);
+        }
+        checkIdfCodeDuplicate();
+    };
+
+    window.checkIdfCodeDuplicate = function(){
+        var codeInp = document.getElementById("idfCodeInput");
+        var warn = document.getElementById("idfCodeWarn");
+        var editId = parseInt((document.getElementById("idfEditId") || {}).value, 10) || 0;
+        if(!codeInp || !warn) return;
+        var val = codeInp.value.toUpperCase().trim();
+        if(val === "" || !Array.isArray(window.currentCategoryIdfs) || window.currentCategoryIdfs.length === 0){
+            warn.style.display = "none";
+            warn.innerText = "";
+            return;
+        }
+        var found = window.currentCategoryIdfs.find(function(s){
+            return (s.identifier_code || "").toUpperCase() === val && parseInt(s.id, 10) !== editId;
+        });
+        if(found){
+            warn.innerText = "⚠️ Kode \"" + val + "\" sudah digunakan di kategori ini (" + found.identifier_name + "). Kode harus unik per kategori!";
+            warn.style.display = "block";
+        } else {
+            warn.style.display = "none";
+            warn.innerText = "";
+        }
+    };
+
+    window.filterIdfTableClient = function(){
+        var grpVal = (document.getElementById("filterTableGroup") || {}).value || "";
+        var typVal = (document.getElementById("filterTableType") || {}).value || "";
+        var qVal = ((document.getElementById("filterTableSearch") || {}).value || "").toLowerCase().trim();
+        var rows = document.querySelectorAll("#idfTableBody tr.idf-row");
+        var groupHeaders = document.querySelectorAll("#idfTableBody tr.idf-group-header");
+
+        var visibleTypes = {};
+
+        rows.forEach(function(row){
+            var rGrp = row.getAttribute("data-group-id") || "";
+            var rTyp = row.getAttribute("data-type-id") || "";
+            var rText = (row.getAttribute("data-search") || "").toLowerCase();
+            var matchGrp = (!grpVal || rGrp === grpVal);
+            var matchTyp = (!typVal || rTyp === typVal);
+            var matchQ = (!qVal || rText.indexOf(qVal) !== -1);
+            var show = (matchGrp && matchTyp && matchQ);
+            row.style.display = show ? "" : "none";
+            if(show){
+                visibleTypes[rTyp] = true;
+            }
+        });
+
+        groupHeaders.forEach(function(gh){
+            var gTyp = gh.getAttribute("data-type-id") || "";
+            gh.style.display = visibleTypes[gTyp] ? "" : "none";
+        });
+    };
+
+    window.onFilterGroupChanged = async function(gid){
+        var fType = document.getElementById("filterTableType");
+        if(fType){
+            var sel = fType.value;
+            for(var i=0; i<fType.options.length; i++){
+                var opt = fType.options[i];
+                if(!opt.value){ opt.style.display = ""; continue; }
+                var optG = opt.getAttribute("data-group") || "";
+                if(!gid || optG === gid){
+                    opt.style.display = "";
+                } else {
+                    opt.style.display = "none";
+                    if(opt.selected) opt.selected = false;
+                }
+            }
+        }
+        window.filterIdfTableClient();
+    };
+
+    document.addEventListener("DOMContentLoaded", function(){
+        var idfType = document.getElementById("idfType");
+        if(idfType && idfType.value){
+            onIdfTypeChanged();
+        }
+    });
     </script>';
 
-    echo '<section class="panel"><h2>Daftar Identifier Aset</h2><table><thead><tr><th>ID</th><th>Komoditas (Grup)</th><th>Kategori (Tipe)</th><th>Kode Identifier</th><th>Nama Identifier</th><th>Tipe Data</th><th>Required</th><th>Unique</th><th>Total Unit Terisi</th><th>Order</th><th>Aksi</th></tr></thead><tbody>';
+    // Table Section with Grouping & Filters
+    echo '<section class="panel">';
+    echo '<div class="split" style="margin-bottom:12px;align-items:center;flex-wrap:wrap;gap:8px;">';
+    echo '<div style="display:flex;align-items:center;gap:10px;">';
+    echo '<h2 style="margin:0;">Daftar Identifier Aset</h2>';
+    echo '<span class="badge ok" style="font-size:12px;">' . count($rows) . ' Identifier</span>';
+    echo '<span class="badge" style="background:#f1f5f9;color:#475569;font-size:12px;">' . count($catCounts) . ' Kategori</span>';
+    echo '</div>';
 
-    $rows = $pdo->query('SELECT i.*, t.type_name, t.type_code, ag.group_name, ag.group_code,
-        (SELECT COUNT(DISTINCT aid.asset_item_id) FROM asset_identifiers aid WHERE aid.asset_type_identifier_id = i.id AND aid.identifier_value != "") AS unit_count
-        FROM asset_type_identifiers i 
-        JOIN asset_types t ON t.id=i.asset_type_id 
-        LEFT JOIN asset_groups ag ON ag.id=t.asset_group_id
-        ORDER BY ag.group_name ASC, t.type_name ASC, i.display_order ASC')->fetchAll();
-
-    foreach ($rows as $r) {
-        $delBtn = '<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus Identifier ini?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><button class="btn danger" style="padding:4px 8px;font-size:12px">Hapus</button></form>';
-        $uCnt = (int)($r['unit_count'] ?? 0);
-        $unitLink = $uCnt > 0 
-            ? '<a href="' . route_url('asset_items', ['type_id' => $r['asset_type_id']]) . '" class="badge ok" style="text-decoration:none;">' . $uCnt . ' Unit</a>' 
-            : '<span class="muted">0 Unit</span>';
-        $grpName = !empty($r['group_name']) ? ('<span class="badge" style="background:#e0f2fe;color:#0369a1;">' . e($r['group_code'] . ' - ' . $r['group_name']) . '</span>') : '-';
-
-        echo '<tr>'
-            . '<td>' . e($r['id']) . '</td>'
-            . '<td>' . $grpName . '</td>'
-            . '<td><strong>' . e($r['type_name']) . '</strong><br><span class="muted" style="font-size:11px;">' . e($r['type_code']) . '</span></td>'
-            . '<td><strong>' . e($r['identifier_code']) . '</strong></td>'
-            . '<td>' . e($r['identifier_name']) . '</td>'
-            . '<td><code>' . e($r['data_type']) . '</code></td>'
-            . '<td>' . (!empty($r['is_required']) ? '<span class="badge danger">Ya</span>' : 'Tidak') . '</td>'
-            . '<td>' . (!empty($r['is_unique']) ? '<span class="badge ok">Ya</span>' : 'Tidak') . '</td>'
-            . '<td>' . $unitLink . '</td>'
-            . '<td>' . e($r['display_order']) . '</td>'
-            . '<td><div class="actions" style="display:flex;gap:6px;align-items:center;"><a class="btn" href="' . route_url('asset_identifiers', ['id' => $r['id']]) . '">Edit</a> ' . $delBtn . '</div></td>'
-            . '</tr>';
+    echo '<form method="get" class="actions" style="margin:0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">';
+    echo '<input type="hidden" name="route" value="asset_identifiers">';
+    echo '<select id="filterTableGroup" name="group_id" onchange="onFilterGroupChanged(this.value); this.form.submit();">';
+    echo asset_group_options($pdo, $filterGroup, true, 'Semua Komoditas');
+    echo '</select>';
+    echo '<select id="filterTableType" name="type_id" onchange="this.form.submit()">';
+    echo asset_type_options($pdo, $filterType, $filterGroup, true, 'Semua Kategori', true);
+    echo '</select>';
+    echo '<input id="filterTableSearch" name="q" value="' . e($filterQ) . '" placeholder="Cari kode / nama identifier..." style="width:200px" oninput="filterIdfTableClient()">';
+    echo '<button class="btn">Filter</button>';
+    if ($filterGroup || $filterType || $filterQ !== '') {
+        echo '<a class="btn" href="' . route_url('asset_identifiers') . '">Reset</a>';
     }
-    echo '</tbody></table></section>';
+    echo '</form>';
+    echo '</div>';
+
+    if (empty($rows)) {
+        echo '<div style="padding:30px;text-align:center;color:#64748b;background:#f8fafc;border-radius:8px;border:1px dashed #cbd5e1;margin-top:10px;">Belum ada Identifier Aset yang sesuai dengan filter pencarian.</div>';
+    } else {
+        echo '<table style="margin-top:10px;"><thead><tr><th>ID</th><th>Komoditas</th><th>Kategori</th><th>Kode Identifier</th><th>Nama Identifier</th><th>Tipe Data</th><th>Required</th><th>Unique</th><th>Searchable</th><th>Total Unit</th><th>Order</th><th>Aksi</th></tr></thead><tbody id="idfTableBody">';
+
+        $lastTypeId = null;
+        foreach ($rows as $r) {
+            $curTypeId = (int)$r['asset_type_id'];
+            $curGroupId = (int)$r['effective_group_id'];
+            $gCode = strtoupper(trim((string)$r['group_code']));
+
+            // Color theme based on Commodity
+            $badgeBg = '#e0f2fe';
+            $badgeColor = '#0369a1';
+            $catHeaderBg = '#f0f9ff';
+            $catBorder = '#bae6fd';
+            if ($gCode === 'VH') {
+                $badgeBg = '#dcfce7';
+                $badgeColor = '#166534';
+                $catHeaderBg = '#f0fdf4';
+                $catBorder = '#bbf7d0';
+            } elseif ($gCode === 'FC') {
+                $badgeBg = '#fef3c7';
+                $badgeColor = '#92400e';
+                $catHeaderBg = '#fffbeb';
+                $catBorder = '#fde68a';
+            }
+
+            // Category Group Header
+            if ($lastTypeId !== $curTypeId) {
+                $lastTypeId = $curTypeId;
+                $catTotal = (int)($catCounts[$curTypeId] ?? 0);
+                echo '<tr class="idf-group-header" data-group-id="' . $curGroupId . '" data-type-id="' . $curTypeId . '" style="background:' . $catHeaderBg . ';border-top:2px solid ' . $catBorder . ';border-bottom:1px solid ' . $catBorder . ';">';
+                echo '<td colspan="12" style="padding:8px 14px;font-weight:700;">';
+                echo '<span class="badge" style="background:' . $badgeBg . ';color:' . $badgeColor . ';margin-right:8px;font-size:11px;">[' . e($r['group_code'] ?: 'KOM') . '] ' . e($r['group_name'] ?: 'Umum') . '</span>';
+                echo '<span style="font-size:13px;color:#0f172a;">📂 <strong>' . e($r['type_name']) . '</strong> <span style="color:#64748b;font-weight:normal;">(' . e($r['type_code']) . ')</span></span>';
+                echo '<span class="badge ok" style="margin-left:8px;font-size:11px;">' . $catTotal . ' Identifier</span>';
+                echo '</td>';
+                echo '</tr>';
+            }
+
+            $delBtn = '<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus Identifier ' . e($r['identifier_code']) . '?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><button class="btn danger" style="padding:4px 8px;font-size:12px">Hapus</button></form>';
+            $uCnt = (int)($r['unit_count'] ?? 0);
+            $unitLink = $uCnt > 0 
+                ? '<a href="' . route_url('asset_items', ['type_id' => $r['asset_type_id']]) . '" class="badge ok" style="text-decoration:none;">' . $uCnt . ' Unit</a>' 
+                : '<span class="muted">0 Unit</span>';
+            $grpBadge = !empty($r['group_name']) ? ('<span class="badge" style="background:' . $badgeBg . ';color:' . $badgeColor . ';font-size:11px;">' . e($r['group_code']) . '</span>') : '-';
+            $searchKeywords = strtolower($r['identifier_code'] . ' ' . $r['identifier_name'] . ' ' . $r['type_name'] . ' ' . $r['type_code'] . ' ' . $r['group_name']);
+
+            echo '<tr class="idf-row" data-group-id="' . $curGroupId . '" data-type-id="' . $curTypeId . '" data-search="' . e($searchKeywords) . '">'
+                . '<td>' . e($r['id']) . '</td>'
+                . '<td>' . $grpBadge . '</td>'
+                . '<td><strong>' . e($r['type_name']) . '</strong></td>'
+                . '<td><strong style="color:#0369a1;font-family:monospace;font-size:13px;">' . e($r['identifier_code']) . '</strong></td>'
+                . '<td>' . e($r['identifier_name']) . '</td>'
+                . '<td><code>' . e($r['data_type']) . '</code></td>'
+                . '<td>' . (!empty($r['is_required']) ? '<span class="badge danger">Wajib</span>' : '<span class="muted">Opsional</span>') . '</td>'
+                . '<td>' . (!empty($r['is_unique']) ? '<span class="badge ok">Unik</span>' : '<span class="muted">-</span>') . '</td>'
+                . '<td>' . (!empty($r['is_searchable']) ? '<span class="badge ok">Ya</span>' : '<span class="muted">-</span>') . '</td>'
+                . '<td>' . $unitLink . '</td>'
+                . '<td>' . e($r['display_order']) . '</td>'
+                . '<td><div class="actions" style="display:flex;gap:6px;align-items:center;"><a class="btn" href="' . route_url('asset_identifiers', ['id' => $r['id']]) . '">Edit</a> ' . $delBtn . '</div></td>'
+                . '</tr>';
+        }
+        echo '</tbody></table>';
+    }
+    echo '</section>';
     render_footer();
 }
 

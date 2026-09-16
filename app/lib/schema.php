@@ -639,12 +639,7 @@ function ensure_asset_master_schema(PDO $pdo): void
         }
         // Auto-repair asset_types asset_group_id to correct groups
         repair_asset_type_groups($pdo);
-        foreach ([['CMP','SERIAL','Serial Number',0,1],['CMP','HOSTNAME','Hostname',0,1],['CMP','MAC','MAC Address',0,1],['CAR','PLATE','License Plate',1,1],['CAR','ENGINE','Engine Number',1,1],['CAR','VIN','Chassis / VIN',1,1]] as [$type,$code,$name,$required,$unique]) {
-            try {
-                $s = $pdo->prepare('INSERT IGNORE INTO asset_type_identifiers(asset_type_id,identifier_code,identifier_name,is_required,is_unique,display_order) SELECT id,?,?,?,?,? FROM asset_types WHERE type_code=?');
-                $s->execute([$code,$name,$required,$unique,1,$type]);
-            } catch (Throwable $ignored) {}
-        }
+        ensure_default_identifiers_per_group_and_type($pdo);
         $defaultSpecs = [
             ['CMP', 'CPU', 'Processor (CPU)', 'text', 0, 1, 1],
             ['CMP', 'RAM', 'RAM / Memori', 'text', 0, 1, 2],
@@ -1087,7 +1082,7 @@ function ensure_performance_indexes(PDO $pdo): void
 function ensure_app_schema(PDO $pdo, bool $force = false): void
 {
     if (!$force && empty($_GET['force_schema'])) {
-        $lockFile = sys_get_temp_dir() . '/pcconnect_schema_v13.lock';
+        $lockFile = sys_get_temp_dir() . '/pcconnect_schema_v14.lock';
         if (file_exists($lockFile) && (time() - filemtime($lockFile) < 1800) && db_table_exists($pdo, 'pcs')) {
             return;
         }
@@ -1103,6 +1098,7 @@ function ensure_app_schema(PDO $pdo, bool $force = false): void
     ensure_company_source_schema($pdo);
     ensure_asset_management_schema($pdo);
     ensure_asset_master_schema($pdo);
+    ensure_default_identifiers_per_group_and_type($pdo);
     ensure_brand_and_master_item_schema($pdo);
     ensure_maintenance_asset_schema($pdo);
     cleanup_unsynced_pc_maintenance_assets($pdo);
@@ -1112,7 +1108,7 @@ function ensure_app_schema(PDO $pdo, bool $force = false): void
     ensure_unified_asset_schema($pdo);
     ensure_performance_indexes($pdo);
 
-    @touch(sys_get_temp_dir() . '/pcconnect_schema_v13.lock');
+    @touch(sys_get_temp_dir() . '/pcconnect_schema_v14.lock');
 }
 
 function ensure_user_roles_schema(PDO $pdo): void
@@ -1835,6 +1831,148 @@ function ensure_default_brands_per_group_and_type(PDO $pdo): void
             if ($existingId <= 0) {
                 try {
                     $insBrandStmt->execute([$gId, $tId, $bCode, $bName, $desc]);
+                } catch (Throwable $ignored) {}
+            }
+        }
+    } catch (Throwable $ignored) {}
+}
+
+function ensure_default_identifiers_per_group_and_type(PDO $pdo): void
+{
+    try {
+        if (!db_table_exists($pdo, 'asset_type_identifiers') || !db_table_exists($pdo, 'asset_groups') || !db_table_exists($pdo, 'asset_types')) {
+            return;
+        }
+
+        // 1. Kolom asset_group_id pada asset_type_identifiers
+        if (!db_column_exists($pdo, 'asset_type_identifiers', 'asset_group_id')) {
+            try {
+                $pdo->exec("ALTER TABLE asset_type_identifiers ADD COLUMN asset_group_id INT NULL AFTER id");
+                $pdo->exec("ALTER TABLE asset_type_identifiers ADD INDEX idx_ati_group (asset_group_id)");
+            } catch (Throwable $ignored) {}
+        }
+
+        // 2. Backfill asset_group_id dari tabel asset_types
+        try {
+            $pdo->exec("UPDATE asset_type_identifiers ati 
+                        JOIN asset_types t ON t.id = ati.asset_type_id 
+                        SET ati.asset_group_id = t.asset_group_id 
+                        WHERE ati.asset_group_id IS NULL OR ati.asset_group_id = 0");
+        } catch (Throwable $ignored) {}
+
+        // 3. Ambil peta grup dan kategori
+        $groups = [];
+        foreach ($pdo->query("SELECT id, UPPER(TRIM(group_code)) AS code FROM asset_groups")->fetchAll(PDO::FETCH_ASSOC) as $g) {
+            $groups[$g['code']] = (int)$g['id'];
+        }
+
+        $types = [];
+        foreach ($pdo->query("SELECT id, asset_group_id, UPPER(TRIM(type_code)) AS code FROM asset_types")->fetchAll(PDO::FETCH_ASSOC) as $t) {
+            $types[$t['asset_group_id'] . '_' . $t['code']] = (int)$t['id'];
+        }
+
+        // 4. Katalog default identifier per komoditas & kategori
+        // Format: [GroupCode, TypeCode, IdentifierCode, IdentifierName, DataType, IsRequired, IsUnique, IsSearchable, DisplayOrder]
+        $catalog = [
+            // IT Asset - Computer / Desktop (CMP)
+            ['IT', 'CMP', 'SERIAL', 'Serial Number', 'text', 0, 1, 1, 1],
+            ['IT', 'CMP', 'HOSTNAME', 'Hostname / Computer Name', 'text', 0, 1, 1, 2],
+            ['IT', 'CMP', 'MAC', 'MAC Address LAN / Ethernet', 'text', 0, 1, 1, 3],
+            ['IT', 'CMP', 'IP_ADDR', 'IP Address Statis', 'ip', 0, 0, 1, 4],
+
+            // IT Asset - Notebook / Laptop (NBK)
+            ['IT', 'NBK', 'SERIAL', 'Serial Number Unit Laptop', 'text', 1, 1, 1, 1],
+            ['IT', 'NBK', 'HOSTNAME', 'Hostname Laptop', 'text', 0, 1, 1, 2],
+            ['IT', 'NBK', 'MAC_WIFI', 'MAC Address Wi-Fi / WLAN', 'text', 0, 1, 1, 3],
+            ['IT', 'NBK', 'SERVICE_TAG', 'Service Tag / Serial Vendor', 'text', 0, 1, 1, 4],
+
+            // IT Asset - Printer (PRT)
+            ['IT', 'PRT', 'SERIAL', 'Serial Number Printer', 'text', 1, 1, 1, 1],
+            ['IT', 'PRT', 'IP_ADDR', 'IP Address Network Printer', 'ip', 0, 0, 1, 2],
+            ['IT', 'PRT', 'MAC', 'MAC Address Network / LAN', 'text', 0, 1, 1, 3],
+            ['IT', 'PRT', 'USB_ID', 'Hardware ID / USB Serial', 'text', 0, 0, 1, 4],
+
+            // IT Asset - Server (SRV)
+            ['IT', 'SRV', 'SERVICE_TAG', 'Service Tag / Serial Hardware', 'text', 1, 1, 1, 1],
+            ['IT', 'SRV', 'HOSTNAME', 'Server Hostname / FQDN', 'text', 1, 1, 1, 2],
+            ['IT', 'SRV', 'ILO_IP', 'IP Remote Mgmt (iLO / iDRAC)', 'ip', 0, 1, 1, 3],
+            ['IT', 'SRV', 'MAC_MGMT', 'MAC Address Management Port', 'text', 0, 1, 1, 4],
+
+            // IT Asset - Monitor & Display (DSP)
+            ['IT', 'DSP', 'SERIAL', 'Serial Number Panel / Display', 'text', 1, 1, 1, 1],
+            ['IT', 'DSP', 'PART_NO', 'Part Number / Model Code', 'text', 0, 0, 1, 2],
+
+            // IT Asset - Tools IT (TOOLS)
+            ['IT', 'TOOLS', 'SERIAL', 'Serial Number Alat IT', 'text', 0, 1, 1, 1],
+            ['IT', 'TOOLS', 'CALIBRATION_NO', 'Nomor Sertifikat Kalibrasi', 'text', 0, 0, 1, 2],
+
+            // Vehicle - Car / Mobil (CAR)
+            ['VH', 'CAR', 'PLATE', 'Nomor Polisi (Plat Nomor)', 'text', 1, 1, 1, 1],
+            ['VH', 'CAR', 'VIN', 'Nomor Rangka (Chassis / VIN)', 'text', 1, 1, 1, 2],
+            ['VH', 'CAR', 'ENGINE', 'Nomor Mesin (Engine No)', 'text', 1, 1, 1, 3],
+            ['VH', 'CAR', 'BPKB', 'Nomor BPKB Kendaraan', 'text', 0, 1, 1, 4],
+            ['VH', 'CAR', 'STNK', 'Nomor Registrasi STNK', 'text', 0, 1, 1, 5],
+
+            // Vehicle - Motorcycle / Motor (MTR)
+            ['VH', 'MTR', 'PLATE', 'Nomor Polisi (Plat Nomor)', 'text', 1, 1, 1, 1],
+            ['VH', 'MTR', 'VIN', 'Nomor Rangka (Chassis / VIN)', 'text', 1, 1, 1, 2],
+            ['VH', 'MTR', 'ENGINE', 'Nomor Mesin (Engine No)', 'text', 1, 1, 1, 3],
+            ['VH', 'MTR', 'BPKB', 'Nomor BPKB Sepeda Motor', 'text', 0, 1, 1, 4],
+
+            // Vehicle - Truck / Truk (TRK)
+            ['VH', 'TRK', 'PLATE', 'Nomor Polisi (Plat Nomor)', 'text', 1, 1, 1, 1],
+            ['VH', 'TRK', 'VIN', 'Nomor Rangka (Chassis / VIN)', 'text', 1, 1, 1, 2],
+            ['VH', 'TRK', 'ENGINE', 'Nomor Mesin (Engine No)', 'text', 1, 1, 1, 3],
+            ['VH', 'TRK', 'KIR', 'Nomor Uji Berkala (Buku KIR)', 'text', 1, 1, 1, 4],
+            ['VH', 'TRK', 'BPKB', 'Nomor BPKB Truk', 'text', 0, 1, 1, 5],
+
+            // Facility - AC / Pendingin (AC)
+            ['FC', 'AC', 'TAG_NO', 'Nomor Tag / Kode AC Ruangan', 'text', 1, 1, 1, 1],
+            ['FC', 'AC', 'SERIAL_INDOOR', 'Serial Number Unit Indoor', 'text', 0, 1, 1, 2],
+            ['FC', 'AC', 'SERIAL_OUTDOOR', 'Serial Number Unit Outdoor', 'text', 0, 1, 1, 3],
+
+            // Facility - Gedung / Bangunan (BLD)
+            ['FC', 'BLD', 'BUILDING_CODE', 'Kode Gedung / Sayap / Lantai', 'text', 1, 1, 1, 1],
+            ['FC', 'BLD', 'CERT_NO', 'Nomor Sertifikat / IMB / PBB', 'text', 0, 1, 1, 2],
+            ['FC', 'BLD', 'PLN_ID', 'ID Pelanggan PLN / Meteran Listrik', 'text', 0, 1, 1, 3],
+            ['FC', 'BLD', 'PAM_ID', 'ID Pelanggan Air PAM / Meteran', 'text', 0, 1, 1, 4],
+
+            // Facility - Generator / Genset (GEN)
+            ['FC', 'GEN', 'TAG_NO', 'Nomor Tag Unit Genset', 'text', 1, 1, 1, 1],
+            ['FC', 'GEN', 'SERIAL', 'Serial Number Genset', 'text', 0, 1, 1, 2],
+            ['FC', 'GEN', 'ENGINE_NO', 'Nomor Seri Mesin Diesel', 'text', 0, 1, 1, 3],
+            ['FC', 'GEN', 'GENERATOR_NO', 'Nomor Seri Alternator Dinamo', 'text', 0, 1, 1, 4],
+
+            // Facility - Fasilitas Umum / Tools (FC)
+            ['FC', 'FC', 'TAG_NO', 'Nomor Tag Fasilitas / Inventaris', 'text', 1, 1, 1, 1],
+            ['FC', 'FC', 'SERIAL', 'Serial Number Alat / Mesin', 'text', 0, 1, 1, 2],
+
+            // Facility - Monitor & Display (DSP)
+            ['FC', 'DSP', 'SERIAL', 'Serial Number Panel / Layar', 'text', 1, 1, 1, 1],
+            ['FC', 'DSP', 'TAG_NO', 'Nomor Tag Display / TV Ruangan', 'text', 0, 1, 1, 2],
+        ];
+
+        $chkIdfStmt = $pdo->prepare("SELECT id FROM asset_type_identifiers WHERE asset_type_id = ? AND UPPER(TRIM(identifier_code)) = UPPER(TRIM(?)) LIMIT 1");
+        $insIdfStmt = $pdo->prepare("INSERT INTO asset_type_identifiers (asset_group_id, asset_type_id, identifier_code, identifier_name, data_type, is_required, is_unique, is_searchable, display_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $updIdfStmt = $pdo->prepare("UPDATE asset_type_identifiers SET asset_group_id = ? WHERE id = ? AND (asset_group_id IS NULL OR asset_group_id = 0)");
+
+        foreach ($catalog as [$gCode, $tCode, $code, $name, $dt, $req, $uniq, $search, $order]) {
+            $gId = $groups[$gCode] ?? 0;
+            $tId = $types[$gId . '_' . $tCode] ?? 0;
+            if ($gId <= 0 || $tId <= 0) {
+                continue;
+            }
+
+            $chkIdfStmt->execute([$tId, $code]);
+            $existingId = (int)$chkIdfStmt->fetchColumn();
+
+            if ($existingId <= 0) {
+                try {
+                    $insIdfStmt->execute([$gId, $tId, $code, $name, $dt, $req, $uniq, $search, $order]);
+                } catch (Throwable $ignored) {}
+            } else {
+                try {
+                    $updIdfStmt->execute([$gId, $existingId]);
                 } catch (Throwable $ignored) {}
             }
         }
