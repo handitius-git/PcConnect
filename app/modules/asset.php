@@ -3370,10 +3370,12 @@ function asset_specification_master_page(PDO $pdo, array $user): void
             redirect_to('asset_specifications', $id ? ['id' => $id] : []);
         }
 
-        $p = [$type, $code, $name, $_POST['data_type'] ?? 'text', isset($_POST['is_required']) ? 1 : 0, isset($_POST['is_searchable']) ? 1 : 0, max(1, (int)($_POST['display_order'] ?? 1))];
-        $sql = $id ? 'UPDATE asset_type_specifications SET asset_type_id=?,specification_code=?,specification_name=?,data_type=?,is_required=?,is_searchable=?,display_order=? WHERE id=?' : 'INSERT INTO asset_type_specifications(asset_type_id,specification_code,specification_name,data_type,is_required,is_searchable,display_order) VALUES (?,?,?,?,?,?,?)';
         if ($id) {
-            $p[] = $id;
+            $sql = 'UPDATE asset_type_specifications SET asset_group_id=?,asset_type_id=?,specification_code=?,specification_name=?,data_type=?,is_required=?,is_searchable=?,display_order=? WHERE id=?';
+            $p = [$groupId, $type, $code, $name, $_POST['data_type'] ?? 'text', isset($_POST['is_required']) ? 1 : 0, isset($_POST['is_searchable']) ? 1 : 0, max(1, (int)($_POST['display_order'] ?? 1)), $id];
+        } else {
+            $sql = 'INSERT INTO asset_type_specifications(asset_group_id,asset_type_id,specification_code,specification_name,data_type,is_required,is_searchable,display_order) VALUES (?,?,?,?,?,?,?,?)';
+            $p = [$groupId, $type, $code, $name, $_POST['data_type'] ?? 'text', isset($_POST['is_required']) ? 1 : 0, isset($_POST['is_searchable']) ? 1 : 0, max(1, (int)($_POST['display_order'] ?? 1))];
         }
         try {
             $pdo->prepare($sql)->execute($p);
@@ -3532,19 +3534,70 @@ function asset_specification_master_page(PDO $pdo, array $user): void
         }
     };
 
-    window.filterSpecTable = function(){
+    window.onFilterSpecGroupChanged = async function(gid){
+        var typeSel = document.getElementById("filterTableType");
+        if(!typeSel) return;
+        gid = parseInt(gid, 10) || 0;
+        if(gid === 0){
+            typeSel.innerHTML = "<option value=\"\">Semua Kategori</option>";
+            try {
+                var r = await fetch("index.php?route=api_asset_types");
+                var types = await r.json();
+                if(Array.isArray(types)){
+                    types.forEach(function(t){
+                        typeSel.innerHTML += "<option value=\"" + t.id + "\">" + (t.type_code ? t.type_code + " - " : "") + t.type_name + "</option>";
+                    });
+                }
+            } catch(e){}
+            filterSpecTableClient();
+            return;
+        }
+        typeSel.innerHTML = "<option value=\"\">Semua Kategori</option>";
+        try {
+            var r = await fetch("index.php?route=api_asset_types&group_id=" + gid);
+            var types = await r.json();
+            if(Array.isArray(types)){
+                types.forEach(function(t){
+                    typeSel.innerHTML += "<option value=\"" + t.id + "\">" + (t.type_code ? t.type_code + " - " : "") + t.type_name + "</option>";
+                });
+            }
+        } catch(e){}
+        filterSpecTableClient();
+    };
+
+    window.filterSpecTableClient = function(){
         var grpVal = (document.getElementById("filterTableGroup") || {}).value || "";
         var typVal = (document.getElementById("filterTableType") || {}).value || "";
         var qVal = ((document.getElementById("filterTableSearch") || {}).value || "").toLowerCase().trim();
-        var rows = document.querySelectorAll("#specTableBody tr");
+
+        var rows = document.querySelectorAll("#specTableBody tr.spec-row");
+        var visibleCatCount = {};
+
         rows.forEach(function(row){
             var rGrp = row.getAttribute("data-group-id") || "";
             var rTyp = row.getAttribute("data-type-id") || "";
             var rText = (row.getAttribute("data-search") || "").toLowerCase();
+
             var matchGrp = (!grpVal || rGrp === grpVal);
             var matchTyp = (!typVal || rTyp === typVal);
             var matchQ = (!qVal || rText.indexOf(qVal) !== -1);
-            row.style.display = (matchGrp && matchTyp && matchQ) ? "" : "none";
+
+            if(matchGrp && matchTyp && matchQ){
+                row.style.display = "";
+                visibleCatCount[rTyp] = (visibleCatCount[rTyp] || 0) + 1;
+            } else {
+                row.style.display = "none";
+            }
+        });
+
+        var headers = document.querySelectorAll("#specTableBody tr.spec-group-header");
+        headers.forEach(function(hdr){
+            var hTyp = hdr.getAttribute("data-type-id") || "";
+            if(visibleCatCount[hTyp] && visibleCatCount[hTyp] > 0){
+                hdr.style.display = "";
+            } else {
+                hdr.style.display = "none";
+            }
         });
     };
 
@@ -3556,61 +3609,132 @@ function asset_specification_master_page(PDO $pdo, array $user): void
     });
     </script>';
 
-    echo '<section class="panel">';
-    echo '<div class="split" style="margin-bottom:12px;">';
-    echo '<h2>Daftar Spesifikasi Aset</h2>';
-    echo '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
-    echo '<select id="filterTableGroup" onchange="filterSpecTable()" style="padding:5px 8px;font-size:12px;">';
-    echo '<option value="">Semua Komoditas</option>';
-    $groups = $pdo->query('SELECT id, group_code, group_name FROM asset_groups ORDER BY group_name')->fetchAll();
-    foreach ($groups as $g) {
-        echo '<option value="' . $g['id'] . '">' . e($g['group_code'] . ' - ' . $g['group_name']) . '</option>';
-    }
-    echo '</select>';
-    echo '<select id="filterTableType" onchange="filterSpecTable()" style="padding:5px 8px;font-size:12px;">';
-    echo '<option value="">Semua Kategori</option>';
-    $types = $pdo->query('SELECT id, type_code, type_name FROM asset_types ORDER BY type_name')->fetchAll();
-    foreach ($types as $t) {
-        echo '<option value="' . $t['id'] . '">' . e($t['type_code'] . ' - ' . $t['type_name']) . '</option>';
-    }
-    echo '</select>';
-    echo '<input id="filterTableSearch" type="search" placeholder="Cari kode/nama spesifikasi..." oninput="filterSpecTable()" style="padding:5px 8px;font-size:12px;width:200px;">';
-    echo '</div>';
-    echo '</div>';
-    
-    echo '<table><thead><tr><th>ID</th><th>Komoditas (Grup)</th><th>Kategori (Tipe)</th><th>Kode Spesifikasi</th><th>Nama Spesifikasi</th><th>Tipe Data</th><th>Required</th><th>Searchable</th><th>Total Unit Terisi</th><th>Order</th><th>Aksi</th></tr></thead><tbody id="specTableBody">';
+    $filterGroup = (int)($_GET['group_id'] ?? 0);
+    $filterType = (int)($_GET['type_id'] ?? 0);
+    $filterQ = trim((string)($_GET['q'] ?? ''));
 
-    $rows = $pdo->query('SELECT s.*, t.type_name, t.type_code, ag.id AS group_id, ag.group_name, ag.group_code,
-        (SELECT COUNT(DISTINCT asp.asset_item_id) FROM asset_specifications asp WHERE asp.asset_type_specification_id = s.id AND asp.specification_value != "") AS unit_count
+    $where = [];
+    $params = [];
+    if ($filterGroup > 0) {
+        $where[] = '(s.asset_group_id = ? OR t.asset_group_id = ?)';
+        $params[] = $filterGroup;
+        $params[] = $filterGroup;
+    }
+    if ($filterType > 0) {
+        $where[] = 's.asset_type_id = ?';
+        $params[] = $filterType;
+    }
+    if ($filterQ !== '') {
+        $where[] = '(s.specification_code LIKE ? OR s.specification_name LIKE ? OR t.type_name LIKE ? OR t.type_code LIKE ?)';
+        $qLike = '%' . $filterQ . '%';
+        $params[] = $qLike;
+        $params[] = $qLike;
+        $params[] = $qLike;
+        $params[] = $qLike;
+    }
+    $whereSql = !empty($where) ? ('WHERE ' . implode(' AND ', $where)) : '';
+
+    $stmt = $pdo->prepare("SELECT s.*, t.type_name, t.type_code, COALESCE(s.asset_group_id, t.asset_group_id) AS effective_group_id, ag.group_name, ag.group_code,
+        (SELECT COUNT(DISTINCT asp.asset_item_id) FROM asset_specifications asp WHERE asp.asset_type_specification_id = s.id AND asp.specification_value != '') AS unit_count
         FROM asset_type_specifications s 
         JOIN asset_types t ON t.id=s.asset_type_id 
-        LEFT JOIN asset_groups ag ON ag.id=t.asset_group_id
-        ORDER BY ag.group_name ASC, t.type_name ASC, s.display_order ASC')->fetchAll();
+        LEFT JOIN asset_groups ag ON ag.id=COALESCE(s.asset_group_id, t.asset_group_id)
+        $whereSql
+        ORDER BY ag.group_name ASC, t.type_name ASC, s.display_order ASC, s.id ASC");
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+    $catCounts = [];
     foreach ($rows as $r) {
-        $delBtn = '<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus Spesifikasi ini?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><button class="btn danger" style="padding:4px 8px;font-size:12px">Hapus</button></form>';
-        $uCnt = (int)($r['unit_count'] ?? 0);
-        $unitLink = $uCnt > 0 
-            ? '<a href="' . route_url('asset_items', ['type_id' => $r['asset_type_id']]) . '" class="badge ok" style="text-decoration:none;">' . $uCnt . ' Unit</a>' 
-            : '<span class="muted">0 Unit</span>';
-        $grpName = !empty($r['group_name']) ? ('<span class="badge" style="background:#e0f2fe;color:#0369a1;">' . e($r['group_code'] . ' - ' . $r['group_name']) . '</span>') : '-';
-        $searchData = strtolower($r['specification_code'] . ' ' . $r['specification_name'] . ' ' . $r['type_name'] . ' ' . ($r['group_name'] ?? ''));
-
-        echo '<tr data-group-id="' . (int)($r['group_id'] ?? 0) . '" data-type-id="' . (int)$r['asset_type_id'] . '" data-search="' . e($searchData) . '">'
-            . '<td>' . e($r['id']) . '</td>'
-            . '<td>' . $grpName . '</td>'
-            . '<td><strong>' . e($r['type_name']) . '</strong><br><span class="muted" style="font-size:11px;">' . e($r['type_code']) . '</span></td>'
-            . '<td><strong>' . e($r['specification_code']) . '</strong></td>'
-            . '<td>' . e($r['specification_name']) . '</td>'
-            . '<td><code>' . e($r['data_type']) . '</code></td>'
-            . '<td>' . (!empty($r['is_required']) ? '<span class="badge danger">Ya</span>' : 'Tidak') . '</td>'
-            . '<td>' . (!empty($r['is_searchable']) ? '<span class="badge ok">Ya</span>' : 'Tidak') . '</td>'
-            . '<td>' . $unitLink . '</td>'
-            . '<td>' . e($r['display_order']) . '</td>'
-            . '<td><div class="actions" style="display:flex;gap:6px;align-items:center;"><a class="btn" href="' . route_url('asset_specifications', ['id' => $r['id']]) . '">Edit</a> ' . $delBtn . '</div></td>'
-            . '</tr>';
+        $tid = (int)$r['asset_type_id'];
+        $catCounts[$tid] = ($catCounts[$tid] ?? 0) + 1;
     }
-    echo '</tbody></table></section>';
+
+    echo '<section class="panel">';
+    echo '<div class="split" style="margin-bottom:12px;gap:10px;flex-wrap:wrap;">';
+    echo '<h2>Daftar Spesifikasi Aset (' . count($rows) . ')</h2>';
+    echo '<form method="get" class="actions" style="margin:0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">';
+    echo '<input type="hidden" name="route" value="asset_specifications">';
+    echo '<select id="filterTableGroup" name="group_id" onchange="onFilterSpecGroupChanged(this.value); this.form.submit();">';
+    echo asset_group_options($pdo, $filterGroup, true, 'Semua Komoditas');
+    echo '</select>';
+    echo '<select id="filterTableType" name="type_id" onchange="this.form.submit()">';
+    echo asset_type_options($pdo, $filterType, $filterGroup, true, 'Semua Kategori', true);
+    echo '</select>';
+    echo '<input id="filterTableSearch" name="q" value="' . e($filterQ) . '" placeholder="Cari kode/nama spesifikasi..." style="width:200px" oninput="filterSpecTableClient()">';
+    echo '<button class="btn">Filter</button>';
+    if ($filterGroup || $filterType || $filterQ !== '') {
+        echo '<a class="btn" href="' . route_url('asset_specifications') . '">Reset</a>';
+    }
+    echo '</form>';
+    echo '</div>';
+
+    if (empty($rows)) {
+        echo '<div style="padding:30px;text-align:center;color:#64748b;background:#f8fafc;border-radius:8px;border:1px dashed #cbd5e1;margin-top:10px;">Belum ada Spesifikasi Aset yang sesuai dengan filter pencarian.</div>';
+    } else {
+        echo '<table style="margin-top:10px;"><thead><tr><th>ID</th><th>Komoditas</th><th>Kategori</th><th>Kode Spesifikasi</th><th>Nama Spesifikasi</th><th>Tipe Data</th><th>Required</th><th>Searchable</th><th>Total Unit Terisi</th><th>Order</th><th>Aksi</th></tr></thead><tbody id="specTableBody">';
+
+        $lastTypeId = null;
+        foreach ($rows as $r) {
+            $curTypeId = (int)$r['asset_type_id'];
+            $curGroupId = (int)$r['effective_group_id'];
+            $gCode = strtoupper(trim((string)$r['group_code']));
+
+            // Color theme based on Commodity
+            $badgeBg = '#e0f2fe';
+            $badgeColor = '#0369a1';
+            $catHeaderBg = '#f0f9ff';
+            $catBorder = '#bae6fd';
+            if ($gCode === 'VH') {
+                $badgeBg = '#dcfce7';
+                $badgeColor = '#166534';
+                $catHeaderBg = '#f0fdf4';
+                $catBorder = '#bbf7d0';
+            } elseif ($gCode === 'FC') {
+                $badgeBg = '#fef3c7';
+                $badgeColor = '#92400e';
+                $catHeaderBg = '#fffbeb';
+                $catBorder = '#fde68a';
+            }
+
+            // Category Group Header
+            if ($lastTypeId !== $curTypeId) {
+                $lastTypeId = $curTypeId;
+                $catTotal = (int)($catCounts[$curTypeId] ?? 0);
+                echo '<tr class="spec-group-header" data-group-id="' . $curGroupId . '" data-type-id="' . $curTypeId . '" style="background:' . $catHeaderBg . ';border-top:2px solid ' . $catBorder . ';border-bottom:1px solid ' . $catBorder . ';">';
+                echo '<td colspan="11" style="padding:8px 14px;font-weight:700;">';
+                echo '<span class="badge" style="background:' . $badgeBg . ';color:' . $badgeColor . ';margin-right:8px;font-size:11px;">[' . e($r['group_code'] ?: 'KOM') . '] ' . e($r['group_name'] ?: 'Umum') . '</span>';
+                echo '<span style="font-size:13px;color:#0f172a;">📂 <strong>' . e($r['type_name']) . '</strong> <span style="color:#64748b;font-weight:normal;">(' . e($r['type_code']) . ')</span></span>';
+                echo '<span class="badge ok" style="margin-left:8px;font-size:11px;">' . $catTotal . ' Spesifikasi</span>';
+                echo '</td>';
+                echo '</tr>';
+            }
+
+            $delBtn = '<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus Spesifikasi ' . e($r['specification_code']) . '?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><button class="btn danger" style="padding:4px 8px;font-size:12px">Hapus</button></form>';
+            $uCnt = (int)($r['unit_count'] ?? 0);
+            $unitLink = $uCnt > 0 
+                ? '<a href="' . route_url('asset_items', ['type_id' => $r['asset_type_id']]) . '" class="badge ok" style="text-decoration:none;">' . $uCnt . ' Unit</a>' 
+                : '<span class="muted">0 Unit</span>';
+            $grpBadge = !empty($r['group_name']) ? ('<span class="badge" style="background:' . $badgeBg . ';color:' . $badgeColor . ';font-size:11px;">' . e($r['group_code']) . '</span>') : '-';
+            $searchKeywords = strtolower($r['specification_code'] . ' ' . $r['specification_name'] . ' ' . $r['type_name'] . ' ' . $r['type_code'] . ' ' . $r['group_name']);
+
+            echo '<tr class="spec-row" data-group-id="' . $curGroupId . '" data-type-id="' . $curTypeId . '" data-search="' . e($searchKeywords) . '">'
+                . '<td>' . e($r['id']) . '</td>'
+                . '<td>' . $grpBadge . '</td>'
+                . '<td><strong>' . e($r['type_name']) . '</strong></td>'
+                . '<td><strong style="color:#0284c7;font-family:monospace;font-size:13px;">' . e($r['specification_code']) . '</strong></td>'
+                . '<td>' . e($r['specification_name']) . '</td>'
+                . '<td><code>' . e($r['data_type']) . '</code></td>'
+                . '<td>' . (!empty($r['is_required']) ? '<span class="badge danger">Ya</span>' : '<span class="muted">Tidak</span>') . '</td>'
+                . '<td>' . (!empty($r['is_searchable']) ? '<span class="badge ok">Ya</span>' : '<span class="muted">Tidak</span>') . '</td>'
+                . '<td>' . $unitLink . '</td>'
+                . '<td>' . e($r['display_order']) . '</td>'
+                . '<td><div class="actions" style="display:flex;gap:6px;align-items:center;"><a class="btn" href="' . route_url('asset_specifications', ['id' => $r['id']]) . '">Edit</a> ' . $delBtn . '</div></td>'
+                . '</tr>';
+        }
+        echo '</tbody></table>';
+    }
+    echo '</section>';
     render_footer();
 }
 

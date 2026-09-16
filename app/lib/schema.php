@@ -640,35 +640,7 @@ function ensure_asset_master_schema(PDO $pdo): void
         // Auto-repair asset_types asset_group_id to correct groups
         repair_asset_type_groups($pdo);
         ensure_default_identifiers_per_group_and_type($pdo);
-        $defaultSpecs = [
-            ['CMP', 'CPU', 'Processor (CPU)', 'text', 0, 1, 1],
-            ['CMP', 'RAM', 'RAM / Memori', 'text', 0, 1, 2],
-            ['CMP', 'STORAGE', 'Storage / Penyimpanan', 'text', 0, 1, 3],
-            ['CMP', 'OS', 'Sistem Operasi (OS)', 'text', 0, 1, 4],
-            ['CMP', 'GPU', 'Kartu Grafis (GPU/VGA)', 'text', 0, 1, 5],
-            ['NBK', 'CPU', 'Processor (CPU)', 'text', 0, 1, 1],
-            ['NBK', 'RAM', 'RAM / Memori', 'text', 0, 1, 2],
-            ['NBK', 'STORAGE', 'Storage / Penyimpanan', 'text', 0, 1, 3],
-            ['NBK', 'OS', 'Sistem Operasi (OS)', 'text', 0, 1, 4],
-            ['NBK', 'GPU', 'Kartu Grafis (GPU/VGA)', 'text', 0, 1, 5],
-            ['SRV', 'CPU', 'Processor (CPU)', 'text', 0, 1, 1],
-            ['SRV', 'RAM', 'RAM / Memori', 'text', 0, 1, 2],
-            ['SRV', 'STORAGE', 'Storage / RAID', 'text', 0, 1, 3],
-            ['SRV', 'OS', 'Sistem Operasi (OS)', 'text', 0, 1, 4],
-            ['PRT', 'PRT_TYPE', 'Tipe Printer (Inkjet/Laser)', 'text', 0, 1, 1],
-            ['PRT', 'PRT_FEAT', 'Fitur (Print/Scan/Copy)', 'text', 0, 1, 2],
-            ['CAR', 'CC', 'Kapasitas Mesin (CC)', 'number', 0, 1, 1],
-            ['CAR', 'FUEL', 'Bahan Bakar', 'text', 0, 1, 2],
-            ['CAR', 'YEAR', 'Tahun Pembuatan', 'number', 0, 1, 3],
-            ['MTR', 'CC', 'Kapasitas Mesin (CC)', 'number', 0, 1, 1],
-            ['MTR', 'YEAR', 'Tahun Pembuatan', 'number', 0, 1, 2],
-        ];
-        foreach ($defaultSpecs as [$type, $code, $name, $dataType, $required, $searchable, $order]) {
-            try {
-                $sSp = $pdo->prepare('INSERT IGNORE INTO asset_type_specifications(asset_type_id,specification_code,specification_name,data_type,is_required,is_searchable,display_order) SELECT id,?,?,?,?,?,? FROM asset_types WHERE type_code=?');
-                $sSp->execute([$code, $name, $dataType, $required, $searchable, $order, $type]);
-            } catch (Throwable $ignored) {}
-        }
+        ensure_default_specifications_per_group_and_type($pdo);
         $pdo->exec("CREATE TABLE IF NOT EXISTS asset_locations (id INT AUTO_INCREMENT PRIMARY KEY, location_code VARCHAR(30) NOT NULL UNIQUE, location_name VARCHAR(120) NOT NULL, is_active TINYINT(1) NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
         foreach ([['HO','Head Office'],['WHS','Gudang / Warehouse'],['PROD','Area Produksi'],['IT','Ruang IT / Server']] as [$locCode,$locName]) {
@@ -1082,7 +1054,7 @@ function ensure_performance_indexes(PDO $pdo): void
 function ensure_app_schema(PDO $pdo, bool $force = false): void
 {
     if (!$force && empty($_GET['force_schema'])) {
-        $lockFile = sys_get_temp_dir() . '/pcconnect_schema_v14.lock';
+        $lockFile = sys_get_temp_dir() . '/pcconnect_schema_v15.lock';
         if (file_exists($lockFile) && (time() - filemtime($lockFile) < 1800) && db_table_exists($pdo, 'pcs')) {
             return;
         }
@@ -1099,6 +1071,7 @@ function ensure_app_schema(PDO $pdo, bool $force = false): void
     ensure_asset_management_schema($pdo);
     ensure_asset_master_schema($pdo);
     ensure_default_identifiers_per_group_and_type($pdo);
+    ensure_default_specifications_per_group_and_type($pdo);
     ensure_brand_and_master_item_schema($pdo);
     ensure_maintenance_asset_schema($pdo);
     cleanup_unsynced_pc_maintenance_assets($pdo);
@@ -1108,7 +1081,7 @@ function ensure_app_schema(PDO $pdo, bool $force = false): void
     ensure_unified_asset_schema($pdo);
     ensure_performance_indexes($pdo);
 
-    @touch(sys_get_temp_dir() . '/pcconnect_schema_v14.lock');
+    @touch(sys_get_temp_dir() . '/pcconnect_schema_v15.lock');
 }
 
 function ensure_user_roles_schema(PDO $pdo): void
@@ -1973,6 +1946,185 @@ function ensure_default_identifiers_per_group_and_type(PDO $pdo): void
             } else {
                 try {
                     $updIdfStmt->execute([$gId, $existingId]);
+                } catch (Throwable $ignored) {}
+            }
+        }
+    } catch (Throwable $ignored) {}
+}
+
+function ensure_default_specifications_per_group_and_type(PDO $pdo): void
+{
+    try {
+        if (!db_table_exists($pdo, 'asset_type_specifications') || !db_table_exists($pdo, 'asset_types')) {
+            return;
+        }
+
+        // 1. Kolom asset_group_id pada asset_type_specifications
+        if (!db_column_exists($pdo, 'asset_type_specifications', 'asset_group_id')) {
+            try {
+                $pdo->exec("ALTER TABLE asset_type_specifications ADD COLUMN asset_group_id INT NULL AFTER id");
+                $pdo->exec("ALTER TABLE asset_type_specifications ADD INDEX idx_ats_group (asset_group_id)");
+            } catch (Throwable $ignored) {}
+        }
+
+        // 2. Backfill asset_group_id dari tabel asset_types
+        try {
+            $pdo->exec("UPDATE asset_type_specifications ats 
+                        JOIN asset_types t ON t.id = ats.asset_type_id 
+                        SET ats.asset_group_id = t.asset_group_id 
+                        WHERE ats.asset_group_id IS NULL OR ats.asset_group_id = 0");
+        } catch (Throwable $ignored) {}
+
+        // 3. Ambil peta grup dan kategori
+        $groups = [];
+        foreach ($pdo->query("SELECT id, UPPER(TRIM(group_code)) AS code FROM asset_groups")->fetchAll(PDO::FETCH_ASSOC) as $g) {
+            $groups[$g['code']] = (int)$g['id'];
+        }
+
+        $types = [];
+        foreach ($pdo->query("SELECT id, asset_group_id, UPPER(TRIM(type_code)) AS code FROM asset_types")->fetchAll(PDO::FETCH_ASSOC) as $t) {
+            $types[$t['asset_group_id'] . '_' . $t['code']] = (int)$t['id'];
+        }
+
+        // 4. Katalog default spesifikasi per komoditas & kategori
+        // Format: [GroupCode, TypeCode, SpecCode, SpecName, DataType, IsRequired, IsSearchable, DisplayOrder]
+        $catalog = [
+            // IT Asset - Computer / Desktop (CMP)
+            ['IT', 'CMP', 'CPU', 'Processor (CPU)', 'text', 0, 1, 1],
+            ['IT', 'CMP', 'RAM', 'RAM / Memori', 'text', 0, 1, 2],
+            ['IT', 'CMP', 'STORAGE', 'Storage / Penyimpanan', 'text', 0, 1, 3],
+            ['IT', 'CMP', 'OS', 'Sistem Operasi (OS)', 'text', 0, 1, 4],
+            ['IT', 'CMP', 'GPU', 'Kartu Grafis (GPU/VGA)', 'text', 0, 1, 5],
+            ['IT', 'CMP', 'FORM_FACTOR', 'Form Factor Casing', 'text', 0, 1, 6],
+            ['IT', 'CMP', 'PSU', 'Power Supply Unit (Watt)', 'text', 0, 1, 7],
+
+            // IT Asset - Notebook / Laptop (NBK)
+            ['IT', 'NBK', 'CPU', 'Processor (CPU)', 'text', 0, 1, 1],
+            ['IT', 'NBK', 'RAM', 'RAM / Memori', 'text', 0, 1, 2],
+            ['IT', 'NBK', 'STORAGE', 'Storage / Penyimpanan', 'text', 0, 1, 3],
+            ['IT', 'NBK', 'OS', 'Sistem Operasi (OS)', 'text', 0, 1, 4],
+            ['IT', 'NBK', 'GPU', 'Kartu Grafis (GPU/VGA)', 'text', 0, 1, 5],
+            ['IT', 'NBK', 'SCREEN_SIZE', 'Ukuran Layar LCD', 'text', 0, 1, 6],
+            ['IT', 'NBK', 'BATTERY', 'Kapasitas Baterai (Wh/Cell)', 'text', 0, 1, 7],
+
+            // IT Asset - Printer (PRT)
+            ['IT', 'PRT', 'PRT_TYPE', 'Tipe Printer (Inkjet/Laser/Dot Matrix)', 'text', 0, 1, 1],
+            ['IT', 'PRT', 'PRT_FEAT', 'Fitur Printer (Print/Scan/Copy/Fax)', 'text', 0, 1, 2],
+            ['IT', 'PRT', 'PRT_SPEED', 'Kecepatan Cetak (PPM / IPM)', 'text', 0, 1, 3],
+            ['IT', 'PRT', 'MAX_PAPER', 'Ukuran Kertas Maksimal', 'text', 0, 1, 4],
+            ['IT', 'PRT', 'CONN_TYPE', 'Konektivitas (USB/LAN/Wi-Fi)', 'text', 0, 1, 5],
+
+            // IT Asset - Server (SRV)
+            ['IT', 'SRV', 'CPU', 'Processor Server (CPU)', 'text', 0, 1, 1],
+            ['IT', 'SRV', 'RAM', 'RAM ECC Registered', 'text', 0, 1, 2],
+            ['IT', 'SRV', 'STORAGE', 'Storage / RAID Array', 'text', 0, 1, 3],
+            ['IT', 'SRV', 'OS', 'Sistem Operasi Server (OS)', 'text', 0, 1, 4],
+            ['IT', 'SRV', 'FORM_FACTOR', 'Form Factor / Tipe Casing', 'text', 0, 1, 5],
+            ['IT', 'SRV', 'PSU_REDUNDANT', 'Catu Daya Redundan (PSU)', 'text', 0, 1, 6],
+            ['IT', 'SRV', 'RAID_CTRL', 'Pengendali RAID (RAID Controller)', 'text', 0, 1, 7],
+
+            // IT Asset - Monitor & Display (DSP)
+            ['IT', 'DSP', 'INCH', 'Ukuran Layar (Screen Size)', 'text', 0, 1, 1],
+            ['IT', 'DSP', 'PANEL', 'Tipe Panel (IPS/VA/TN/OLED)', 'text', 0, 1, 2],
+            ['IT', 'DSP', 'RES', 'Resolusi Layar (Resolution)', 'text', 0, 1, 3],
+            ['IT', 'DSP', 'PORTS', 'Port Input (HDMI/DP/VGA/Type-C)', 'text', 0, 1, 4],
+            ['IT', 'DSP', 'VESA', 'Dukungan Bracket VESA', 'text', 0, 1, 5],
+
+            // IT Asset - Tools IT (TOOLS)
+            ['IT', 'TOOLS', 'TOOL_TYPE', 'Kategori / Fungsi Alat Kerja', 'text', 0, 1, 1],
+            ['IT', 'TOOLS', 'POWER_SRC', 'Sumber Daya / Catu Daya', 'text', 0, 1, 2],
+            ['IT', 'TOOLS', 'INTERFACE', 'Interface / Port Konektor Uji', 'text', 0, 1, 3],
+            ['IT', 'TOOLS', 'MEASURE_RANGE', 'Rentang Ukur / Spesifikasi Kerja', 'text', 0, 1, 4],
+            ['IT', 'TOOLS', 'CALIBRATION_INT', 'Periode Rekalibrasi', 'text', 0, 1, 5],
+            ['IT', 'TOOLS', 'CASE_INC', 'Perlengkapan Tas / Kotak Bawaan', 'text', 0, 1, 6],
+
+            // Vehicle - Car / Mobil (CAR)
+            ['VH', 'CAR', 'CC', 'Kapasitas Mesin (CC)', 'number', 0, 1, 1],
+            ['VH', 'CAR', 'FUEL', 'Bahan Bakar', 'text', 0, 1, 2],
+            ['VH', 'CAR', 'YEAR', 'Tahun Pembuatan', 'number', 0, 1, 3],
+            ['VH', 'CAR', 'TRANSMISSION', 'Tipe Transmisi (MT/AT/CVT)', 'text', 0, 1, 4],
+            ['VH', 'CAR', 'BODY_TYPE', 'Tipe Bodi (MPV/SUV/Sedan/BlindVan)', 'text', 0, 1, 5],
+            ['VH', 'CAR', 'SEAT_CAP', 'Kapasitas Tempat Duduk', 'number', 0, 1, 6],
+            ['VH', 'CAR', 'COLOR', 'Warna Kendaraan', 'text', 0, 1, 7],
+
+            // Vehicle - Motorcycle / Motor (MTR)
+            ['VH', 'MTR', 'CC', 'Kapasitas Mesin (CC)', 'number', 0, 1, 1],
+            ['VH', 'MTR', 'YEAR', 'Tahun Pembuatan', 'number', 0, 1, 2],
+            ['VH', 'MTR', 'MTR_TYPE', 'Tipe Motor & Transmisi', 'text', 0, 1, 3],
+            ['VH', 'MTR', 'FUEL', 'Bahan Bakar', 'text', 0, 1, 4],
+            ['VH', 'MTR', 'COOLING', 'Sistem Pendingin Mesin', 'text', 0, 1, 5],
+            ['VH', 'MTR', 'COLOR', 'Warna Kendaraan', 'text', 0, 1, 6],
+
+            // Vehicle - Truck / Truk (TRK)
+            ['VH', 'TRK', 'TONNAGE', 'Kapasitas Tonase / GVW', 'text', 0, 1, 1],
+            ['VH', 'TRK', 'BODY_TYPE', 'Tipe Bak / Karoseri Muatan', 'text', 0, 1, 2],
+            ['VH', 'TRK', 'AXLE_COUNT', 'Konfigurasi Sumbu / Jumlah Roda', 'text', 0, 1, 3],
+            ['VH', 'TRK', 'CC', 'Kapasitas Mesin (CC)', 'number', 0, 1, 4],
+            ['VH', 'TRK', 'FUEL', 'Bahan Bakar', 'text', 0, 1, 5],
+            ['VH', 'TRK', 'TRANSMISSION', 'Tipe Transmisi', 'text', 0, 1, 6],
+            ['VH', 'TRK', 'YEAR', 'Tahun Pembuatan', 'number', 0, 1, 7],
+
+            // Facility - AC / Pendingin (AC)
+            ['FC', 'AC', 'COOLING_CAP', 'Kapasitas Pendingin (PK / BTU)', 'text', 0, 1, 1],
+            ['FC', 'AC', 'AC_TYPE', 'Tipe Unit AC (Split/Cassette/Standing)', 'text', 0, 1, 2],
+            ['FC', 'AC', 'REFRIGERANT', 'Jenis Freon / Refrigerant (R32/R410A)', 'text', 0, 1, 3],
+            ['FC', 'AC', 'POWER_WATT', 'Konsumsi Daya Listrik (Watt)', 'number', 0, 1, 4],
+            ['FC', 'AC', 'INVERTER', 'Teknologi Kompresor (Inverter/Standar)', 'text', 0, 1, 5],
+            ['FC', 'AC', 'VOLTAGE', 'Voltase & Fase Listrik (220V/380V)', 'text', 0, 1, 6],
+
+            // Facility - Generator / Genset (GEN)
+            ['FC', 'GEN', 'CAP_KVA', 'Kapasitas Daya (kVA / kW)', 'text', 0, 1, 1],
+            ['FC', 'GEN', 'GEN_TYPE', 'Tipe Enclosure (Silent/Open/Trailer)', 'text', 0, 1, 2],
+            ['FC', 'GEN', 'FUEL', 'Jenis Bahan Bakar (Solar/Bensin)', 'text', 0, 1, 3],
+            ['FC', 'GEN', 'VOLTAGE_OUT', 'Output Voltase & Fase Listrik', 'text', 0, 1, 4],
+            ['FC', 'GEN', 'FREQ_RPM', 'Frekuensi & Putaran Mesin (Hz/RPM)', 'text', 0, 1, 5],
+            ['FC', 'GEN', 'TANK_CAP', 'Kapasitas Tangki BBM (Liter)', 'number', 0, 1, 6],
+            ['FC', 'GEN', 'START_SYS', 'Sistem Starter (Electric ATS / Manual)', 'text', 0, 1, 7],
+
+            // Facility - Gedung / Bangunan (BLD)
+            ['FC', 'BLD', 'BLD_AREA', 'Luas Bangunan (m²)', 'number', 0, 1, 1],
+            ['FC', 'BLD', 'LAND_AREA', 'Luas Tanah (m²)', 'number', 0, 1, 2],
+            ['FC', 'BLD', 'FLOOR_COUNT', 'Jumlah Lantai Bangunan', 'number', 0, 1, 3],
+            ['FC', 'BLD', 'ELEC_POWER', 'Daya Listrik Terpasang (VA)', 'text', 0, 1, 4],
+            ['FC', 'BLD', 'WATER_SRC', 'Sumber Pasokan Air Bersih', 'text', 0, 1, 5],
+            ['FC', 'BLD', 'USAGE_TYPE', 'Peruntukan / Fungsi Gedung', 'text', 0, 1, 6],
+
+            // Facility - Fasilitas Umum / Tools (FC)
+            ['FC', 'FC', 'TOOL_TYPE', 'Kategori Alat / Mesin Fasilitas', 'text', 0, 1, 1],
+            ['FC', 'FC', 'POWER_SRC', 'Sumber Daya / Penggerak', 'text', 0, 1, 2],
+            ['FC', 'FC', 'POWER_RATING', 'Daya Listrik / Voltase Kerja', 'text', 0, 1, 3],
+            ['FC', 'FC', 'MAX_CAP', 'Kapasitas / Beban Kerja Maksimal', 'text', 0, 1, 4],
+            ['FC', 'FC', 'SAFETY_FEAT', 'Fitur Pengaman & Proteksi', 'text', 0, 1, 5],
+
+            // Facility - Monitor & Display (DSP)
+            ['FC', 'DSP', 'INCH', 'Ukuran Layar (Screen Size)', 'text', 0, 1, 1],
+            ['FC', 'DSP', 'PANEL', 'Tipe Panel Display Komersial', 'text', 0, 1, 2],
+            ['FC', 'DSP', 'RES', 'Resolusi Layar (Resolution)', 'text', 0, 1, 3],
+            ['FC', 'DSP', 'PORTS', 'Port Input Konektivitas (HDMI/LAN/USB)', 'text', 0, 1, 4],
+            ['FC', 'DSP', 'VESA', 'Ukuran Dudukan Bracket VESA', 'text', 0, 1, 5],
+        ];
+
+        $chkSpecStmt = $pdo->prepare("SELECT id FROM asset_type_specifications WHERE asset_type_id = ? AND UPPER(TRIM(specification_code)) = UPPER(TRIM(?)) LIMIT 1");
+        $insSpecStmt = $pdo->prepare("INSERT INTO asset_type_specifications (asset_group_id, asset_type_id, specification_code, specification_name, data_type, is_required, is_searchable, display_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+        $updSpecStmt = $pdo->prepare("UPDATE asset_type_specifications SET asset_group_id = ? WHERE id = ? AND (asset_group_id IS NULL OR asset_group_id = 0)");
+
+        foreach ($catalog as [$gCode, $tCode, $code, $name, $dt, $req, $search, $order]) {
+            $gId = $groups[$gCode] ?? 0;
+            $tId = $types[$gId . '_' . $tCode] ?? 0;
+            if ($gId <= 0 || $tId <= 0) {
+                continue;
+            }
+
+            $chkSpecStmt->execute([$tId, $code]);
+            $existingId = (int)$chkSpecStmt->fetchColumn();
+
+            if ($existingId <= 0) {
+                try {
+                    $insSpecStmt->execute([$gId, $tId, $code, $name, $dt, $req, $search, $order]);
+                } catch (Throwable $ignored) {}
+            } else {
+                try {
+                    $updSpecStmt->execute([$gId, $existingId]);
                 } catch (Throwable $ignored) {}
             }
         }
