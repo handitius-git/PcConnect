@@ -195,17 +195,19 @@ function render_header(string $title, ?array $user = null): void
         echo '<nav class="nav">';
         if (is_full_admin($user)) {
             echo '<a href="' . route_url('dashboard') . '">Dashboard</a>';
-            echo '<details name="nav_top"><summary>Maintenance</summary><div class="menu"><a href="' . route_url('maintenance_assets') . '">Maintenance Asset</a><details><summary>Preventive Maintenance</summary><div class="submenu"><a href="' . route_url('maintenance') . '">Schedule Maintenance</a></div></details><details><summary>Corrective & Service</summary><div class="submenu"><a href="' . route_url('tickets') . '">Tiket & Troubleshooting</a><a href="' . route_url('mobile_service') . '" target="_blank">📱 Mobile Field Service (Teknisi)</a><a href="' . route_url('walkarounds') . '">Patroli / Walkaround</a></div></details></div></details>';
-            echo '<details name="nav_top"><summary>Reports</summary><div class="menu"><a href="' . route_url('reports') . '">Report Preventive Maintenance</a><a href="' . route_url('maintenance_status_report') . '">Report Status PC/Printer</a><a href="' . route_url('corrective_repairs') . '">Report Corrective Maintenance</a><a href="' . route_url('asset_movements') . '">Report Mutasi Aset</a></div></details>';
-            echo '<details name="nav_top"><summary>Manajemen Aset</summary><div class="menu"><a href="' . route_url('asset_items') . '">Unit Aset</a><a href="' . route_url('pcs') . '">Pendataan Khusus Computer</a><a href="' . route_url('asset_movements') . '">Mutasi / Tukar Pasang</a></div></details>';
-            echo '<details name="nav_top"><summary>Setup</summary><div class="menu"><details><summary>Master</summary><div class="submenu"><details><summary>Aset</summary><div class="submenu"><a href="' . route_url('asset_groups') . '">Master Komoditas</a><a href="' . route_url('asset_types') . '">Master Kategori</a><a href="' . route_url('asset_brands') . '">Master Brand / Merk</a><a href="' . route_url('asset_master_items') . '">Master Barang (Katalog Model)</a><a href="' . route_url('asset_locations') . '">Master Lokasi</a><a href="' . route_url('asset_identifiers') . '">Identifier Aset</a><a href="' . route_url('asset_specifications') . '">Spesifikasi Aset</a></div></details><details><summary>Preventive Maintenance</summary><div class="submenu"><a href="' . route_url('jobs') . '">Job Desk Preventive Maintenance</a><a href="' . route_url('asset_maintenance_templates') . '">Template Maintenance</a></div></details><details><summary>Corrective Maintenance</summary><div class="submenu"><a href="' . route_url('corrective_job_desks') . '">Job Desk Corrective Maintenance</a></div></details><a href="' . route_url('asset_companies') . '">Company</a><a href="' . route_url('master_pengguna') . '">Master Pengguna</a><a href="' . route_url('users') . '">Users</a></div></details><a href="' . route_url('employee_source') . '">Employee & Company Source</a><a href="' . route_url('labels') . '">QR Label Maintenance Asset</a></div></details>';
+            echo '<details name="nav_top"><summary>Maintenance</summary><div class="menu"><details><summary>Preventive Maintenance</summary><div class="submenu"><a href="' . route_url('maintenance') . '">Schedule Maintenance</a></div></details><details><summary>Corrective & Service</summary><div class="submenu"><a href="' . route_url('tickets') . '">Tiket & Troubleshooting</a><a href="' . route_url('mobile_service') . '" target="_blank">📱 Mobile Field Service (Teknisi)</a><a href="' . route_url('walkarounds') . '">Patroli / Walkaround</a></div></details></div></details>';
+            echo '<details name="nav_top"><summary>Reports</summary><div class="menu"><a href="' . route_url('reports') . '">Report Preventive Maintenance</a><a href="' . route_url('maintenance_status_report') . '">Report Status PC/Printer</a><a href="' . route_url('corrective_repairs') . '">Report Corrective Maintenance</a><a href="' . route_url('asset_movements') . '">Report Mutasi Aset</a><a href="' . route_url('report_asset_loans') . '">Report Peminjaman Aset</a></div></details>';
+            echo '<details name="nav_top"><summary>Manajemen Aset</summary><div class="menu"><a href="' . route_url('asset_items') . '">Unit Aset</a><a href="' . route_url('asset_loans') . '">Peminjaman Aset</a><a href="' . route_url('pcs') . '">Pendataan Khusus Computer</a><a href="' . route_url('asset_movements') . '">Mutasi / Tukar Pasang</a></div></details>';
+            echo '<details name="nav_top"><summary>Setup</summary><div class="menu"><details><summary>Master</summary><div class="submenu"><details><summary>Aset</summary><div class="submenu"><a href="' . route_url('asset_groups') . '">Master Komoditas</a><a href="' . route_url('asset_types') . '">Master Kategori</a><a href="' . route_url('asset_brands') . '">Master Brand / Merk</a><a href="' . route_url('asset_master_items') . '">Master Barang (Katalog Model)</a><a href="' . route_url('asset_locations') . '">Master Lokasi</a><a href="' . route_url('asset_identifiers') . '">Identifier Aset</a><a href="' . route_url('asset_specifications') . '">Spesifikasi Aset</a></div></details><details><summary>Preventive Maintenance</summary><div class="submenu"><a href="' . route_url('jobs') . '">Job Desk Preventive Maintenance</a><a href="' . route_url('asset_maintenance_templates') . '">Template Maintenance</a></div></details><details><summary>Corrective Maintenance</summary><div class="submenu"><a href="' . route_url('corrective_job_desks') . '">Job Desk Corrective Maintenance</a></div></details><a href="' . route_url('asset_companies') . '">Company</a><a href="' . route_url('master_pengguna') . '">Master Pengguna</a><a href="' . route_url('users') . '">Users</a></div></details><a href="' . route_url('employee_source') . '">Employee & Company Source</a><a href="' . route_url('labels') . '">QR Label Unit Aset</a></div></details>';
         } elseif (can_manage_maintenance($user)) {
             echo '<a href="' . route_url('dashboard') . '">Dashboard</a>';
-            echo '<details name="nav_top"><summary>Maintenance</summary><div class="menu"><a href="' . route_url('maintenance_assets') . '">Maintenance Asset</a><details><summary>Preventive Maintenance</summary><div class="submenu"><a href="' . route_url('maintenance') . '">Schedule Maintenance</a></div></details><details><summary>Corrective & Service</summary><div class="submenu"><a href="' . route_url('tickets') . '">Tiket & Troubleshooting</a><a href="' . route_url('mobile_service') . '" target="_blank">📱 Mobile Field Service (Teknisi)</a><a href="' . route_url('walkarounds') . '">Patroli / Walkaround</a></div></details></div></details>';
-            echo '<details name="nav_top"><summary>Reports</summary><div class="menu"><a href="' . route_url('reports') . '">Report Preventive Maintenance</a><a href="' . route_url('maintenance_status_report') . '">Report Status PC/Printer</a><a href="' . route_url('corrective_repairs') . '">Report Corrective Maintenance</a><a href="' . route_url('asset_movements') . '">Report Mutasi Aset</a></div></details>';
+            echo '<details name="nav_top"><summary>Maintenance</summary><div class="menu"><details><summary>Preventive Maintenance</summary><div class="submenu"><a href="' . route_url('maintenance') . '">Schedule Maintenance</a></div></details><details><summary>Corrective & Service</summary><div class="submenu"><a href="' . route_url('tickets') . '">Tiket & Troubleshooting</a><a href="' . route_url('mobile_service') . '" target="_blank">📱 Mobile Field Service (Teknisi)</a><a href="' . route_url('walkarounds') . '">Patroli / Walkaround</a></div></details></div></details>';
+            echo '<details name="nav_top"><summary>Manajemen Aset</summary><div class="menu"><a href="' . route_url('asset_items') . '">Unit Aset</a><a href="' . route_url('asset_loans') . '">Peminjaman Aset</a></div></details>';
+            echo '<details name="nav_top"><summary>Reports</summary><div class="menu"><a href="' . route_url('reports') . '">Report Preventive Maintenance</a><a href="' . route_url('maintenance_status_report') . '">Report Status PC/Printer</a><a href="' . route_url('corrective_repairs') . '">Report Corrective Maintenance</a><a href="' . route_url('asset_movements') . '">Report Mutasi Aset</a><a href="' . route_url('report_asset_loans') . '">Report Peminjaman Aset</a></div></details>';
         } else {
-            echo '<details name="nav_top"><summary>Maintenance</summary><div class="menu"><a href="' . route_url('maintenance_assets') . '">Maintenance Asset</a><details><summary>Preventive Maintenance</summary><div class="submenu"><a href="' . route_url('maintenance') . '">Schedule Maintenance</a></div></details><details><summary>Corrective & Service</summary><div class="submenu"><a href="' . route_url('tickets') . '">Tiket & Troubleshooting</a><a href="' . route_url('mobile_service') . '" target="_blank">📱 Mobile Field Service (Teknisi)</a><a href="' . route_url('walkarounds') . '">Patroli / Walkaround</a></div></details></div></details>';
-            echo '<details name="nav_top"><summary>Reports</summary><div class="menu"><a href="' . route_url('reports') . '">Report Preventive Maintenance</a><a href="' . route_url('maintenance_status_report') . '">Report Status PC/Printer</a><a href="' . route_url('corrective_repairs') . '">Report Corrective Maintenance</a><a href="' . route_url('asset_movements') . '">Report Mutasi Aset</a></div></details>';
+            echo '<details name="nav_top"><summary>Maintenance</summary><div class="menu"><details><summary>Preventive Maintenance</summary><div class="submenu"><a href="' . route_url('maintenance') . '">Schedule Maintenance</a></div></details><details><summary>Corrective & Service</summary><div class="submenu"><a href="' . route_url('tickets') . '">Tiket & Troubleshooting</a><a href="' . route_url('mobile_service') . '" target="_blank">📱 Mobile Field Service (Teknisi)</a><a href="' . route_url('walkarounds') . '">Patroli / Walkaround</a></div></details></div></details>';
+            echo '<details name="nav_top"><summary>Manajemen Aset</summary><div class="menu"><a href="' . route_url('asset_loans') . '">Peminjaman Aset</a></div></details>';
+            echo '<details name="nav_top"><summary>Reports</summary><div class="menu"><a href="' . route_url('reports') . '">Report Preventive Maintenance</a><a href="' . route_url('maintenance_status_report') . '">Report Status PC/Printer</a><a href="' . route_url('corrective_repairs') . '">Report Corrective Maintenance</a><a href="' . route_url('asset_movements') . '">Report Mutasi Aset</a><a href="' . route_url('report_asset_loans') . '">Report Peminjaman Aset</a></div></details>';
         }
         echo '<a href="' . route_url('logout') . '">Logout</a></nav>';
         echo '<script>'
@@ -236,7 +238,7 @@ function render_mobile_header(string $title, ?array $user = null): void
     }
     if ($user) {
         if (can_manage_maintenance($user)) {
-            echo '<nav class="mobile-nav"><a href="' . route_url('maintenance_assets') . '">Maint Asset</a><a href="' . route_url('maintenance') . '">Schedule</a><a href="' . route_url('reports') . '">Reports</a><a href="' . route_url('logout') . '">Logout</a></nav>';
+            echo '<nav class="mobile-nav"><a href="' . route_url('asset_items') . '">Unit Aset</a><a href="' . route_url('maintenance') . '">Schedule</a><a href="' . route_url('reports') . '">Reports</a><a href="' . route_url('logout') . '">Logout</a></nav>';
         } else {
             echo '<nav class="mobile-nav"><a href="' . route_url('mobile_dashboard') . '">Dashboard</a><a href="' . route_url('mobile_schedule') . '">Schedule</a><a href="' . route_url('mobile_scan') . '">Scan</a><a href="' . route_url('mobile_history') . '">History</a></nav>';
         }
@@ -314,71 +316,92 @@ function find_asset_by_code(PDO $pdo, string $code): array
         $security = '';
     }
 
-    if (db_table_exists($pdo, 'maintenance_assets')) {
-        $mntCode = str_starts_with($assetId, 'MNT-') ? $assetId : 'MNT-' . $assetId;
-        $hasAi = db_table_exists($pdo, 'asset_items');
-        if ($hasAi) {
-            $stmt = $pdo->prepare('SELECT ma.*, ai.asset_code item_asset_code 
-                                   FROM maintenance_assets ma 
-                                   LEFT JOIN asset_items ai ON ai.id = ma.asset_item_id 
-                                   WHERE (ma.maintenance_asset_code=? OR ma.maintenance_asset_code=? OR (ai.asset_code IS NOT NULL AND ai.asset_code=?)) 
-                                   AND ma.status<>"inactive" LIMIT 1');
-            $stmt->execute([$assetId, $mntCode, $assetId]);
-        } else {
-            $stmt = $pdo->prepare('SELECT ma.* FROM maintenance_assets ma 
-                                   WHERE (ma.maintenance_asset_code=? OR ma.maintenance_asset_code=?) 
-                                   AND ma.status<>"inactive" LIMIT 1');
-            $stmt->execute([$assetId, $mntCode]);
-        }
-        $maintenanceAsset = $stmt->fetch();
+    // 1. PRIORITAS UTAMA: Cari langsung di tabel asset_items (Unit Aset)
+    if (db_table_exists($pdo, 'asset_items')) {
+        $stmtAi = $pdo->prepare('SELECT ai.*, ag.group_name, ag.group_code, at.type_name, at.type_code, c.company_name, loc.location_name
+                                 FROM asset_items ai
+                                 LEFT JOIN asset_groups ag ON ag.id = ai.asset_group_id
+                                 LEFT JOIN asset_types at ON at.id = ai.asset_type_id
+                                 LEFT JOIN asset_companies c ON c.id = ai.company_id
+                                 LEFT JOIN asset_locations loc ON loc.id = ai.location_id
+                                 WHERE (ai.asset_code = ? OR ai.asset_code = ?) AND ai.status <> "inactive"
+                                 LIMIT 1');
+        $stmtAi->execute([$clean, $assetId]);
+        $ai = $stmtAi->fetch();
 
-        // Jika tidak cocok atau security code salah, coba cari langsung menggunakan kode utuh ($clean)
-        if (!$maintenanceAsset || ($security !== '' && !hash_equals((string)$maintenanceAsset['security_code'], $security))) {
-            $mntCodeClean = str_starts_with($clean, 'MNT-') ? $clean : 'MNT-' . $clean;
-            if ($hasAi) {
-                $stmt = $pdo->prepare('SELECT ma.*, ai.asset_code item_asset_code 
-                                       FROM maintenance_assets ma 
-                                       LEFT JOIN asset_items ai ON ai.id = ma.asset_item_id 
-                                       WHERE (ma.maintenance_asset_code=? OR ma.maintenance_asset_code=? OR (ai.asset_code IS NOT NULL AND ai.asset_code=?)) 
-                                       AND ma.status<>"inactive" LIMIT 1');
-                $stmt->execute([$clean, $mntCodeClean, $clean]);
-            } else {
-                $stmt = $pdo->prepare('SELECT ma.* FROM maintenance_assets ma 
-                                       WHERE (ma.maintenance_asset_code=? OR ma.maintenance_asset_code=?) 
-                                       AND ma.status<>"inactive" LIMIT 1');
-                $stmt->execute([$clean, $mntCodeClean]);
+        if ($ai) {
+            // Jika unit merupakan Parent Bundle ('group'), muat anggota anak bundlingnya
+            if (($ai['asset_mode'] ?? '') === 'group') {
+                $stmtC = $pdo->prepare('SELECT aim.*, c.id child_id, c.asset_code child_asset_code, c.asset_name child_asset_name, c.brand child_brand, c.model child_model
+                                        FROM asset_item_members aim
+                                        JOIN asset_items c ON c.id = aim.child_asset_item_id
+                                        WHERE aim.parent_asset_item_id = ? AND aim.detached_at IS NULL');
+                $stmtC->execute([(int)$ai['id']]);
+                $ai['bundle_children'] = $stmtC->fetchAll();
+            } elseif (($ai['asset_mode'] ?? '') === 'child') {
+                // Jika unit merupakan anak anggota bundle, muat info induknya
+                $stmtP = $pdo->prepare('SELECT aim.*, p.id parent_id, p.asset_code parent_asset_code, p.asset_name parent_asset_name
+                                        FROM asset_item_members aim
+                                        JOIN asset_items p ON p.id = aim.parent_asset_item_id
+                                        WHERE aim.child_asset_item_id = ? AND aim.detached_at IS NULL LIMIT 1');
+                $stmtP->execute([(int)$ai['id']]);
+                $ai['parent_bundle'] = $stmtP->fetch() ?: null;
             }
-            $cleanMa = $stmt->fetch();
-            if ($cleanMa) {
-                $maintenanceAsset = $cleanMa;
-                $security = ''; // Bersihkan security karena dicocokkan sebagai kode utuh aset
-            }
-        }
 
-        if ($maintenanceAsset) {
-            $secValid = ($security === '') || hash_equals((string)$maintenanceAsset['security_code'], $security);
-            if ($secValid) {
-                if (!empty($maintenanceAsset['printer_id']) && db_table_exists($pdo, 'printers')) {
-                    $stmt = $pdo->prepare('SELECT pr.*, ma.maintenance_asset_code, ma.id maintenance_asset_id FROM printers pr JOIN maintenance_assets ma ON ma.printer_id COLLATE utf8mb4_unicode_ci = pr.prn_id COLLATE utf8mb4_unicode_ci WHERE pr.prn_id=? LIMIT 1');
-                    $stmt->execute([(string)$maintenanceAsset['printer_id']]);
-                    $printer = $stmt->fetch();
-                    if ($printer) {
-                        return ['printer', (string)$printer['prn_id'], $printer];
-                    }
+            // Hubungkan relasi PC / Printer jika ada untuk kompatibilitas
+            if (db_table_exists($pdo, 'pcs')) {
+                $stP = $pdo->prepare('SELECT pc_id FROM pcs WHERE asset_item_id = ? LIMIT 1');
+                $stP->execute([(int)$ai['id']]);
+                $pcIdFound = $stP->fetchColumn();
+                if ($pcIdFound) {
+                    $ai['pc_id'] = (string)$pcIdFound;
                 }
-                if (!empty($maintenanceAsset['pc_id']) && db_table_exists($pdo, 'pcs')) {
-                    $stmt = $pdo->prepare('SELECT p.*, ma.maintenance_asset_code, ma.id maintenance_asset_id FROM pcs p JOIN maintenance_assets ma ON ma.pc_id COLLATE utf8mb4_unicode_ci = p.pc_id COLLATE utf8mb4_unicode_ci WHERE p.pc_id=? LIMIT 1');
-                    $stmt->execute([(string)$maintenanceAsset['pc_id']]);
-                    $pc = $stmt->fetch();
-                    if ($pc) {
-                        return ['pc', (string)$pc['pc_id'], $pc];
-                    }
-                }
-                return ['maintenance_asset', (string)$maintenanceAsset['id'], $maintenanceAsset];
             }
+            if (db_table_exists($pdo, 'printers')) {
+                $stPr = $pdo->prepare('SELECT prn_id FROM printers WHERE asset_item_id = ? LIMIT 1');
+                $stPr->execute([(int)$ai['id']]);
+                $prnIdFound = $stPr->fetchColumn();
+                if ($prnIdFound) {
+                    $ai['printer_id'] = (string)$prnIdFound;
+                }
+            }
+
+            return ['asset_item', (string)$ai['id'], $ai];
         }
     }
 
+    // 2. Fallback: Legacy maintenance_assets jika masih ada kode MNT lama
+    if (db_table_exists($pdo, 'maintenance_assets')) {
+        $mntCode = str_starts_with($assetId, 'MNT-') ? $assetId : 'MNT-' . $assetId;
+        $stmt = $pdo->prepare('SELECT ma.* FROM maintenance_assets ma 
+                               WHERE (ma.maintenance_asset_code=? OR ma.maintenance_asset_code=?) 
+                               AND ma.status<>"inactive" LIMIT 1');
+        $stmt->execute([$assetId, $mntCode]);
+        $maintenanceAsset = $stmt->fetch();
+
+        if (!$maintenanceAsset) {
+            $mntCodeClean = str_starts_with($clean, 'MNT-') ? $clean : 'MNT-' . $clean;
+            $stmt = $pdo->prepare('SELECT ma.* FROM maintenance_assets ma 
+                                   WHERE (ma.maintenance_asset_code=? OR ma.maintenance_asset_code=?) 
+                                   AND ma.status<>"inactive" LIMIT 1');
+            $stmt->execute([$clean, $mntCodeClean]);
+            $maintenanceAsset = $stmt->fetch();
+        }
+
+        if ($maintenanceAsset) {
+            if (!empty($maintenanceAsset['asset_item_id']) && db_table_exists($pdo, 'asset_items')) {
+                $stAi = $pdo->prepare('SELECT * FROM asset_items WHERE id = ? LIMIT 1');
+                $stAi->execute([(int)$maintenanceAsset['asset_item_id']]);
+                $ai = $stAi->fetch();
+                if ($ai) {
+                    return ['asset_item', (string)$ai['id'], $ai];
+                }
+            }
+            return ['maintenance_asset', (string)$maintenanceAsset['id'], $maintenanceAsset];
+        }
+    }
+
+    // 3. Fallback: Printer & PC lama
     if (substr($assetId, 0, 3) === 'PRN' && db_table_exists($pdo, 'printers')) {
         $stmt = $pdo->prepare('SELECT * FROM printers WHERE prn_id=?');
         $stmt->execute([$assetId]);
@@ -399,6 +422,31 @@ function find_asset_by_code(PDO $pdo, string $code): array
     }
 
     return ['', '', []];
+}
+
+function validate_asset_item_scan_location(PDO $pdo, int $assetItemId, ?float $scanLat, ?float $scanLng): ?string
+{
+    if (!db_table_exists($pdo, 'asset_items')) {
+        return null;
+    }
+    $stmt = $pdo->prepare('SELECT latitude, longitude, location_radius_m, location_label, asset_name, asset_code FROM asset_items WHERE id=?');
+    $stmt->execute([$assetItemId]);
+    $ai = $stmt->fetch();
+    if (!$ai || $ai['latitude'] === null || $ai['longitude'] === null || $ai['latitude'] === '' || $ai['longitude'] === '') {
+        return null;
+    }
+    if ($scanLat === null || $scanLng === null) {
+        return 'GPS teknisi belum terbaca. Aktifkan izin Location/GPS di browser lalu scan ulang.';
+    }
+    $radius = max(1, (int)($ai['location_radius_m'] ?? 5));
+    if (!function_exists('geo_distance_m')) {
+        return null;
+    }
+    $distance = geo_distance_m((float)$ai['latitude'], (float)$ai['longitude'], $scanLat, $scanLng);
+    if ($distance > $radius) {
+        return 'Scan ditolak. Jarak dari titik aset ' . round($distance, 1) . ' meter, maksimal ' . $radius . ' meter' . ($ai['location_label'] ? ' (' . $ai['location_label'] . ')' : '') . '.';
+    }
+    return null;
 }
 
 function validate_maintenance_asset_scan_location(PDO $pdo, int $maintenanceAssetId, ?float $scanLat, ?float $scanLng): ?string

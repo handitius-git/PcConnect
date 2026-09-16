@@ -629,7 +629,7 @@ function ensure_asset_master_schema(PDO $pdo): void
             $s = $pdo->prepare('INSERT IGNORE INTO asset_groups(group_code,group_name) VALUES (?,?)');
             $s->execute([$code,$name]);
         }
-        foreach ([['ACTIVE','Active'],['REPAIR','In Repair'],['MAINT','Under Maintenance'],['IDLE','Idle'],['TRANSFER','Transferred'],['DISPOSED','Disposed'],['LOST','Lost'],['SOLD','Sold'],['RETIRED','Retired']] as [$code,$name]) {
+        foreach ([['ACTIVE','Active'],['REPAIR','In Repair'],['MAINT','Under Maintenance'],['IDLE','Idle'],['TRANSFER','Transferred'],['DISPOSED','Disposed'],['LOST','Lost'],['SOLD','Sold'],['RETIRED','Retired'],['BORROWED','Dipinjam']] as [$code,$name]) {
             $s = $pdo->prepare('INSERT IGNORE INTO asset_statuses(status_code,status_name) VALUES (?,?)');
             $s->execute([$code,$name]);
         }
@@ -953,6 +953,17 @@ function cleanup_unsynced_pc_maintenance_assets(PDO $pdo): int
         if (!db_table_exists($pdo, 'maintenance_assets') || !db_table_exists($pdo, 'pcs')) {
             return 0;
         }
+
+        // Sinkronkan pcs yang terhubung ke maintenance_assets dan asset_items
+        $pdo->exec('
+            UPDATE pcs p 
+            JOIN maintenance_assets ma ON ma.pc_id COLLATE utf8mb4_unicode_ci = p.pc_id COLLATE utf8mb4_unicode_ci 
+            SET p.asset_item_id = COALESCE(p.asset_item_id, ma.asset_item_id),
+                p.maintenance_asset_id = COALESCE(p.maintenance_asset_id, ma.id)
+            WHERE ma.asset_item_id IS NOT NULL AND ma.asset_item_id > 0
+        ');
+
+        // HANYA bersihkan jika benar-benar orphan (tidak punya asset_item_id dan PC-nya tidak terhubung)
         $stmt = $pdo->query('
             SELECT ma.id 
             FROM maintenance_assets ma 
@@ -960,6 +971,7 @@ function cleanup_unsynced_pc_maintenance_assets(PDO $pdo): int
             WHERE ma.pc_id IS NOT NULL 
               AND ma.pc_id <> "" 
               AND (ma.printer_id IS NULL OR ma.printer_id = "") 
+              AND (ma.asset_item_id IS NULL OR ma.asset_item_id = 0)
               AND (p.asset_item_id IS NULL OR p.asset_item_id = 0 OR p.pc_id IS NULL)
         ');
         $orphanIds = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
@@ -975,7 +987,6 @@ function cleanup_unsynced_pc_maintenance_assets(PDO $pdo): int
             $pdo->exec("DELETE FROM maintenance_asset_items WHERE maintenance_asset_id IN ($inClause)");
         }
         $pdo->exec("DELETE FROM maintenance_assets WHERE id IN ($inClause)");
-        $pdo->exec("UPDATE pcs SET maintenance_asset_id = NULL WHERE asset_item_id IS NULL OR asset_item_id = 0");
         return count($orphanIds);
     } catch (Throwable $ignored) {
         return 0;
@@ -1076,7 +1087,7 @@ function ensure_performance_indexes(PDO $pdo): void
 function ensure_app_schema(PDO $pdo, bool $force = false): void
 {
     if (!$force && empty($_GET['force_schema'])) {
-        $lockFile = sys_get_temp_dir() . '/pcconnect_schema_v10.lock';
+        $lockFile = sys_get_temp_dir() . '/pcconnect_schema_v12.lock';
         if (file_exists($lockFile) && (time() - filemtime($lockFile) < 1800) && db_table_exists($pdo, 'pcs')) {
             return;
         }
@@ -1096,9 +1107,11 @@ function ensure_app_schema(PDO $pdo, bool $force = false): void
     cleanup_unsynced_pc_maintenance_assets($pdo);
     cleanup_and_repair_pc_asset_conflicts($pdo);
     ensure_corrective_maintenance_schema($pdo);
+    ensure_asset_loan_schema($pdo);
+    ensure_unified_asset_schema($pdo);
     ensure_performance_indexes($pdo);
 
-    @touch(sys_get_temp_dir() . '/pcconnect_schema_v10.lock');
+    @touch(sys_get_temp_dir() . '/pcconnect_schema_v12.lock');
 }
 
 function ensure_user_roles_schema(PDO $pdo): void
@@ -1555,3 +1568,162 @@ function ensure_brand_and_master_item_schema(PDO $pdo): void
     } catch (Throwable $ignored) {
     }
 }
+
+function ensure_asset_loan_schema(PDO $pdo): void
+{
+    try {
+        // 1. Pastikan status BORROWED tersedia di asset_statuses
+        if (db_table_exists($pdo, 'asset_statuses')) {
+            $stmt = $pdo->prepare("INSERT IGNORE INTO asset_statuses (status_code, status_name, is_active) VALUES ('BORROWED', 'Dipinjam', 1)");
+            $stmt->execute();
+        }
+
+        // 2. Buat tabel asset_loans (Header Transaksi Peminjaman)
+        $pdo->exec("CREATE TABLE IF NOT EXISTS asset_loans (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            loan_code VARCHAR(40) NOT NULL UNIQUE,
+            borrower_nik VARCHAR(80) NULL,
+            borrower_name VARCHAR(180) NOT NULL,
+            borrower_department VARCHAR(180) NULL,
+            borrower_phone VARCHAR(40) NULL,
+            loan_date DATETIME NOT NULL,
+            expected_return_date DATE NULL,
+            actual_return_date DATETIME NULL,
+            purpose TEXT NULL,
+            location_id INT NULL,
+            location_note VARCHAR(180) NULL,
+            status ENUM('active','returned','overdue','cancelled') NOT NULL DEFAULT 'active',
+            officer_user_id INT NULL,
+            return_officer_user_id INT NULL,
+            officer_notes TEXT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_loan_borrower (borrower_nik),
+            INDEX idx_loan_status (status),
+            INDEX idx_loan_date (loan_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        // 3. Buat tabel asset_loan_items (Detail Unit Aset yang Dipinjam)
+        $pdo->exec("CREATE TABLE IF NOT EXISTS asset_loan_items (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            loan_id BIGINT NOT NULL,
+            asset_item_id BIGINT NOT NULL,
+            condition_out VARCHAR(100) NOT NULL DEFAULT 'Normal / Baik',
+            notes_out TEXT NULL,
+            condition_in VARCHAR(100) NULL,
+            notes_in TEXT NULL,
+            returned_at DATETIME NULL,
+            status ENUM('borrowed','returned','damaged','lost') NOT NULL DEFAULT 'borrowed',
+            INDEX idx_loan_item_loan (loan_id),
+            INDEX idx_loan_item_asset (asset_item_id),
+            INDEX idx_loan_item_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    } catch (Throwable $ignored) {
+    }
+}
+
+function ensure_unified_asset_schema(PDO $pdo): void
+{
+    if (!db_table_exists($pdo, 'asset_items')) {
+        return;
+    }
+
+    // 1. Tambahkan kolom lokasi GPS & job desk ke asset_items jika belum ada
+    if (!db_column_exists($pdo, 'asset_items', 'job_desk_name')) {
+        try {
+            $pdo->exec("ALTER TABLE asset_items ADD COLUMN job_desk_name VARCHAR(160) NULL");
+        } catch (Throwable $ignored) {}
+    }
+    if (!db_column_exists($pdo, 'asset_items', 'latitude')) {
+        try {
+            $pdo->exec("ALTER TABLE asset_items ADD COLUMN latitude DECIMAL(10,7) NULL");
+        } catch (Throwable $ignored) {}
+    }
+    if (!db_column_exists($pdo, 'asset_items', 'longitude')) {
+        try {
+            $pdo->exec("ALTER TABLE asset_items ADD COLUMN longitude DECIMAL(10,7) NULL");
+        } catch (Throwable $ignored) {}
+    }
+    if (!db_column_exists($pdo, 'asset_items', 'location_radius_m')) {
+        try {
+            $pdo->exec("ALTER TABLE asset_items ADD COLUMN location_radius_m INT NOT NULL DEFAULT 5");
+        } catch (Throwable $ignored) {}
+    }
+
+    // Salin koordinat & job_desk dari maintenance_assets ke asset_items jika ada
+    if (db_table_exists($pdo, 'maintenance_assets')) {
+        try {
+            $pdo->exec("UPDATE asset_items ai 
+                        JOIN maintenance_assets ma ON ma.asset_item_id = ai.id 
+                        SET ai.latitude = COALESCE(ai.latitude, ma.latitude),
+                            ai.longitude = COALESCE(ai.longitude, ma.longitude),
+                            ai.location_radius_m = COALESCE(ai.location_radius_m, ma.location_radius_m),
+                            ai.job_desk_name = COALESCE(ai.job_desk_name, ma.job_desk_name)
+                        WHERE ma.asset_item_id IS NOT NULL");
+        } catch (Throwable $ignored) {}
+    }
+
+    // 2. Tambahkan kolom asset_item_id ke maintenance_schedules
+    if (db_table_exists($pdo, 'maintenance_schedules')) {
+        if (!db_column_exists($pdo, 'maintenance_schedules', 'asset_item_id')) {
+            try {
+                $pdo->exec("ALTER TABLE maintenance_schedules ADD COLUMN asset_item_id BIGINT NULL");
+                $pdo->exec("ALTER TABLE maintenance_schedules ADD INDEX idx_sched_asset_item (asset_item_id)");
+            } catch (Throwable $ignored) {}
+        }
+
+        // Migrasi jadwal yang sudah ada ke asset_item_id
+        if (db_table_exists($pdo, 'maintenance_assets')) {
+            try {
+                $pdo->exec("UPDATE maintenance_schedules s 
+                            JOIN maintenance_assets ma ON ma.id = s.maintenance_asset_id 
+                            SET s.asset_item_id = ma.asset_item_id 
+                            WHERE s.asset_item_id IS NULL AND ma.asset_item_id IS NOT NULL");
+            } catch (Throwable $ignored) {}
+        }
+        if (db_table_exists($pdo, 'pcs')) {
+            try {
+                $pdo->exec("UPDATE maintenance_schedules s 
+                            JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = s.pc_id COLLATE utf8mb4_unicode_ci 
+                            SET s.asset_item_id = p.asset_item_id 
+                            WHERE s.asset_item_id IS NULL AND p.asset_item_id IS NOT NULL");
+            } catch (Throwable $ignored) {}
+        }
+        if (db_table_exists($pdo, 'printers')) {
+            try {
+                $pdo->exec("UPDATE maintenance_schedules s 
+                            JOIN printers pr ON pr.prn_id COLLATE utf8mb4_unicode_ci = s.printer_id COLLATE utf8mb4_unicode_ci 
+                            SET s.asset_item_id = pr.asset_item_id 
+                            WHERE s.asset_item_id IS NULL AND pr.asset_item_id IS NOT NULL");
+            } catch (Throwable $ignored) {}
+        }
+    }
+
+    // 3. Pastikan corrective_tickets terhubung ke asset_item_id
+    if (db_table_exists($pdo, 'corrective_tickets')) {
+        if (!db_column_exists($pdo, 'corrective_tickets', 'asset_item_id')) {
+            try {
+                $pdo->exec("ALTER TABLE corrective_tickets ADD COLUMN asset_item_id BIGINT NULL");
+                $pdo->exec("ALTER TABLE corrective_tickets ADD INDEX idx_ticket_asset_item (asset_item_id)");
+            } catch (Throwable $ignored) {}
+        }
+
+        if (db_table_exists($pdo, 'maintenance_assets')) {
+            try {
+                $pdo->exec("UPDATE corrective_tickets ct 
+                            JOIN maintenance_assets ma ON ma.id = ct.maintenance_asset_id 
+                            SET ct.asset_item_id = ma.asset_item_id 
+                            WHERE ct.asset_item_id IS NULL AND ma.asset_item_id IS NOT NULL");
+            } catch (Throwable $ignored) {}
+        }
+        if (db_table_exists($pdo, 'pcs')) {
+            try {
+                $pdo->exec("UPDATE corrective_tickets ct 
+                            JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = ct.pc_id COLLATE utf8mb4_unicode_ci 
+                            SET ct.asset_item_id = p.asset_item_id 
+                            WHERE ct.asset_item_id IS NULL AND p.asset_item_id IS NOT NULL");
+            } catch (Throwable $ignored) {}
+        }
+    }
+}
+

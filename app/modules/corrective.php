@@ -547,11 +547,15 @@ function handle_route_tickets(PDO $pdo): void
     }
 
     $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
-    $sql = "SELECT t.*, ma.maintenance_asset_code, ma.name AS maintenance_asset_name, c.company_name,
+    $sql = "SELECT t.*, 
+                   COALESCE(ai.asset_code, ma.maintenance_asset_code, t.pc_id) AS maintenance_asset_code,
+                   COALESCE(ai.asset_name, ma.name, t.pc_id) AS maintenance_asset_name,
+                   c.company_name,
                    (SELECT COUNT(*) FROM corrective_repairs cr WHERE cr.ticket_id = t.id) AS repair_count,
                    (SELECT COALESCE(SUM(cr.repair_cost), 0) FROM corrective_repairs cr WHERE cr.ticket_id = t.id) AS total_repair_cost,
                    (SELECT COALESCE(SUM(crp.part_cost), 0) FROM corrective_repairs cr JOIN corrective_repair_parts crp ON crp.repair_id = cr.id WHERE cr.ticket_id = t.id) AS total_part_cost
             FROM corrective_tickets t
+            LEFT JOIN asset_items ai ON ai.id = t.asset_item_id
             LEFT JOIN maintenance_assets ma ON ma.id = t.maintenance_asset_id
             LEFT JOIN asset_companies c ON c.id = t.company_id
             $whereSql
@@ -711,6 +715,7 @@ function handle_route_ticket_form(PDO $pdo): void
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         verify_csrf();
         $code = generate_next_ticket_code($pdo);
+        $assetItemId = (int)($_POST['asset_item_id'] ?? 0) ?: null;
         $maintAssetId = (int)($_POST['maintenance_asset_id'] ?? 0) ?: null;
         $reporterName = trim((string)($_POST['reporter_name'] ?? ''));
         $reporterNik = trim((string)($_POST['reporter_nik'] ?? ''));
@@ -726,14 +731,36 @@ function handle_route_ticket_form(PDO $pdo): void
             redirect_to('ticket_form');
         }
 
-        // Ambil data detail aset dari maintenance_assets
+        // Ambil data detail aset dari asset_items
         $assetCat = 'IT';
-        $assetItemId = null;
         $pcId = null;
         $companyId = null;
         $location = trim((string)($_POST['location_label'] ?? ''));
 
-        if ($maintAssetId) {
+        if ($assetItemId) {
+            $aiStmt = $pdo->prepare('SELECT ai.*, ag.group_code, c.company_name FROM asset_items ai LEFT JOIN asset_groups ag ON ag.id = ai.asset_group_id LEFT JOIN asset_companies c ON c.id = ai.company_id WHERE ai.id = ? LIMIT 1');
+            $aiStmt->execute([$assetItemId]);
+            $aiRow = $aiStmt->fetch();
+            if ($aiRow) {
+                $grp = strtoupper((string)($aiRow['group_code'] ?? ''));
+                if ($grp === 'VH') {
+                    $assetCat = 'Vehicle';
+                } elseif (in_array($grp, ['FC', 'BLD', 'FCL'], true)) {
+                    $assetCat = 'Facility';
+                } else {
+                    $assetCat = 'IT';
+                }
+                $companyId = (int)($aiRow['company_id'] ?? 0) ?: null;
+                if ($location === '' && !empty($aiRow['location_label'])) {
+                    $location = (string)$aiRow['location_label'];
+                }
+                if (db_table_exists($pdo, 'pcs')) {
+                    $stP = $pdo->prepare('SELECT pc_id FROM pcs WHERE asset_item_id = ? LIMIT 1');
+                    $stP->execute([$assetItemId]);
+                    $pcId = $stP->fetchColumn() ?: null;
+                }
+            }
+        } elseif ($maintAssetId) {
             $mRow = get_maintenance_asset_unit($pdo, $maintAssetId);
             if ($mRow) {
                 $assetItemId = $mRow['asset_item_id'];
@@ -780,42 +807,42 @@ function handle_route_ticket_form(PDO $pdo): void
         redirect_to('ticket_detail', ['id' => $ticketId]);
     }
 
-    // Ambil seluruh daftar Maintenance Assets untuk dropdown cepat
-    $hasGroups = db_table_exists($pdo, 'asset_groups');
-    $maintList = $pdo->query("SELECT ma.id, ma.maintenance_asset_code, ma.name, ma.maintenance_type, ma.location_label,
-                                     ma.owner_name AS custodian_name, ma.employee_nik AS custodian_nik" . 
-                                     ($hasGroups ? ", ag.group_code, ag.group_name" : "") . "
-                              FROM maintenance_assets ma
-                              " . ($hasGroups ? "LEFT JOIN asset_groups ag ON ag.id = ma.asset_group_id" : "") . "
-                              ORDER BY ma.maintenance_asset_code ASC")->fetchAll(PDO::FETCH_ASSOC);
+    // Ambil seluruh daftar Unit Aset untuk dropdown cepat
+    $maintList = $pdo->query("SELECT ai.id, ai.asset_code, ai.asset_name, ai.asset_mode, ai.location_label,
+                                     ai.custodian_name, ai.custodian_nik, ag.group_code, ag.group_name, at.type_code, at.type_name
+                              FROM asset_items ai
+                              LEFT JOIN asset_groups ag ON ag.id = ai.asset_group_id
+                              LEFT JOIN asset_types at ON at.id = ai.asset_type_id
+                              WHERE ai.status <> 'inactive'
+                              ORDER BY (ai.asset_mode = 'group') DESC, ai.asset_code ASC")->fetchAll(PDO::FETCH_ASSOC);
 
     render_header('Buat Tiket Corrective Baru', $user);
     ?>
     <section class="panel">
         <h1>Buat Tiket Kendala / Reparasi Baru</h1>
-        <p class="muted">Pilih <strong>No. Maintenance Asset</strong> yang tertera pada label fisik unit.</p>
+        <p class="muted">Pilih <strong>Unit Aset</strong> yang bermasalah. Untuk unit bundling, cukup pilih unit Induk Bundle atau anggota terkait.</p>
 
         <form method="post" enctype="multipart/form-data">
             <input type="hidden" name="csrf" value="<?= csrf_token() ?>">
 
-            <h2>1. Identitas Maintenance Asset</h2>
+            <h2>1. Identitas Unit Aset</h2>
             <div class="grid two">
-                <label>No. Maintenance Asset ID *
-                    <select name="maintenance_asset_id" id="maintAssetSelect" required onchange="onMaintAssetChange()">
-                        <option value="">-- Pilih No. Maintenance Asset (MNT-...) --</option>
+                <label>Unit Aset *
+                    <select name="asset_item_id" id="maintAssetSelect" required onchange="onMaintAssetChange()">
+                        <option value="">-- Pilih Unit Aset --</option>
                         <?php foreach ($maintList as $m): ?>
                             <?php
                             $sel = ($preMntId === (int)$m['id']) ? 'selected' : '';
                             $cat = 'IT';
                             $grp = strtoupper((string)($m['group_code'] ?? ''));
-                            $grpName = strtoupper((string)($m['group_name'] ?? ''));
-                            $mType = strtoupper((string)($m['maintenance_type'] ?? ''));
-                            if ($grp === 'VH' || str_contains($grpName, 'VEHICLE') || str_contains($mType, 'VEHICLE')) {
+                            if ($grp === 'VH') {
                                 $cat = 'Vehicle';
-                            } elseif ($grp === 'FC' || str_contains($grpName, 'FACILITY') || str_contains($mType, 'FACILITY')) {
+                            } elseif (in_array($grp, ['FC', 'BLD', 'FCL'], true)) {
                                 $cat = 'Facility';
                             }
-                            $desc = $m['maintenance_asset_code'] . ' - ' . $m['name'] . ($m['custodian_name'] ? ' (' . $m['custodian_name'] . ')' : '');
+                            $mMode = (string)($m['asset_mode'] ?? 'standalone');
+                            $badge = ($mMode === 'group') ? '[📦 INDUK BUNDLE] ' : (($mMode === 'child') ? '[🔗 ANGGOTA] ' : '');
+                            $desc = $badge . $m['asset_code'] . ' - ' . $m['asset_name'] . ($m['custodian_name'] ? ' (' . $m['custodian_name'] . ')' : '');
                             ?>
                             <option value="<?= (int)$m['id'] ?>" data-cat="<?= e($cat) ?>" data-loc="<?= e($m['location_label'] ?? '') ?>" data-user="<?= e($m['custodian_name'] ?? '') ?>" data-nik="<?= e($m['custodian_nik'] ?? '') ?>" <?= $sel ?>>
                                 <?= e($desc) ?>

@@ -125,31 +125,30 @@ function mobile_schedule(PDO $pdo): void
     sync_completed_mobile_schedules($pdo, (int)$user['id']);
     render_mobile_header('Schedule', $user);
     $stmt = $pdo->prepare("SELECT s.*, 
-        COALESCE(ai.asset_code, ma.maintenance_asset_code, s.pc_id, s.printer_id, CONCAT('ASET #', s.maintenance_asset_id)) AS asset_id, 
-        COALESCE(ma.owner_name, ai.custodian_name, p.owner_name, pr.printer_name, '-') AS owner_name, 
-        COALESCE(ma.name, ai.asset_name, p.computer_name, pr.printer_name, pr.location, '-') AS computer_name, 
-        COALESCE(ma.location_label, ai.location_label, p.location_label, pr.location, '') AS location_label,
-        ma.maintenance_asset_code,
+        COALESCE(ai.asset_code, ma.maintenance_asset_code, s.pc_id, s.printer_id, CONCAT('ASET #', s.id)) AS asset_id, 
+        COALESCE(ai.custodian_name, ma.owner_name, p.owner_name, pr.printer_name, '-') AS owner_name, 
+        COALESCE(ai.asset_name, ma.name, p.computer_name, pr.printer_name, pr.location, '-') AS computer_name, 
+        COALESCE(ai.location_label, ai.location_name, ma.location_label, p.location_label, pr.location, '') AS location_label,
+        ai.asset_mode,
         EXISTS (SELECT 1 FROM maintenance_reports r WHERE r.schedule_id=s.id) AS has_report 
         FROM maintenance_schedules s 
+        LEFT JOIN asset_items ai ON ai.id = COALESCE(s.asset_item_id, ma.asset_item_id)
         LEFT JOIN maintenance_assets ma ON ma.id = s.maintenance_asset_id
-        LEFT JOIN asset_items ai ON ai.id = ma.asset_item_id
-        LEFT JOIN pcs p ON (p.pc_id = s.pc_id OR (s.pc_id IS NULL AND ma.pc_id IS NOT NULL AND p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci))
-        LEFT JOIN printers pr ON (pr.prn_id = s.printer_id OR (s.printer_id IS NULL AND ma.printer_id IS NOT NULL AND pr.prn_id COLLATE utf8mb4_unicode_ci = ma.printer_id COLLATE utf8mb4_unicode_ci))
+        LEFT JOIN pcs p ON (p.pc_id = s.pc_id OR (s.pc_id IS NULL AND p.asset_item_id = s.asset_item_id))
+        LEFT JOIN printers pr ON (pr.prn_id = s.printer_id OR (s.printer_id IS NULL AND pr.asset_item_id = s.asset_item_id))
         WHERE s.technician_id=? AND s.status<>'completed' 
         ORDER BY s.scheduled_date ASC, s.id ASC");
     $stmt->execute([$user['id']]);
-    echo '<section class="panel"><h1>Schedule Saya</h1><p class="muted">Pilih aset sesuai label PC/Printer, lalu scan QR sebelum mulai pekerjaan.</p></section>';
+    echo '<section class="panel"><h1>Schedule Saya</h1><p class="muted">Pilih unit aset, lalu scan QR sebelum mulai pekerjaan. Untuk paket bundling cukup scan QR Induk.</p></section>';
     $hasRows = false;
     foreach ($stmt as $row) {
         $hasRows = true;
         $canOpen = !empty($row['arrival_at']);
         $waitingEndScan = $canOpen && (int)($row['has_report'] ?? 0) === 1;
         $displayCode = (string)$row['asset_id'];
-        if (!empty($row['maintenance_asset_code']) && $row['maintenance_asset_code'] !== $displayCode) {
-            $codeHtml = e($displayCode) . ' <small class="muted" style="font-weight:normal;">(' . e($row['maintenance_asset_code']) . ')</small>';
-        } else {
-            $codeHtml = e($displayCode);
+        $codeHtml = e($displayCode);
+        if (($row['asset_mode'] ?? '') === 'group') {
+            $codeHtml .= ' <span class="badge" style="background:#1e3a8a;color:#fff;font-size:11px;">📦 Induk Bundle</span>';
         }
         echo '<section class="panel"><div class="split"><div><strong>' . $codeHtml . '</strong><br><span class="muted">' . e($row['owner_name']) . ' - ' . e($row['computer_name'] ?: '-') . '</span>';
         if (!empty($row['location_label'])) {
@@ -223,10 +222,13 @@ function mobile_scan(PDO $pdo): void
         $schedule = null;
         if ($scheduleId > 0) {
             $schSql = "SELECT s.*, 
+                       ai.id AS ai_id, ai.asset_code AS ai_asset_code, ai.asset_mode AS ai_asset_mode,
+                       ai.latitude AS ai_lat, ai.longitude AS ai_lng, ai.location_radius_m AS ai_radius,
                        ma.id AS ma_id, ma.maintenance_asset_code, ma.latitude AS ma_lat, ma.longitude AS ma_lng, 
                        ma.location_radius_m AS ma_radius, ma.location_label AS ma_location_label, 
                        ma.pc_id AS ma_pc_id, ma.printer_id AS ma_printer_id
                        FROM maintenance_schedules s 
+                       LEFT JOIN asset_items ai ON ai.id = s.asset_item_id
                        LEFT JOIN maintenance_assets ma ON ma.id = s.maintenance_asset_id 
                        WHERE s.id = ?";
             $schParams = [$scheduleId];
@@ -245,7 +247,33 @@ function mobile_scan(PDO $pdo): void
 
             // Cek apakah scan cocok dengan target schedule
             $isMatch = false;
-            if ($assetType === 'maintenance_asset') {
+            if ($assetType === 'asset_item') {
+                $scannedItemId = (int)$assetInfo['id'];
+                $schedItemId = (int)($scheduleCandidate['asset_item_id'] ?? 0);
+
+                if ($schedItemId > 0 && $schedItemId === $scannedItemId) {
+                    $isMatch = true;
+                } elseif (($assetInfo['asset_mode'] ?? '') === 'group') {
+                    // Cukup scan QR Induk untuk seluruh paket unit:
+                    if ($schedItemId === $scannedItemId) {
+                        $isMatch = true;
+                    } else {
+                        $childIds = array_map('intval', array_column($assetInfo['bundle_children'] ?? [], 'child_id'));
+                        if (in_array($schedItemId, $childIds, true)) {
+                            $isMatch = true;
+                        }
+                    }
+                } elseif (($assetInfo['asset_mode'] ?? '') === 'child' && !empty($assetInfo['parent_bundle'])) {
+                    $parentId = (int)($assetInfo['parent_bundle']['parent_id'] ?? 0);
+                    if ($schedItemId === $parentId) {
+                        $isMatch = true;
+                    }
+                } elseif (!empty($scheduleCandidate['pc_id']) && !empty($assetInfo['pc_id']) && $scheduleCandidate['pc_id'] === $assetInfo['pc_id']) {
+                    $isMatch = true;
+                } elseif (!empty($scheduleCandidate['printer_id']) && !empty($assetInfo['printer_id']) && $scheduleCandidate['printer_id'] === $assetInfo['printer_id']) {
+                    $isMatch = true;
+                }
+            } elseif ($assetType === 'maintenance_asset') {
                 $isMatch = ((int)$scheduleCandidate['maintenance_asset_id'] === (int)$assetId)
                     || (!empty($scheduleCandidate['pc_id']) && !empty($assetInfo['pc_id']) && $scheduleCandidate['pc_id'] === $assetInfo['pc_id'])
                     || (!empty($scheduleCandidate['printer_id']) && !empty($assetInfo['printer_id']) && $scheduleCandidate['printer_id'] === $assetInfo['printer_id']);
@@ -267,10 +295,12 @@ function mobile_scan(PDO $pdo): void
             $schedule = $scheduleCandidate;
         } else {
             $findSql = "SELECT s.*, 
+                        ai.id AS ai_id, ai.asset_code AS ai_asset_code,
                         ma.id AS ma_id, ma.maintenance_asset_code, ma.latitude AS ma_lat, ma.longitude AS ma_lng, 
                         ma.location_radius_m AS ma_radius, ma.location_label AS ma_location_label,
                         ma.pc_id AS ma_pc_id, ma.printer_id AS ma_printer_id
                         FROM maintenance_schedules s 
+                        LEFT JOIN asset_items ai ON ai.id = s.asset_item_id
                         LEFT JOIN maintenance_assets ma ON ma.id = s.maintenance_asset_id 
                         WHERE s.status <> 'completed'";
             $findParams = [];
@@ -279,7 +309,26 @@ function mobile_scan(PDO $pdo): void
                 $findParams[] = $user['id'];
             }
 
-            if ($assetType === 'maintenance_asset') {
+            if ($assetType === 'asset_item') {
+                $scannedItemId = (int)$assetInfo['id'];
+                $targetIds = [$scannedItemId];
+                if (($assetInfo['asset_mode'] ?? '') === 'group') {
+                    foreach ($assetInfo['bundle_children'] ?? [] as $ch) {
+                        $targetIds[] = (int)$ch['child_id'];
+                    }
+                } elseif (($assetInfo['asset_mode'] ?? '') === 'child' && !empty($assetInfo['parent_bundle'])) {
+                    $targetIds[] = (int)$assetInfo['parent_bundle']['parent_id'];
+                }
+                $inPlaceholders = implode(',', array_fill(0, count($targetIds), '?'));
+                $findSql .= " AND (s.asset_item_id IN ($inPlaceholders) 
+                               OR (s.pc_id IS NOT NULL AND s.pc_id = ?) 
+                               OR (s.printer_id IS NOT NULL AND s.printer_id = ?))";
+                foreach ($targetIds as $tid) {
+                    $findParams[] = $tid;
+                }
+                $findParams[] = !empty($assetInfo['pc_id']) ? $assetInfo['pc_id'] : '__none__';
+                $findParams[] = !empty($assetInfo['printer_id']) ? $assetInfo['printer_id'] : '__none__';
+            } elseif ($assetType === 'maintenance_asset') {
                 $findSql .= " AND (s.maintenance_asset_id = ? 
                                OR (s.pc_id IS NOT NULL AND s.pc_id = ?) 
                                OR (s.printer_id IS NOT NULL AND s.printer_id = ?))";
@@ -309,7 +358,13 @@ function mobile_scan(PDO $pdo): void
 
         $lat = ($_POST['lat'] ?? '') !== '' ? (float)$_POST['lat'] : null;
         $lng = ($_POST['lng'] ?? '') !== '' ? (float)$_POST['lng'] : null;
-        if ($assetType === 'pc') {
+        if ($assetType === 'asset_item') {
+            $locationError = validate_asset_item_scan_location($pdo, (int)$assetInfo['id'], $lat, $lng);
+            if ($locationError !== null) {
+                flash($locationError, 'err');
+                redirect_to('mobile_scan', ['id' => $schedule['id'], 'phase' => $phase]);
+            }
+        } elseif ($assetType === 'pc') {
             $locationError = validate_pc_scan_location($pdo, $assetId, $lat, $lng);
             if ($locationError !== null) {
                 flash($locationError, 'err');

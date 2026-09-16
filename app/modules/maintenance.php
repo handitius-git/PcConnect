@@ -947,22 +947,24 @@ function handle_route_maintenance(PDO $pdo): void
     $where = $user['role'] === 'technician' ? 'WHERE s.technician_id = ' . (int)$user['id'] : '';
     try {
         $rows = $pdo->query("SELECT s.*, 
-            COALESCE(s.pc_id, s.printer_id, ma.maintenance_asset_code) asset_id, 
-            COALESCE(p.owner_name, pr.printer_name, ma.owner_name) owner_name, 
-            COALESCE(p.computer_name, pr.location, ma.location_label) computer_name, 
+            COALESCE(ai.asset_code, s.pc_id, s.printer_id, ma.maintenance_asset_code) asset_id, 
+            COALESCE(ai.custodian_name, p.owner_name, pr.printer_name, ma.owner_name) owner_name, 
+            COALESCE(ai.asset_name, p.computer_name, pr.location, ma.location_label) computer_name, 
             u.name technician, 
             COALESCE(ag.group_name, 'IT Asset') asset_group_name,
-            COALESCE(ag.group_code, 'IT') asset_group_code
+            COALESCE(ag.group_code, 'IT') asset_group_code,
+            ai.asset_mode
         FROM maintenance_schedules s 
+        LEFT JOIN asset_items ai ON ai.id = s.asset_item_id
         LEFT JOIN maintenance_assets ma ON ma.id = s.maintenance_asset_id
-        LEFT JOIN asset_groups ag ON ag.id = COALESCE(s.asset_group_id, ma.asset_group_id)
+        LEFT JOIN asset_groups ag ON ag.id = COALESCE(s.asset_group_id, ai.asset_group_id, ma.asset_group_id)
         LEFT JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = s.pc_id COLLATE utf8mb4_unicode_ci 
         LEFT JOIN printers pr ON pr.prn_id COLLATE utf8mb4_unicode_ci = s.printer_id COLLATE utf8mb4_unicode_ci 
         LEFT JOIN users u ON u.id = s.technician_id 
         $where 
         ORDER BY s.scheduled_date DESC, s.id DESC")->fetchAll();
     } catch (Throwable $e) {
-        $rows = $pdo->query("SELECT s.*, s.pc_id asset_id, 'pc' asset_type, p.owner_name, p.computer_name, u.name technician, 'IT Asset' asset_group_name, 'IT' asset_group_code FROM maintenance_schedules s JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = s.pc_id COLLATE utf8mb4_unicode_ci LEFT JOIN users u ON u.id=s.technician_id $where ORDER BY s.scheduled_date DESC, s.id DESC")->fetchAll();
+        $rows = $pdo->query("SELECT s.*, s.pc_id asset_id, 'pc' asset_type, p.owner_name, p.computer_name, u.name technician, 'IT Asset' asset_group_name, 'IT' asset_group_code, NULL asset_mode FROM maintenance_schedules s JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = s.pc_id COLLATE utf8mb4_unicode_ci LEFT JOIN users u ON u.id=s.technician_id $where ORDER BY s.scheduled_date DESC, s.id DESC")->fetchAll();
     }
     echo '<section class="panel"><div class="split"><h1>History Preventive Maintenance</h1><div class="actions"><a class="btn" href="' . route_url('export_excel', ['type' => 'maintenance']) . '">Export Excel</a>';
     if (can_manage_maintenance($user)) {
@@ -992,7 +994,8 @@ function handle_route_maintenance(PDO $pdo): void
             $actions .= ' <a class="btn" href="' . route_url('report_print', ['id' => $row['id']]) . '">Report</a>';
         }
         $groupBadge = $row['asset_group_code'] ? ($row['asset_group_code'] . ' - ' . $row['asset_group_name']) : ($row['asset_group_name'] ?: 'IT Asset');
-        echo '<tr><td>' . e($row['scheduled_date']) . '</td><td><strong>' . e($row['asset_id']) . '</strong><br><span class="badge">' . e($row['asset_type'] ?? 'pc') . '</span></td><td>' . e($row['owner_name'] ?: '-') . '<br><span class="muted">' . e($row['computer_name'] ?: '-') . '</span></td><td><span class="badge">' . e($groupBadge) . '</span></td><td>' . e($row['technician'] ?: '-') . '</td><td><span class="badge">' . e($row['status']) . '</span></td><td>Before: ' . e($beforeCount) . '<br>Process: ' . e($processCount) . '<br>After: ' . e($afterCount) . '</td><td>' . $actions . '</td></tr>';
+        $bundleBadge = ($row['asset_mode'] ?? '') === 'group' ? '<br><span class="badge" style="background:#1e3a8a;color:#fff;font-size:11px;">📦 Induk Bundle</span>' : '';
+        echo '<tr><td>' . e($row['scheduled_date']) . '</td><td><strong>' . e($row['asset_id']) . '</strong>' . $bundleBadge . '<br><span class="badge">' . e($row['asset_type'] ?? 'pc') . '</span></td><td>' . e($row['owner_name'] ?: '-') . '<br><span class="muted">' . e($row['computer_name'] ?: '-') . '</span></td><td><span class="badge">' . e($groupBadge) . '</span></td><td>' . e($row['technician'] ?: '-') . '</td><td><span class="badge">' . e($row['status']) . '</span></td><td>Before: ' . e($beforeCount) . '<br>Process: ' . e($processCount) . '<br>After: ' . e($afterCount) . '</td><td>' . $actions . '</td></tr>';
     }
     echo '</table></section>';
     render_footer();
@@ -1123,9 +1126,9 @@ function handle_route_schedule_form(PDO $pdo): void
             flash('Teknisi wajib dipilih untuk schedule maintenance.', 'err');
             redirect_to('schedule_form', ['asset_group_id' => $selectedGroupId]);
         }
-        $maintenanceAssetId = (int)($_POST['maintenance_asset_id'] ?? 0);
-        if ($maintenanceAssetId <= 0) {
-            flash('Aset maintenance wajib dipilih.', 'err');
+        $assetItemId = (int)($_POST['asset_item_id'] ?? $_POST['maintenance_asset_id'] ?? 0);
+        if ($assetItemId <= 0) {
+            flash('Unit aset maintenance wajib dipilih.', 'err');
             redirect_to('schedule_form', ['asset_group_id' => $selectedGroupId]);
         }
         $scheduledDate = normalize_date_input((string)($_POST['scheduled_date'] ?? ''));
@@ -1139,41 +1142,40 @@ function handle_route_schedule_form(PDO $pdo): void
             redirect_to('schedule_form', ['asset_group_id' => $selectedGroupId]);
         }
 
-        $maStmt = $pdo->prepare('SELECT ma.*, p.computer_name, pr.printer_name FROM maintenance_assets ma 
-            LEFT JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci 
-            LEFT JOIN printers pr ON pr.prn_id COLLATE utf8mb4_unicode_ci = ma.printer_id COLLATE utf8mb4_unicode_ci 
-            WHERE ma.id = ? LIMIT 1');
-        $maStmt->execute([$maintenanceAssetId]);
-        $ma = $maStmt->fetch();
-        if (!$ma) {
-            flash('Aset maintenance tidak ditemukan atau belum terdaftar.', 'err');
+        $aiStmt = $pdo->prepare('SELECT ai.*, at.type_code, ag.group_code FROM asset_items ai 
+            LEFT JOIN asset_types at ON at.id = ai.asset_type_id 
+            LEFT JOIN asset_groups ag ON ag.id = ai.asset_group_id 
+            WHERE ai.id = ? LIMIT 1');
+        $aiStmt->execute([$assetItemId]);
+        $ai = $aiStmt->fetch();
+        if (!$ai) {
+            flash('Unit aset tidak ditemukan atau belum terdaftar.', 'err');
             redirect_to('schedule_form', ['asset_group_id' => $selectedGroupId]);
         }
 
-        $pcId = !empty($ma['pc_id']) ? $ma['pc_id'] : null;
-        $printerId = !empty($ma['printer_id']) ? $ma['printer_id'] : null;
-
-        // Auto-link ke PC jika ma.pc_id kosong tapi NIK cocok di tabel pcs
-        if (!$pcId && !empty($ma['employee_nik']) && db_table_exists($pdo, 'pcs')) {
-            $matchedPcStmt = $pdo->prepare('SELECT pc_id FROM pcs WHERE employee_nik = ? AND employee_nik <> "" LIMIT 1');
-            $matchedPcStmt->execute([$ma['employee_nik']]);
-            $foundPcId = (string)($matchedPcStmt->fetchColumn() ?: '');
-            if ($foundPcId !== '') {
-                $pcId = $foundPcId;
-                try {
-                    $pdo->prepare('UPDATE maintenance_assets SET pc_id = ? WHERE id = ?')->execute([$pcId, $maintenanceAssetId]);
-                } catch (Throwable $ignored) {}
-            }
+        $pcId = null;
+        if (db_table_exists($pdo, 'pcs')) {
+            $stP = $pdo->prepare('SELECT pc_id FROM pcs WHERE asset_item_id = ? LIMIT 1');
+            $stP->execute([$assetItemId]);
+            $pcId = $stP->fetchColumn() ?: null;
         }
-        $assetType = $pcId ? 'pc' : ($printerId ? 'printer' : ($ma['maintenance_type'] ?: 'equipment'));
-        $assetGroupId = (int)($ma['asset_group_id'] ?: $selectedGroupId);
-        if ($assetGroupId <= 0 && ($pcId || $printerId)) {
+
+        $printerId = null;
+        if (db_table_exists($pdo, 'printers')) {
+            $stPr = $pdo->prepare('SELECT prn_id FROM printers WHERE asset_item_id = ? LIMIT 1');
+            $stPr->execute([$assetItemId]);
+            $printerId = $stPr->fetchColumn() ?: null;
+        }
+
+        $assetType = (string)($ai['type_code'] ?: ($ai['group_code'] ?: 'equipment'));
+        $assetGroupId = (int)($ai['asset_group_id'] ?: $selectedGroupId);
+        if ($assetGroupId <= 0) {
             $assetGroupId = (int)$pdo->query("SELECT id FROM asset_groups WHERE group_code='IT' LIMIT 1")->fetchColumn() ?: null;
         }
 
         try {
-            $stmt = $pdo->prepare('INSERT INTO maintenance_schedules (asset_type, maintenance_asset_id, asset_group_id, pc_id, printer_id, technician_id, scheduled_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-            $stmt->execute([$assetType, $maintenanceAssetId, $assetGroupId ?: null, $pcId, $printerId, $technicianId, $scheduledDate, trim($_POST['notes'] ?? '')]);
+            $stmt = $pdo->prepare('INSERT INTO maintenance_schedules (asset_type, asset_item_id, asset_group_id, pc_id, printer_id, technician_id, scheduled_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+            $stmt->execute([$assetType, $assetItemId, $assetGroupId ?: null, $pcId, $printerId, $technicianId, $scheduledDate, trim($_POST['notes'] ?? '')]);
             $scheduleId = (int)$pdo->lastInsertId();
             foreach ($jobIds as $jobId) {
                 $pdo->prepare('INSERT INTO schedule_jobs (schedule_id, job_id) VALUES (?, ?)')->execute([$scheduleId, $jobId]);
@@ -1188,11 +1190,11 @@ function handle_route_schedule_form(PDO $pdo): void
 
     render_header('Tambah Schedule', $user);
 
-    $targetAssetId = (int)($_GET['maintenance_asset_id'] ?? $_GET['asset_id'] ?? 0);
+    $targetAssetId = (int)($_GET['asset_item_id'] ?? $_GET['maintenance_asset_id'] ?? $_GET['asset_id'] ?? 0);
     $assetParam = trim((string)($_GET['asset'] ?? ''));
     if ($targetAssetId === 0 && $assetParam !== '') {
-        $stCode = $pdo->prepare('SELECT id FROM maintenance_assets WHERE maintenance_asset_code = ? OR pc_id = ? OR printer_id = ? LIMIT 1');
-        $stCode->execute([$assetParam, $assetParam, $assetParam]);
+        $stCode = $pdo->prepare('SELECT id FROM asset_items WHERE asset_code = ? LIMIT 1');
+        $stCode->execute([$assetParam]);
         $targetAssetId = (int)($stCode->fetchColumn() ?: 0);
     }
 
@@ -1211,37 +1213,33 @@ function handle_route_schedule_form(PDO $pdo): void
         if ($at['type_code'] === 'PRT') { $prtTypeId = (int)$at['id']; }
     }
 
-    $sqlMa = "SELECT ma.id, ma.maintenance_asset_code, ma.name, ma.asset_group_id, ma.asset_type_id, ma.job_desk_name,
-                     ma.pc_id, ma.printer_id,
+    $sqlAi = "SELECT ai.id, ai.asset_code, ai.asset_name, ai.asset_group_id, ai.asset_type_id, ai.job_desk_name,
+                     ai.asset_mode, ai.serial_number, ai.brand, ai.model,
                      ag.group_name, ag.group_code,
                      at.type_name, at.type_code,
-                     COALESCE(p.computer_name, pr.printer_name, ma.name) AS display_name,
-                     COALESCE(p.owner_name, pr.location, ma.owner_name, ma.location_label) AS display_sub
-              FROM maintenance_assets ma
-              LEFT JOIN asset_groups ag ON ag.id = ma.asset_group_id
-              LEFT JOIN asset_types at ON at.id = ma.asset_type_id
-              LEFT JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci
-              LEFT JOIN printers pr ON pr.prn_id COLLATE utf8mb4_unicode_ci = ma.printer_id COLLATE utf8mb4_unicode_ci
-              WHERE ma.status != 'inactive' AND (ma.pc_id IS NULL OR ma.pc_id = '' OR (p.asset_item_id IS NOT NULL AND p.asset_item_id > 0))
-              ORDER BY COALESCE(ag.group_name, 'IT Asset'), at.type_name, ma.maintenance_asset_code";
-    $maintenanceAssets = $pdo->query($sqlMa)->fetchAll(PDO::FETCH_ASSOC);
+                     c.company_name,
+                     loc.location_name,
+                     COALESCE(ai.asset_name, ai.model, ai.asset_code) AS display_name,
+                     COALESCE(ai.custodian_name, ai.location_label, loc.location_name, c.company_name, '') AS display_sub
+              FROM asset_items ai
+              LEFT JOIN asset_groups ag ON ag.id = ai.asset_group_id
+              LEFT JOIN asset_types at ON at.id = ai.asset_type_id
+              LEFT JOIN asset_companies c ON c.id = ai.company_id
+              LEFT JOIN asset_locations loc ON loc.id = ai.location_id
+              WHERE ai.status != 'inactive'
+              ORDER BY (ai.asset_mode = 'group') DESC, COALESCE(ag.group_name, 'IT Asset'), at.type_name, ai.asset_code";
+    $maintenanceAssets = $pdo->query($sqlAi)->fetchAll(PDO::FETCH_ASSOC);
 
     foreach ($maintenanceAssets as &$maRow) {
-        if (empty($maRow['asset_group_id']) && (!empty($maRow['pc_id']) || !empty($maRow['printer_id']))) {
+        if (empty($maRow['asset_group_id'])) {
             $maRow['asset_group_id'] = $itGroupId ?: 1;
             $maRow['group_code'] = 'IT';
             $maRow['group_name'] = 'IT Asset';
         }
         if (empty($maRow['asset_type_id'])) {
-            if (!empty($maRow['pc_id'])) {
-                $maRow['asset_type_id'] = $cmpTypeId ?: 1;
-                $maRow['type_code'] = 'CMP';
-                $maRow['type_name'] = 'Computer';
-            } elseif (!empty($maRow['printer_id'])) {
-                $maRow['asset_type_id'] = $prtTypeId ?: 3;
-                $maRow['type_code'] = 'PRT';
-                $maRow['type_name'] = 'Printer';
-            }
+            $maRow['asset_type_id'] = $cmpTypeId ?: 1;
+            $maRow['type_code'] = 'CMP';
+            $maRow['type_name'] = 'Computer';
         }
     }
     unset($maRow);
@@ -1320,21 +1318,23 @@ function handle_route_schedule_form(PDO $pdo): void
     }
     echo '</select></label>';
 
-    echo '<label>Aset Maintenance (Terdaftar) *'
-        . '<select id="schedAssetSelect" name="maintenance_asset_id" required>'
-        . '<option value="">-- Pilih Aset Maintenance --</option>';
+    echo '<label>Unit Aset (Terdaftar) *'
+        . '<select id="schedAssetSelect" name="asset_item_id" required>'
+        . '<option value="">-- Pilih Unit Aset --</option>';
     foreach ($maintenanceAssets as $maRow) {
         $mId = (int)$maRow['id'];
-        $mCode = $maRow['maintenance_asset_code'];
-        $mName = $maRow['display_name'] ?: $maRow['name'];
+        $mCode = $maRow['asset_code'];
+        $mName = $maRow['display_name'] ?: $maRow['asset_name'];
         $mSub = $maRow['display_sub'] ?: '';
         $mDesk = $maRow['job_desk_name'] ?: '';
         $mGid = (int)$maRow['asset_group_id'];
         $mTid = (int)$maRow['asset_type_id'];
         $mGname = $maRow['group_name'] ?: 'IT Asset';
         $mTname = $maRow['type_name'] ?: '';
+        $mMode = (string)($maRow['asset_mode'] ?? 'standalone');
 
-        $optLabel = $mCode . ' - ' . $mName . ($mSub ? ' (' . $mSub . ')' : '');
+        $badgePrefix = ($mMode === 'group') ? '[📦 INDUK BUNDLE] ' : (($mMode === 'child') ? '[🔗 ANGGOTA] ' : '');
+        $optLabel = $badgePrefix . $mCode . ' - ' . $mName . ($mSub ? ' (' . $mSub . ')' : '');
         $selected = ($targetAssetId === $mId) ? ' selected' : '';
 
         echo '<option value="' . $mId . '"'
@@ -1727,9 +1727,17 @@ function handle_route_maintenance_do(PDO $pdo): void
     $user = require_login();
     $id = (int)($_GET['id'] ?? 0);
     $printerReady = printer_schema_ready($pdo);
-    $stmt = $printerReady
-        ? $pdo->prepare('SELECT s.*, COALESCE(s.pc_id,s.printer_id) asset_id, COALESCE(p.owner_name, pr.printer_name) owner_name, COALESCE(p.computer_name, pr.location) computer_name, COALESCE(p.physical_condition, pr.physical_condition) physical_condition FROM maintenance_schedules s LEFT JOIN pcs p ON p.pc_id=s.pc_id LEFT JOIN printers pr ON pr.prn_id=s.printer_id WHERE s.id=?')
-        : $pdo->prepare("SELECT s.*, s.pc_id asset_id, 'pc' asset_type, p.owner_name, p.computer_name, p.physical_condition FROM maintenance_schedules s JOIN pcs p ON p.pc_id=s.pc_id WHERE s.id=?");
+    $stmt = $pdo->prepare('SELECT s.*, 
+        COALESCE(ai.asset_code, s.pc_id, s.printer_id) asset_id, 
+        COALESCE(ai.custodian_name, p.owner_name, pr.printer_name) owner_name, 
+        COALESCE(ai.asset_name, p.computer_name, pr.location) computer_name, 
+        COALESCE(p.physical_condition, pr.physical_condition) physical_condition,
+        ai.asset_mode
+        FROM maintenance_schedules s 
+        LEFT JOIN asset_items ai ON ai.id = s.asset_item_id
+        LEFT JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = s.pc_id COLLATE utf8mb4_unicode_ci 
+        LEFT JOIN printers pr ON pr.prn_id COLLATE utf8mb4_unicode_ci = s.printer_id COLLATE utf8mb4_unicode_ci 
+        WHERE s.id = ?');
     $stmt->execute([$id]);
     $schedule = $stmt->fetch();
     if (!$schedule) {
@@ -2977,7 +2985,7 @@ function export_excel(PDO $pdo, string $type): never
     if (!$user) {
         redirect_to('login');
     }
-    $maintenanceTypes = ['reports', 'maintenance', 'maintenance_status', 'jobs', 'technicians', 'asset_movements'];
+    $maintenanceTypes = ['reports', 'maintenance', 'maintenance_status', 'jobs', 'technicians', 'asset_movements', 'asset_loans'];
     if (($user['role'] ?? '') === 'technician' && $type !== 'reports') {
         http_response_code(403);
         exit('Akses ditolak.');
@@ -3165,6 +3173,68 @@ function export_excel(PDO $pdo, string $type): never
             ];
         }
         output_tsv(['Tanggal Mutasi', 'Kode Aset', 'Nama Aset', 'Kategori/Tipe', 'Bundle Asal', 'Bundle Tujuan', 'Company', 'Alasan / Keterangan', 'PIC / Petugas'], $exportRows);
+        exit;
+    }
+
+    if ($type === 'asset_loans') {
+        $startDate = trim((string)($_GET['start_date'] ?? ''));
+        $endDate = trim((string)($_GET['end_date'] ?? ''));
+        $statusFilter = trim((string)($_GET['status'] ?? ''));
+        $q = trim((string)($_GET['q'] ?? ''));
+
+        $where = ["1=1"];
+        $params = [];
+        if ($startDate !== '') {
+            $where[] = "DATE(al.loan_date) >= ?";
+            $params[] = $startDate;
+        }
+        if ($endDate !== '') {
+            $where[] = "DATE(al.loan_date) <= ?";
+            $params[] = $endDate;
+        }
+        if ($statusFilter !== '') {
+            $where[] = "al.status = ?";
+            $params[] = $statusFilter;
+        }
+        if ($q !== '') {
+            $where[] = "(al.loan_code LIKE ? OR al.borrower_name LIKE ? OR al.borrower_nik LIKE ? OR al.borrower_department LIKE ?)";
+            $w = '%' . $q . '%';
+            $params = array_merge($params, [$w, $w, $w, $w]);
+        }
+
+        $sql = "SELECT al.*, u1.name AS officer_name, u2.name AS return_officer_name,
+                (SELECT GROUP_CONCAT(CONCAT(ai.asset_code, ' - ', COALESCE(NULLIF(ai.asset_name,''), ai.model)) SEPARATOR '; ') 
+                 FROM asset_loan_items ali2 
+                 JOIN asset_items ai ON ai.id = ali2.asset_item_id 
+                 WHERE ali2.loan_id = al.id) AS items_summary
+                FROM asset_loans al
+                LEFT JOIN users u1 ON u1.id = al.officer_user_id
+                LEFT JOIN users u2 ON u2.id = al.return_officer_user_id
+                WHERE " . implode(' AND ', $where) . "
+                ORDER BY al.id DESC";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $exportRows = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $stText = $r['status'] === 'returned' ? 'Dikembalikan' : ($r['status'] === 'active' ? 'Dipinjam' : ucfirst($r['status']));
+            $exportRows[] = [
+                $r['loan_code'],
+                $r['borrower_name'],
+                $r['borrower_nik'] ?: '-',
+                $r['borrower_department'] ?: '-',
+                $r['borrower_phone'] ?: '-',
+                $r['items_summary'] ?: '-',
+                $r['loan_date'],
+                $r['expected_return_date'] ?: '-',
+                $r['actual_return_date'] ?: '-',
+                $r['purpose'] ?: '-',
+                $r['location_note'] ?: '-',
+                $stText,
+                $r['officer_name'] ?: 'System',
+                $r['return_officer_name'] ?: '-',
+            ];
+        }
+        output_tsv(['No. Pinjam', 'Nama Peminjam', 'NIK', 'Departemen', 'No. HP', 'Daftar Aset', 'Tgl Pinjam', 'Target Kembali', 'Realisasi Kembali', 'Keperluan', 'Lokasi Pakai', 'Status', 'Petugas Penyerah', 'Petugas Penerima'], $exportRows);
         exit;
     }
 

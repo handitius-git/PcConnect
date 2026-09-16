@@ -47,6 +47,7 @@ $moduleFiles = [
     'app/modules/corrective.php',
     'app/modules/field_service.php',
     'app/modules/pengguna.php',
+    'app/modules/asset_loan.php',
 ];
 
 $missingFiles = [];
@@ -204,6 +205,21 @@ switch ($route) {
     case 'asset_movements':
         handle_route_asset_movements($pdo);
         break;
+    case 'asset_loans':
+        handle_route_asset_loans($pdo);
+        break;
+    case 'asset_loan_form':
+        handle_route_asset_loan_form($pdo);
+        break;
+    case 'asset_loan_detail':
+        handle_route_asset_loan_detail($pdo);
+        break;
+    case 'asset_loan_return':
+        handle_route_asset_loan_return($pdo);
+        break;
+    case 'report_asset_loans':
+        handle_route_report_asset_loans($pdo);
+        break;
     case 'asset_management_cleanup':
         handle_route_asset_management_cleanup($pdo);
         break;
@@ -226,16 +242,13 @@ switch ($route) {
         break;
 
     // ----------------------------------------------------
-    // Maintenance Assets (Filtered & Strict Sync)
+    // Maintenance Assets (Dialihkan langsung ke Unit Aset)
     // ----------------------------------------------------
     case 'maintenance_assets':
-        handle_route_maintenance_assets($pdo);
-        break;
     case 'maintenance_asset_form':
-        handle_route_maintenance_asset_form($pdo);
-        break;
     case 'maintenance_asset_item_action':
-        handle_route_maintenance_asset_item_action($pdo);
+        flash('Entitas Maintenance Asset telah ditiadakan dan diseragamkan langsung ke Unit Aset.', 'ok');
+        redirect_to('asset_items');
         break;
 
     // ----------------------------------------------------
