@@ -720,7 +720,9 @@ function repair_asset_type_groups(PDO $pdo): void
             $currGroup = (int)$t['asset_group_id'];
 
             $targetGroup = $currGroup;
-            if (in_array($code, ['CAR', 'MTR', 'TRK', 'VH', 'VEHICLE', 'MOBIL', 'MOTOR', 'TRUK']) || preg_match('/(car|motor|truck|truk|mobil|kendaraan|sepeda)/i', $name)) {
+            if (in_array($code, ['TOOLS', 'DSP'])) {
+                $targetGroup = $currGroup > 0 ? $currGroup : $itId;
+            } elseif (in_array($code, ['CAR', 'MTR', 'TRK', 'VH', 'VEHICLE', 'MOBIL', 'MOTOR', 'TRUK']) || preg_match('/(car|motor|truck|truk|mobil|kendaraan|sepeda)/i', $name)) {
                 $targetGroup = $vhId;
             } elseif (in_array($code, ['AC', 'BLD', 'GEN', 'FC', 'FACILITY', 'FASILITAS', 'GEDUNG', 'GENSET']) || preg_match('/(facility|fasilitas|ac|pendingin|gedung|bangunan|generator|genset|ruang|tanah)/i', $name)) {
                 $targetGroup = $fcId;
@@ -743,21 +745,26 @@ function repair_asset_type_groups(PDO $pdo): void
             [$itId, 'NBK', 'Notebook'],
             [$itId, 'PRT', 'Printer'],
             [$itId, 'SRV', 'Server'],
+            [$itId, 'DSP', 'Monitor & Display'],
+            [$itId, 'TOOLS', 'Tools IT'],
             [$vhId, 'CAR', 'Car / Mobil'],
             [$vhId, 'MTR', 'Motorcycle / Motor'],
             [$vhId, 'TRK', 'Truck / Truk'],
+            [$vhId, 'TOOLS', 'Tools Kendaraan'],
             [$fcId, 'AC', 'AC / Pendingin'],
             [$fcId, 'BLD', 'Gedung / Bangunan'],
             [$fcId, 'GEN', 'Generator / Genset'],
             [$fcId, 'FC', 'Fasilitas Umum'],
+            [$fcId, 'DSP', 'Monitor & Display'],
+            [$fcId, 'TOOLS', 'Tools Fasilitas'],
         ];
 
         foreach ($defaults as [$gId, $tCode, $tName]) {
             if ($gId <= 0) continue;
-            $existingId = (int)$pdo->query("SELECT id FROM asset_types WHERE type_code = " . $pdo->quote($tCode) . " LIMIT 1")->fetchColumn();
+            $existingId = (int)$pdo->query("SELECT id FROM asset_types WHERE asset_group_id = {$gId} AND UPPER(TRIM(type_code)) = " . $pdo->quote(strtoupper(trim($tCode))) . " LIMIT 1")->fetchColumn();
             if ($existingId > 0) {
                 try {
-                    $pdo->prepare("UPDATE asset_types SET asset_group_id = ?, type_name = ?, is_active = 1 WHERE id = ?")->execute([$gId, $tName, $existingId]);
+                    $pdo->prepare("UPDATE asset_types SET type_name = ?, is_active = 1 WHERE id = ?")->execute([$tName, $existingId]);
                 } catch (Throwable $ignored) {}
             } else {
                 try {
@@ -1054,7 +1061,7 @@ function ensure_performance_indexes(PDO $pdo): void
 function ensure_app_schema(PDO $pdo, bool $force = false): void
 {
     if (!$force && empty($_GET['force_schema'])) {
-        $lockFile = sys_get_temp_dir() . '/pcconnect_schema_v15.lock';
+        $lockFile = sys_get_temp_dir() . '/pcconnect_schema_v16.lock';
         if (file_exists($lockFile) && (time() - filemtime($lockFile) < 1800) && db_table_exists($pdo, 'pcs')) {
             return;
         }
@@ -1081,7 +1088,7 @@ function ensure_app_schema(PDO $pdo, bool $force = false): void
     ensure_unified_asset_schema($pdo);
     ensure_performance_indexes($pdo);
 
-    @touch(sys_get_temp_dir() . '/pcconnect_schema_v15.lock');
+    @touch(sys_get_temp_dir() . '/pcconnect_schema_v16.lock');
 }
 
 function ensure_user_roles_schema(PDO $pdo): void
@@ -1786,6 +1793,25 @@ function ensure_default_brands_per_group_and_type(PDO $pdo): void
             ['FC', 'FC', 'KNMS', 'Kenmaster', 'Alat Teknik, Tangga Teleskopik & Kotak Perkakas Kenmaster'],
             ['FC', 'FC', 'DWLT', 'Dewalt', 'Heavy Duty Power Tools & Cordless Drill Dewalt'],
             ['FC', 'FC', 'KRCH', 'Karcher', 'Mesin High Pressure Jet Cleaner & Vacuum Industri Karcher'],
+
+            // Vehicle - Tools Kendaraan (TOOLS)
+            ['VH', 'TOOLS', 'TEKR', 'Tekiro', 'Perkakas Mekanik, Kunci Shock, Kunci Momen & Toolkit Bengkel Tekiro'],
+            ['VH', 'TOOLS', 'KRIS', 'Krisbow', 'Dongkrak Buaya, Tyre Inflator, Battery Booster & Perkakas Krisbow'],
+            ['VH', 'TOOLS', 'BSCH', 'Bosch', 'OBD Diagnostic Scanner, Battery Charger & Power Tools Otomotif Bosch'],
+            ['VH', 'TOOLS', 'AUTL', 'Autel', 'Automotive Diagnostic Scanner & Code Reader Autel MaxiCheck'],
+            ['VH', 'TOOLS', 'LNCH', 'Launch', 'OBD2 Multi-Brand Diagnostic Tool Launch X431'],
+            ['VH', 'TOOLS', 'STNL', 'Stanley', 'Hand Tools Mekanik & Toolset Stanley Automotive'],
+            ['VH', 'TOOLS', 'KNMS', 'Kenmaster', 'Kunci Roda, Dongkrak Botol & Toolkit Darurat Kenmaster'],
+
+            // Facility - Tools Fasilitas (TOOLS)
+            ['FC', 'TOOLS', 'BSCH', 'Bosch', 'Power Tools, Bor Listrik, Mesin Gerinda & Digital Laser Measure Bosch'],
+            ['FC', 'TOOLS', 'MAKT', 'Makita', 'Cordless Drill, Impact Driver & Mesin Perkakas Makita'],
+            ['FC', 'TOOLS', 'DWLT', 'Dewalt', 'Heavy Duty Power Tools & Cordless Drill Dewalt'],
+            ['FC', 'TOOLS', 'KRIS', 'Krisbow', 'Tangga Teleskopik, Jet Cleaner, Vacuum & Toolset Fasilitas Krisbow'],
+            ['FC', 'TOOLS', 'KRCH', 'Karcher', 'High Pressure Cleaner & Wet/Dry Industrial Vacuum Karcher'],
+            ['FC', 'TOOLS', 'TEKR', 'Tekiro', 'Kunci Pipa, Tang Buaya, Kunci Ring Pas & Perkakas Perawatan Tekiro'],
+            ['FC', 'TOOLS', 'STNL', 'Stanley', 'Perkakas Manual, Meteran Laser, Waterpass & Tool Box Stanley'],
+            ['FC', 'TOOLS', 'FLUK', 'Fluke', 'Digital Multimeter, Clamp Meter & Alat Ukur Listrik Fasilitas Fluke'],
         ];
 
         $chkBrandStmt = $pdo->prepare("SELECT id FROM asset_brands WHERE asset_group_id = ? AND asset_type_id = ? AND UPPER(TRIM(brand_name)) = UPPER(TRIM(?)) LIMIT 1");
@@ -1899,6 +1925,11 @@ function ensure_default_identifiers_per_group_and_type(PDO $pdo): void
             ['VH', 'TRK', 'KIR', 'Nomor Uji Berkala (Buku KIR)', 'text', 1, 1, 1, 4],
             ['VH', 'TRK', 'BPKB', 'Nomor BPKB Truk', 'text', 0, 1, 1, 5],
 
+            // Vehicle - Tools Kendaraan (TOOLS)
+            ['VH', 'TOOLS', 'TAG_NO', 'Nomor Tag / Inventaris Perkakas', 'text', 1, 1, 1, 1],
+            ['VH', 'TOOLS', 'SERIAL', 'Serial Number Alat / Toolset', 'text', 0, 1, 1, 2],
+            ['VH', 'TOOLS', 'CALIBRATION_NO', 'Nomor Sertifikat Kalibrasi', 'text', 0, 0, 1, 3],
+
             // Facility - AC / Pendingin (AC)
             ['FC', 'AC', 'TAG_NO', 'Nomor Tag / Kode AC Ruangan', 'text', 1, 1, 1, 1],
             ['FC', 'AC', 'SERIAL_INDOOR', 'Serial Number Unit Indoor', 'text', 0, 1, 1, 2],
@@ -1923,6 +1954,11 @@ function ensure_default_identifiers_per_group_and_type(PDO $pdo): void
             // Facility - Monitor & Display (DSP)
             ['FC', 'DSP', 'SERIAL', 'Serial Number Panel / Layar', 'text', 1, 1, 1, 1],
             ['FC', 'DSP', 'TAG_NO', 'Nomor Tag Display / TV Ruangan', 'text', 0, 1, 1, 2],
+
+            // Facility - Tools Fasilitas (TOOLS)
+            ['FC', 'TOOLS', 'TAG_NO', 'Nomor Tag / Inventaris Perkakas', 'text', 1, 1, 1, 1],
+            ['FC', 'TOOLS', 'SERIAL', 'Serial Number Mesin / Perkakas', 'text', 0, 1, 1, 2],
+            ['FC', 'TOOLS', 'CALIBRATION_NO', 'Nomor Sertifikat Uji / Kalibrasi', 'text', 0, 0, 1, 3],
         ];
 
         $chkIdfStmt = $pdo->prepare("SELECT id FROM asset_type_identifiers WHERE asset_type_id = ? AND UPPER(TRIM(identifier_code)) = UPPER(TRIM(?)) LIMIT 1");
@@ -2064,6 +2100,14 @@ function ensure_default_specifications_per_group_and_type(PDO $pdo): void
             ['VH', 'TRK', 'TRANSMISSION', 'Tipe Transmisi', 'text', 0, 1, 6],
             ['VH', 'TRK', 'YEAR', 'Tahun Pembuatan', 'number', 0, 1, 7],
 
+            // Vehicle - Tools Kendaraan (TOOLS)
+            ['VH', 'TOOLS', 'TOOL_TYPE', 'Kategori / Jenis Perkakas Kendaraan', 'text', 0, 1, 1],
+            ['VH', 'TOOLS', 'POWER_SRC', 'Sumber Daya / Penggerak', 'text', 0, 1, 2],
+            ['VH', 'TOOLS', 'CAP_RATING', 'Kapasitas / Rentang Kerja', 'text', 0, 1, 3],
+            ['VH', 'TOOLS', 'VEHICLE_SUIT', 'Kesesuaian Tipe Kendaraan', 'text', 0, 1, 4],
+            ['VH', 'TOOLS', 'CALIBRATION_INT', 'Periode Kalibrasi Ulang', 'text', 0, 1, 5],
+            ['VH', 'TOOLS', 'CASE_INC', 'Perlengkapan Kotak / Tas Bawaan', 'text', 0, 1, 6],
+
             // Facility - AC / Pendingin (AC)
             ['FC', 'AC', 'COOLING_CAP', 'Kapasitas Pendingin (PK / BTU)', 'text', 0, 1, 1],
             ['FC', 'AC', 'AC_TYPE', 'Tipe Unit AC (Split/Cassette/Standing)', 'text', 0, 1, 2],
@@ -2102,6 +2146,14 @@ function ensure_default_specifications_per_group_and_type(PDO $pdo): void
             ['FC', 'DSP', 'RES', 'Resolusi Layar (Resolution)', 'text', 0, 1, 3],
             ['FC', 'DSP', 'PORTS', 'Port Input Konektivitas (HDMI/LAN/USB)', 'text', 0, 1, 4],
             ['FC', 'DSP', 'VESA', 'Ukuran Dudukan Bracket VESA', 'text', 0, 1, 5],
+
+            // Facility - Tools Fasilitas (TOOLS)
+            ['FC', 'TOOLS', 'TOOL_TYPE', 'Kategori Alat / Perkakas Fasilitas', 'text', 0, 1, 1],
+            ['FC', 'TOOLS', 'POWER_SRC', 'Sumber Daya / Penggerak', 'text', 0, 1, 2],
+            ['FC', 'TOOLS', 'POWER_RATING', 'Konsumsi Daya / Voltase Kerja', 'text', 0, 1, 3],
+            ['FC', 'TOOLS', 'CAP_SPEC', 'Kapasitas / Ukuran Maksimal Kerja', 'text', 0, 1, 4],
+            ['FC', 'TOOLS', 'SAFETY_CERT', 'Standar Keamanan & Proteksi', 'text', 0, 1, 5],
+            ['FC', 'TOOLS', 'CASE_INC', 'Kotak / Tas Perkakas Bawaan', 'text', 0, 1, 6],
         ];
 
         $chkSpecStmt = $pdo->prepare("SELECT id FROM asset_type_specifications WHERE asset_type_id = ? AND UPPER(TRIM(specification_code)) = UPPER(TRIM(?)) LIMIT 1");
