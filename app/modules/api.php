@@ -528,7 +528,30 @@ function handle_route_api_master_items(PDO $pdo): void
 function handle_route_api_asset_brands(PDO $pdo): void
 {
     require_login();
-    $stmt = $pdo->query('SELECT id, brand_code, brand_name FROM asset_brands WHERE is_active = 1 ORDER BY brand_name ASC');
+    $groupId = (int)($_GET['group_id'] ?? 0);
+    $typeId = (int)($_GET['type_id'] ?? 0);
+
+    $where = ["b.is_active = 1"];
+    $params = [];
+    if ($groupId > 0) {
+        $where[] = "(b.asset_group_id = ? OR b.asset_group_id IS NULL)";
+        $params[] = $groupId;
+    }
+    if ($typeId > 0) {
+        $where[] = "(b.asset_type_id = ? OR b.asset_type_id IS NULL)";
+        $params[] = $typeId;
+    }
+
+    $sql = "SELECT b.id, b.asset_group_id, b.asset_type_id, b.brand_code, b.brand_name, 
+                   g.group_code, g.group_name, t.type_code, t.type_name 
+            FROM asset_brands b 
+            LEFT JOIN asset_groups g ON g.id = b.asset_group_id 
+            LEFT JOIN asset_types t ON t.id = b.asset_type_id 
+            WHERE " . implode(' AND ', $where) . " 
+            ORDER BY b.brand_name ASC";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }

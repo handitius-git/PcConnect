@@ -1087,7 +1087,7 @@ function ensure_performance_indexes(PDO $pdo): void
 function ensure_app_schema(PDO $pdo, bool $force = false): void
 {
     if (!$force && empty($_GET['force_schema'])) {
-        $lockFile = sys_get_temp_dir() . '/pcconnect_schema_v12.lock';
+        $lockFile = sys_get_temp_dir() . '/pcconnect_schema_v13.lock';
         if (file_exists($lockFile) && (time() - filemtime($lockFile) < 1800) && db_table_exists($pdo, 'pcs')) {
             return;
         }
@@ -1103,6 +1103,7 @@ function ensure_app_schema(PDO $pdo, bool $force = false): void
     ensure_company_source_schema($pdo);
     ensure_asset_management_schema($pdo);
     ensure_asset_master_schema($pdo);
+    ensure_brand_and_master_item_schema($pdo);
     ensure_maintenance_asset_schema($pdo);
     cleanup_unsynced_pc_maintenance_assets($pdo);
     cleanup_and_repair_pc_asset_conflicts($pdo);
@@ -1111,7 +1112,7 @@ function ensure_app_schema(PDO $pdo, bool $force = false): void
     ensure_unified_asset_schema($pdo);
     ensure_performance_indexes($pdo);
 
-    @touch(sys_get_temp_dir() . '/pcconnect_schema_v12.lock');
+    @touch(sys_get_temp_dir() . '/pcconnect_schema_v13.lock');
 }
 
 function ensure_user_roles_schema(PDO $pdo): void
@@ -1407,16 +1408,55 @@ function ensure_corrective_maintenance_schema(PDO $pdo): void
 function ensure_brand_and_master_item_schema(PDO $pdo): void
 {
     try {
-        // 1. Tabel Master Brand / Merk
+        // 1. Tabel Master Brand / Merk (dengan Komoditas & Kategori)
         $pdo->exec("CREATE TABLE IF NOT EXISTS asset_brands (
             id INT AUTO_INCREMENT PRIMARY KEY,
+            asset_group_id INT NULL,
+            asset_type_id INT NULL,
             brand_code VARCHAR(40) NULL,
-            brand_name VARCHAR(120) NOT NULL UNIQUE,
+            brand_name VARCHAR(120) NOT NULL,
             description TEXT NULL,
             is_active TINYINT(1) NOT NULL DEFAULT 1,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_ab_group(asset_group_id),
+            INDEX idx_ab_type(asset_type_id),
             INDEX idx_ab_active(is_active)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+        if (!db_column_exists($pdo, 'asset_brands', 'asset_group_id')) {
+            try {
+                $pdo->exec("ALTER TABLE asset_brands ADD COLUMN asset_group_id INT NULL AFTER id");
+                $pdo->exec("ALTER TABLE asset_brands ADD INDEX idx_ab_group (asset_group_id)");
+            } catch (Throwable $ignored) {}
+        }
+        if (!db_column_exists($pdo, 'asset_brands', 'asset_type_id')) {
+            try {
+                $pdo->exec("ALTER TABLE asset_brands ADD COLUMN asset_type_id INT NULL AFTER asset_group_id");
+                $pdo->exec("ALTER TABLE asset_brands ADD INDEX idx_ab_type (asset_type_id)");
+            } catch (Throwable $ignored) {}
+        }
+
+        // Sesuaikan index keunikan agar brand name bisa dipakai di beberapa kelompok kategori
+        try {
+            $idxStmt = $pdo->query("SHOW INDEX FROM asset_brands");
+            if ($idxStmt) {
+                $indexes = $idxStmt->fetchAll(PDO::FETCH_ASSOC);
+                foreach ($indexes as $idx) {
+                    $kName = (string)($idx['Key_name'] ?? '');
+                    $cName = (string)($idx['Column_name'] ?? '');
+                    $nonUnique = (int)($idx['Non_unique'] ?? 1);
+                    if ($nonUnique === 0 && $kName !== 'PRIMARY' && $kName !== 'uq_brand_group_type_name' && $cName === 'brand_name') {
+                        try {
+                            $pdo->exec("ALTER TABLE asset_brands DROP INDEX `{$kName}`");
+                        } catch (Throwable $ignored) {}
+                    }
+                }
+            }
+        } catch (Throwable $ignored) {}
+
+        try {
+            $pdo->exec("ALTER TABLE asset_brands ADD UNIQUE KEY uq_brand_group_type_name (asset_group_id, asset_type_id, brand_name)");
+        } catch (Throwable $ignored) {}
 
         // 2. Tabel Master Barang / Katalog Model
         $pdo->exec("CREATE TABLE IF NOT EXISTS asset_master_items (
@@ -1454,38 +1494,36 @@ function ensure_brand_and_master_item_schema(PDO $pdo): void
             }
         }
 
-        // 4. Seed default Brands jika tabel brand masih kosong
-        $brandCount = (int)$pdo->query("SELECT COUNT(*) FROM asset_brands")->fetchColumn();
-        if ($brandCount === 0) {
-            $defaultBrands = [
-                'Lenovo', 'Dell', 'HP', 'Asus', 'Acer', 'Apple', 'Samsung', 'LG',
-                'Brother', 'Canon', 'Epson', 'Toshiba', 'Cisco', 'MikroTik', 'APC',
-                'Toyota', 'Honda', 'Daihatsu', 'Mitsubishi', 'Suzuki', 'Isuzu',
-                'Panasonic', 'Daikin', 'Sharp', 'Yamaha', 'Generic / OEM'
-            ];
-            $stmtB = $pdo->prepare("INSERT IGNORE INTO asset_brands (brand_name, is_active) VALUES (?, 1)");
-            foreach ($defaultBrands as $bName) {
-                $stmtB->execute([$bName]);
-            }
-        }
+        // 4. Seed & Lengkapi Katalog Default Brands per Komoditas & Kategori
+        ensure_default_brands_per_group_and_type($pdo);
 
         // 5. Ekstrak brand yang sudah ada di asset_items/pcs/printers jika ada yang belum terdaftar di asset_brands
         if (db_table_exists($pdo, 'asset_items')) {
+            // Bersihkan brand duplikat tanpa komoditas/kategori yang tidak terpakai
+            try {
+                $pdo->exec("DELETE FROM asset_brands WHERE (asset_group_id IS NULL OR asset_type_id IS NULL) 
+                            AND id NOT IN (SELECT brand_id FROM asset_master_items WHERE brand_id IS NOT NULL) 
+                            AND id NOT IN (SELECT brand_id FROM asset_items WHERE brand_id IS NOT NULL)");
+            } catch (Throwable $ignored) {}
+
             $existingBrandNames = $pdo->query("SELECT DISTINCT TRIM(brand) AS bname FROM asset_items WHERE brand IS NOT NULL AND TRIM(brand) != ''")->fetchAll(PDO::FETCH_COLUMN);
-            $stmtInsB = $pdo->prepare("INSERT IGNORE INTO asset_brands (brand_name, is_active) VALUES (?, 1)");
+            $chkExB = $pdo->prepare("SELECT id FROM asset_brands WHERE UPPER(TRIM(brand_name)) = UPPER(TRIM(?)) LIMIT 1");
+            $stmtInsB = $pdo->prepare("INSERT INTO asset_brands (brand_code, brand_name, is_active) VALUES (?, ?, 1)");
             foreach ($existingBrandNames as $eb) {
                 if ($eb !== '') {
-                    $stmtInsB->execute([$eb]);
+                    $chkExB->execute([$eb]);
+                    if ((int)$chkExB->fetchColumn() <= 0) {
+                        $bCode = strtoupper(substr(preg_replace('/[^a-zA-Z0-9]/', '', $eb), 0, 8));
+                        $stmtInsB->execute([$bCode, $eb]);
+                    }
                 }
             }
 
             // Hubungkan brand_id pada asset_items jika masih null
-            $brandRows = $pdo->query("SELECT id, brand_name FROM asset_brands")->fetchAll(PDO::FETCH_ASSOC);
-            if ($brandRows) {
-                $updAiBrand = $pdo->prepare("UPDATE asset_items SET brand_id = ? WHERE (brand_id IS NULL OR brand_id = 0) AND (TRIM(brand) = ? OR UPPER(TRIM(brand)) = UPPER(?))");
-                foreach ($brandRows as $br) {
-                    $updAiBrand->execute([(int)$br['id'], trim((string)$br['brand_name']), trim((string)$br['brand_name'])]);
-                }
+            $updAiBrand = $pdo->prepare("UPDATE asset_items SET brand_id = ? WHERE (brand_id IS NULL OR brand_id = 0) AND (TRIM(brand) = ? OR UPPER(TRIM(brand)) = UPPER(?))");
+            $brandRows = $pdo->query("SELECT id, brand_name FROM asset_brands ORDER BY asset_group_id DESC, asset_type_id DESC, id ASC")->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($brandRows as $br) {
+                $updAiBrand->execute([(int)$br['id'], trim((string)$br['brand_name']), trim((string)$br['brand_name'])]);
             }
         }
 
@@ -1567,6 +1605,240 @@ function ensure_brand_and_master_item_schema(PDO $pdo): void
         }
     } catch (Throwable $ignored) {
     }
+}
+
+function ensure_default_brands_per_group_and_type(PDO $pdo): void
+{
+    try {
+        if (!db_table_exists($pdo, 'asset_brands') || !db_table_exists($pdo, 'asset_groups') || !db_table_exists($pdo, 'asset_types')) {
+            return;
+        }
+
+        // 1. Ambil ID kelompok aset (groups)
+        $groups = [];
+        foreach ($pdo->query("SELECT id, UPPER(TRIM(group_code)) AS code FROM asset_groups")->fetchAll(PDO::FETCH_ASSOC) as $g) {
+            $groups[$g['code']] = (int)$g['id'];
+        }
+
+        // 2. Ambil ID kategori aset (types)
+        $types = [];
+        foreach ($pdo->query("SELECT id, asset_group_id, UPPER(TRIM(type_code)) AS code FROM asset_types")->fetchAll(PDO::FETCH_ASSOC) as $t) {
+            $types[$t['asset_group_id'] . '_' . $t['code']] = (int)$t['id'];
+        }
+
+        // 3. Petakan brand legacy (yang masih asset_group_id IS NULL) ke grup & tipe primernya
+        $existingLegacyMap = [
+            'Lenovo' => ['IT', 'CMP', 'LEN'],
+            'Dell' => ['IT', 'CMP', 'DELL'],
+            'HP' => ['IT', 'CMP', 'HP'],
+            'Asus' => ['IT', 'CMP', 'ASUS'],
+            'Acer' => ['IT', 'CMP', 'ACER'],
+            'Apple' => ['IT', 'NBK', 'APPL'],
+            'Samsung' => ['IT', 'DSP', 'SMSG'],
+            'LG' => ['IT', 'DSP', 'LG'],
+            'Brother' => ['IT', 'PRT', 'BRTH'],
+            'Canon' => ['IT', 'PRT', 'CANN'],
+            'Epson' => ['IT', 'PRT', 'EPSN'],
+            'Toshiba' => ['IT', 'NBK', 'TOSH'],
+            'Cisco' => ['IT', 'SRV', 'CSCO'],
+            'MikroTik' => ['IT', 'SRV', 'MKRT'],
+            'APC' => ['IT', 'TOOLS', 'APC'],
+            'Toyota' => ['VH', 'CAR', 'TOYT'],
+            'Honda' => ['VH', 'CAR', 'HNDA'],
+            'Daihatsu' => ['VH', 'CAR', 'DAIH'],
+            'Mitsubishi' => ['VH', 'CAR', 'MITS'],
+            'Suzuki' => ['VH', 'CAR', 'SZKI'],
+            'Isuzu' => ['VH', 'TRK', 'ISZU'],
+            'Panasonic' => ['FC', 'AC', 'PNSN'],
+            'Daikin' => ['FC', 'AC', 'DAIK'],
+            'Sharp' => ['FC', 'AC', 'SHRP'],
+            'Yamaha' => ['VH', 'MTR', 'YMHA'],
+            'Generic / OEM' => ['IT', 'CMP', 'GEN'],
+        ];
+
+        $updLegacyStmt = $pdo->prepare("UPDATE asset_brands SET asset_group_id = ?, asset_type_id = ?, brand_code = COALESCE(brand_code, ?) WHERE id = ?");
+        $legacyRows = $pdo->query("SELECT id, brand_name FROM asset_brands WHERE asset_group_id IS NULL OR asset_group_id = 0")->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($legacyRows as $lr) {
+            $bName = trim((string)$lr['brand_name']);
+            if (isset($existingLegacyMap[$bName])) {
+                [$gCode, $tCode, $bCode] = $existingLegacyMap[$bName];
+                $gId = $groups[$gCode] ?? 0;
+                $tId = $types[$gId . '_' . $tCode] ?? 0;
+                if ($gId > 0 && $tId > 0) {
+                    try {
+                        $updLegacyStmt->execute([$gId, $tId, $bCode, (int)$lr['id']]);
+                    } catch (Throwable $ignored) {}
+                }
+            }
+        }
+
+        // 4. Katalog Master Default Brands per Komoditas & Kategori
+        $catalog = [
+            // IT Aset - Computer (CMP)
+            ['IT', 'CMP', 'LEN', 'Lenovo', 'Komputer Desktop & All-in-One Lenovo ThinkCentre / IdeaCentre'],
+            ['IT', 'CMP', 'DELL', 'Dell', 'Komputer Desktop & Workstation Dell OptiPlex / Precision / Vostro'],
+            ['IT', 'CMP', 'HP', 'HP', 'Komputer Desktop & All-in-One HP ProDesk / EliteDesk / Pavilion'],
+            ['IT', 'CMP', 'ASUS', 'Asus', 'Komputer Desktop & Mini PC Asus ExpertCenter / ROG'],
+            ['IT', 'CMP', 'ACER', 'Acer', 'Komputer Desktop & All-in-One Acer Veriton / Aspire'],
+            ['IT', 'CMP', 'APPL', 'Apple', 'Komputer Desktop Apple iMac / Mac Mini / Mac Studio / Mac Pro'],
+            ['IT', 'CMP', 'MSI', 'MSI', 'Komputer Desktop & Workstation MSI PRO Series'],
+            ['IT', 'CMP', 'AXIO', 'Axioo', 'Komputer Desktop & All-in-One Axioo MyPC'],
+            ['IT', 'CMP', 'ZYRX', 'Zyrex', 'Komputer Desktop & All-in-One Zyrex'],
+            ['IT', 'CMP', 'GIGA', 'Gigabyte', 'Mini PC & PC Barebone Gigabyte BRIX'],
+            ['IT', 'CMP', 'GEN', 'Generic / Custom PC', 'Komputer Rakitan / Custom Assembly / OEM'],
+
+            // IT Aset - Notebook / Laptop (NBK)
+            ['IT', 'NBK', 'LEN', 'Lenovo', 'Laptop Lenovo ThinkPad / ThinkBook / IdeaPad / Yoga'],
+            ['IT', 'NBK', 'DELL', 'Dell', 'Laptop Dell Latitude / XPS / Vostro / Inspiron'],
+            ['IT', 'NBK', 'HP', 'HP', 'Laptop HP ProBook / EliteBook / Pavilion / Envy'],
+            ['IT', 'NBK', 'ASUS', 'Asus', 'Laptop Asus ExpertBook / ZenBook / VivoBook / TUF'],
+            ['IT', 'NBK', 'ACER', 'Acer', 'Laptop Acer TravelMate / Swift / Aspire'],
+            ['IT', 'NBK', 'APPL', 'Apple', 'Laptop Apple MacBook Air / MacBook Pro'],
+            ['IT', 'NBK', 'MSI', 'MSI', 'Laptop MSI Modern / Prestige / Commercial Series'],
+            ['IT', 'NBK', 'AXIO', 'Axioo', 'Laptop Axioo MyBook / Hype Series'],
+            ['IT', 'NBK', 'TOSH', 'Toshiba / Dynabook', 'Laptop Toshiba / Dynabook Portege / Tecra'],
+            ['IT', 'NBK', 'HWEI', 'Huawei', 'Laptop Huawei MateBook Series'],
+            ['IT', 'NBK', 'XIAO', 'Xiaomi', 'Laptop Xiaomi RedmiBook / Mi Notebook'],
+            ['IT', 'NBK', 'MSFT', 'Microsoft Surface', 'Laptop & Tablet 2-in-1 Microsoft Surface'],
+
+            // IT Aset - Printer (PRT)
+            ['IT', 'PRT', 'EPSN', 'Epson', 'Printer Ink Tank & Dot Matrix Epson EcoTank / WorkForce / LQ'],
+            ['IT', 'PRT', 'CANN', 'Canon', 'Printer Inkjet & Laser Canon PIXMA / MAXIFY / imageCLASS'],
+            ['IT', 'PRT', 'HP', 'HP', 'Printer HP LaserJet / Smart Tank / DeskJet / OfficeJet'],
+            ['IT', 'PRT', 'BRTH', 'Brother', 'Printer Brother Ink Tank & Mono/Color Laser'],
+            ['IT', 'PRT', 'FXRX', 'Fuji Xerox', 'Printer & Mesin Fotokopi Multiguna Fuji Xerox / Fujifilm'],
+            ['IT', 'PRT', 'ZBRA', 'Zebra', 'Printer Barcode, Thermal & ID Card Zebra'],
+            ['IT', 'PRT', 'HNWL', 'Honeywell', 'Printer Barcode, Label & Mobile Thermal Honeywell'],
+            ['IT', 'PRT', 'RCOH', 'Ricoh', 'Printer Laser Multifungsi & Mesin Fotokopi Ricoh'],
+            ['IT', 'PRT', 'KYOC', 'Kyocera', 'Printer Laser & Taskalfa Multifungsi Kyocera'],
+            ['IT', 'PRT', 'PNTM', 'Pantum', 'Printer Laser Mono & Warna Pantum'],
+
+            // IT Aset - Server (SRV)
+            ['IT', 'SRV', 'DELL', 'Dell EMC', 'Server Rackmount & Tower Dell EMC PowerEdge'],
+            ['IT', 'SRV', 'HPE', 'HPE', 'Server Enterprise HPE ProLiant Gen10 / Gen11'],
+            ['IT', 'SRV', 'LEN', 'Lenovo', 'Server Rackmount & Tower Lenovo ThinkSystem'],
+            ['IT', 'SRV', 'CSCO', 'Cisco', 'Server & Switch Jaringan Cisco UCS / Catalyst'],
+            ['IT', 'SRV', 'SPMC', 'Supermicro', 'Server High Density & Storage Supermicro'],
+            ['IT', 'SRV', 'IBM', 'IBM', 'Server & Storage IBM Power / System Storage'],
+            ['IT', 'SRV', 'HWEI', 'Huawei', 'Server & Storage Huawei FusionServer'],
+            ['IT', 'SRV', 'SYNO', 'Synology', 'Network Attached Storage (NAS) Synology DiskStation'],
+            ['IT', 'SRV', 'QNAP', 'QNAP', 'Network Attached Storage (NAS) QNAP TurboNAS'],
+            ['IT', 'SRV', 'MKRT', 'MikroTik', 'Routerboard & Cloud Core Router MikroTik'],
+
+            // IT Aset - Monitor & Display (DSP)
+            ['IT', 'DSP', 'LG', 'LG', 'Monitor LED/IPS & Digital Signage LG UltraFine / UltraGear'],
+            ['IT', 'DSP', 'SMSG', 'Samsung', 'Monitor LED / Curved Samsung ViewFinity / Odyssey'],
+            ['IT', 'DSP', 'DELL', 'Dell', 'Monitor Profesional Dell UltraSharp / Professional Series'],
+            ['IT', 'DSP', 'HP', 'HP', 'Monitor Display HP EliteDisplay / Series E / Series Z'],
+            ['IT', 'DSP', 'ASUS', 'Asus', 'Monitor Asus ProArt / Eye Care / TUF'],
+            ['IT', 'DSP', 'ACER', 'Acer', 'Monitor LED Acer Nitro / Vero / Standard Display'],
+            ['IT', 'DSP', 'BENQ', 'BenQ', 'Monitor & Proyektor Profesional BenQ'],
+            ['IT', 'DSP', 'VWSC', 'ViewSonic', 'Monitor LED & Proyektor ViewSonic ColorPro'],
+            ['IT', 'DSP', 'AOC', 'AOC', 'Monitor LED & Gaming AOC Displays'],
+            ['IT', 'DSP', 'PHIL', 'Philips', 'Monitor Komputer & Layar Komersial Philips'],
+
+            // IT Aset - Tools IT (TOOLS)
+            ['IT', 'TOOLS', 'FLUK', 'Fluke Networks', 'Alat Uji & Tester Kabel Jaringan Fluke / MicroScanner'],
+            ['IT', 'TOOLS', 'PROS', 'Proskit', 'Tool Kit Crimping & Perkakas Servis IT Proskit'],
+            ['IT', 'TOOLS', 'DLNK', 'D-Link', 'Aksesoris & Peralatan Jaringan D-Link'],
+            ['IT', 'TOOLS', 'SCHN', 'Schneider Electric', 'Rack Server & PDU Schneider Electric / APC'],
+            ['IT', 'TOOLS', 'APC', 'APC', 'Uninterruptible Power Supply (UPS) & Surge Protector APC'],
+            ['IT', 'TOOLS', 'PAND', 'Panduit', 'Patch Panel & Manajemen Kabel Panduit'],
+
+            // Vehicle - Car / Mobil (CAR)
+            ['VH', 'CAR', 'TOYT', 'Toyota', 'Mobil Penumpang & Operasional Toyota (Avanza, Innova, Fortuner, Calya)'],
+            ['VH', 'CAR', 'DAIH', 'Daihatsu', 'Mobil Operasional Daihatsu (Gran Max, Sigra, Xenia, Terios)'],
+            ['VH', 'CAR', 'HNDA', 'Honda', 'Mobil Penumpang & Operasional Honda (Brio, HR-V, CR-V, City)'],
+            ['VH', 'CAR', 'MITS', 'Mitsubishi', 'Mobil Operasional & SUV Mitsubishi (Xpander, Pajero Sport)'],
+            ['VH', 'CAR', 'SZKI', 'Suzuki', 'Mobil Operasional Suzuki (Carry, Ertiga, XL7, APV)'],
+            ['VH', 'CAR', 'NSSN', 'Nissan', 'Mobil Penumpang & Operasional Nissan (Livina, Serena)'],
+            ['VH', 'CAR', 'HYUN', 'Hyundai', 'Mobil Listrik & Konvensional Hyundai (Stargazer, Creta, Ioniq)'],
+            ['VH', 'CAR', 'WLNG', 'Wuling', 'Mobil Operasional Wuling (Confero, Cortez, Alvez, Formo)'],
+            ['VH', 'CAR', 'ISZU', 'Isuzu', 'Mobil Operasional Mesin Diesel Isuzu (Panther, Mu-X)'],
+            ['VH', 'CAR', 'KIA', 'Kia', 'Mobil Operasional & Penumpang Kia (Sonet, Seltos)'],
+            ['VH', 'CAR', 'MZDA', 'Mazda', 'Mobil Eksekutif Mazda (CX-5, CX-3, Mazda 2)'],
+            ['VH', 'CAR', 'FORD', 'Ford', 'Mobil Pick Up 4x4 & SUV Ford (Ranger, Everest)'],
+
+            // Vehicle - Motorcycle / Motor (MTR)
+            ['VH', 'MTR', 'HNDA', 'Honda', 'Sepeda Motor Honda (Vario, Beat, Scoopy, PCX, Revo)'],
+            ['VH', 'MTR', 'YMHA', 'Yamaha', 'Sepeda Motor Yamaha (NMAX, Aerox, Mio, Fazzio, Jupiter)'],
+            ['VH', 'MTR', 'SZKI', 'Suzuki', 'Sepeda Motor Suzuki (Address, Nex, Smash, Satria)'],
+            ['VH', 'MTR', 'KWSK', 'Kawasaki', 'Sepeda Motor Kawasaki (KLX, D-Tracker, Ninja)'],
+            ['VH', 'MTR', 'VSPA', 'Vespa / Piaggio', 'Sepeda Motor Vespa / Piaggio (Primavera, Sprint, LX)'],
+            ['VH', 'MTR', 'TVS', 'TVS', 'Sepeda Motor Niaga & Operasional TVS'],
+            ['VH', 'MTR', 'GSTS', 'Gesits', 'Sepeda Motor Listrik Operasional Gesits'],
+
+            // Vehicle - Truck / Truk (TRK)
+            ['VH', 'TRK', 'FUSO', 'Mitsubishi Fuso', 'Truk Colt Diesel Canter, Fighter & Heavy Duty Mitsubishi Fuso'],
+            ['VH', 'TRK', 'HINO', 'Hino', 'Truk Hino Dutro Light Truck & Hino Ranger Medium/Heavy Duty'],
+            ['VH', 'TRK', 'ISZU', 'Isuzu', 'Truk Isuzu Elf Light Duty & Isuzu Giga Medium/Heavy Duty'],
+            ['VH', 'TRK', 'TOYT', 'Toyota Dyna', 'Truk Light Commercial Toyota Dyna Series'],
+            ['VH', 'TRK', 'UDTK', 'UD Trucks', 'Truk Kategori Berat UD Trucks Quester / Kuzer'],
+            ['VH', 'TRK', 'MBEN', 'Mercedes-Benz', 'Truk Niaga & Logistik Mercedes-Benz Axor / Actros'],
+            ['VH', 'TRK', 'SCNA', 'Scania', 'Truk Traktor Head & Heavy Hauler Scania'],
+            ['VH', 'TRK', 'FAW', 'FAW', 'Truk Cargo & Dump Truck FAW'],
+
+            // Facility - AC / Pendingin (AC)
+            ['FC', 'AC', 'DAIK', 'Daikin', 'AC Split Wall, Cassette, Ducting & VRV Daikin Inverter'],
+            ['FC', 'AC', 'PNSN', 'Panasonic', 'AC Split & Package Panasonic Econavi / nanoeX'],
+            ['FC', 'AC', 'MITS', 'Mitsubishi Electric', 'AC Split & Heavy Duty Mitsubishi Electric / Heavy Industries'],
+            ['FC', 'AC', 'SHRP', 'Sharp', 'AC Split Plasmacluster Sharp J-Tech Inverter'],
+            ['FC', 'AC', 'LG', 'LG', 'AC Dual Inverter LG Smart Inverter'],
+            ['FC', 'AC', 'GREE', 'Gree', 'AC Split Wall & Komersial Gree'],
+            ['FC', 'AC', 'SMSG', 'Samsung', 'AC WindFree & Digital Inverter Samsung'],
+            ['FC', 'AC', 'AUX', 'AUX', 'AC Hemat Daya & Komersial AUX'],
+            ['FC', 'AC', 'CHNG', 'Changhong', 'AC Split & Pendingin Ruangan Changhong'],
+            ['FC', 'AC', 'TOSH', 'Toshiba', 'AC Inverter Ruang Kantor Toshiba Carrier'],
+
+            // Facility - Generator / Genset (GEN)
+            ['FC', 'GEN', 'PRKN', 'Perkins', 'Genset Diesel Silent / Open Perkins Engine UK (10 - 2000 kVA)'],
+            ['FC', 'GEN', 'CUMN', 'Cummins', 'Genset Diesel Cummins Engine Heavy Duty (20 - 2500 kVA)'],
+            ['FC', 'GEN', 'YNMR', 'Yanmar', 'Genset Diesel Yanmar Eco Power (5 - 60 kVA)'],
+            ['FC', 'GEN', 'CAT', 'Caterpillar (CAT)', 'Genset Industri & Heavy Duty Caterpillar / CAT Power'],
+            ['FC', 'GEN', 'MITS', 'Mitsubishi', 'Genset Diesel Mitsubishi Engine Series'],
+            ['FC', 'GEN', 'DNYO', 'Denyo', 'Genset Silent Portabel & Trailer Denyo Soundproof'],
+            ['FC', 'GEN', 'KHLR', 'Kohler', 'Genset Daya Industri Kohler Power Systems'],
+            ['FC', 'GEN', 'STMF', 'Stamford', 'Alternator / Generator Head Stamford Generator Technology'],
+            ['FC', 'GEN', 'HNDA', 'Honda', 'Genset Bensin Portabel Honda EU / EG / EM Series'],
+            ['FC', 'GEN', 'YMHA', 'Yamaha', 'Genset Bensin Portabel Yamaha Inverter & Standar'],
+
+            // Facility - Gedung / Bangunan (BLD)
+            ['FC', 'BLD', 'SOA', 'Properti SOA', 'Gedung / Aset Bangunan Milik Sendiri PT SOA'],
+            ['FC', 'BLD', 'RENT', 'Sewa / Rental', 'Bangunan / Ruangan Gedung Sewa Pihak Ketiga'],
+            ['FC', 'BLD', 'LOG', 'Gudang Logistik', 'Gudang Penyimpanan & Fasilitas Transit Logistik'],
+            ['FC', 'BLD', 'PBRK', 'Fasilitas Pabrik', 'Area Pabrik, Workshop & Gedung Utilitas Produksi'],
+
+            // Facility - Fasilitas Umum / Tools (FC)
+            ['FC', 'FC', 'KRIS', 'Krisbow', 'Perkakas Kerja, Tangga Alumunium, Toolset & APAR Krisbow'],
+            ['FC', 'FC', 'BSCH', 'Bosch', 'Power Tools, Bor Listrik, Gerinda & Alat Ukur Bosch'],
+            ['FC', 'FC', 'MAKT', 'Makita', 'Power Tools Cordless & Mesin Perkakas Makita'],
+            ['FC', 'FC', 'TEKR', 'Tekiro', 'Hand Tools Kunci Pas, Tang & Toolkit Mekanik Tekiro'],
+            ['FC', 'FC', 'STNL', 'Stanley', 'Perkakas Manual, Meteran & Tangga Lipat Stanley'],
+            ['FC', 'FC', 'KNMS', 'Kenmaster', 'Alat Teknik, Tangga Teleskopik & Kotak Perkakas Kenmaster'],
+            ['FC', 'FC', 'DWLT', 'Dewalt', 'Heavy Duty Power Tools & Cordless Drill Dewalt'],
+            ['FC', 'FC', 'KRCH', 'Karcher', 'Mesin High Pressure Jet Cleaner & Vacuum Industri Karcher'],
+        ];
+
+        $chkBrandStmt = $pdo->prepare("SELECT id FROM asset_brands WHERE asset_group_id = ? AND asset_type_id = ? AND UPPER(TRIM(brand_name)) = UPPER(TRIM(?)) LIMIT 1");
+        $insBrandStmt = $pdo->prepare("INSERT INTO asset_brands (asset_group_id, asset_type_id, brand_code, brand_name, description, is_active) VALUES (?, ?, ?, ?, ?, 1)");
+
+        foreach ($catalog as [$gCode, $tCode, $bCode, $bName, $desc]) {
+            $gId = $groups[$gCode] ?? 0;
+            $tId = $types[$gId . '_' . $tCode] ?? 0;
+            if ($gId <= 0 || $tId <= 0) {
+                continue;
+            }
+
+            $chkBrandStmt->execute([$gId, $tId, $bName]);
+            $existingId = (int)$chkBrandStmt->fetchColumn();
+
+            if ($existingId <= 0) {
+                try {
+                    $insBrandStmt->execute([$gId, $tId, $bCode, $bName, $desc]);
+                } catch (Throwable $ignored) {}
+            }
+        }
+    } catch (Throwable $ignored) {}
 }
 
 function ensure_asset_loan_schema(PDO $pdo): void

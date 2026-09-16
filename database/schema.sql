@@ -114,12 +114,17 @@ CREATE TABLE IF NOT EXISTS asset_categories (
 
 CREATE TABLE IF NOT EXISTS asset_brands (
     id INT AUTO_INCREMENT PRIMARY KEY,
+    asset_group_id INT NULL,
+    asset_type_id INT NULL,
     brand_code VARCHAR(40) NULL,
-    brand_name VARCHAR(120) NOT NULL UNIQUE,
+    brand_name VARCHAR(120) NOT NULL,
     description TEXT NULL,
     is_active TINYINT(1) NOT NULL DEFAULT 1,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_ab_active(is_active)
+    INDEX idx_ab_group(asset_group_id),
+    INDEX idx_ab_type(asset_type_id),
+    INDEX idx_ab_active(is_active),
+    UNIQUE KEY uq_brand_group_type_name (asset_group_id, asset_type_id, brand_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS asset_master_items (

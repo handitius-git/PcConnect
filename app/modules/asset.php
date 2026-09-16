@@ -2436,13 +2436,13 @@ if (!function_exists('asset_group_options')) {
     }
 }
 
-function asset_type_options(PDO $pdo, int $selected = 0, int $groupId = 0, bool $includeEmpty = true, string $emptyLabel = '- Pilih Kategori (Tipe) -'): string
+function asset_type_options(PDO $pdo, int $selected = 0, int $groupId = 0, bool $includeEmpty = true, string $emptyLabel = '- Pilih Kategori (Tipe) -', bool $allowAll = false): string
 {
     $h = $includeEmpty ? '<option value="">' . e($emptyLabel) . '</option>' : '';
     if (!db_table_exists($pdo, 'asset_types')) {
         return $h;
     }
-    if ($groupId <= 0 && $selected <= 0) {
+    if ($groupId <= 0 && $selected <= 0 && !$allowAll) {
         return '<option value="">- Pilih Komoditas Terlebih Dahulu -</option>';
     }
     if ($groupId > 0) {
@@ -2457,26 +2457,55 @@ function asset_type_options(PDO $pdo, int $selected = 0, int $groupId = 0, bool 
             $rows = $s->fetchAll(PDO::FETCH_ASSOC);
         }
         foreach ($rows as $r) {
-            $h .= '<option value="' . $r['id'] . '"' . ((int)$r['id'] === $selected ? ' selected' : '') . '>' . e($r['type_code'] . ' - ' . $r['type_name']) . '</option>';
+            $h .= '<option value="' . $r['id'] . '"' . ((int)$r['id'] === $selected ? ' selected' : '') . ' data-group="' . (int)$r['asset_group_id'] . '">' . e($r['type_code'] . ' - ' . $r['type_name']) . '</option>';
         }
     } else {
-        $sql = 'SELECT * FROM asset_types WHERE (is_active=1 OR is_active IS NULL) ORDER BY type_name';
+        $sql = 'SELECT t.*, g.group_code FROM asset_types t LEFT JOIN asset_groups g ON g.id = t.asset_group_id WHERE (t.is_active=1 OR t.is_active IS NULL) ORDER BY COALESCE(g.group_code,"Z"), t.type_name';
         $s = $pdo->query($sql);
         foreach ($s as $r) {
-            $h .= '<option value="' . $r['id'] . '"' . ((int)$r['id'] === $selected ? ' selected' : '') . '>' . e($r['type_code'] . ' - ' . $r['type_name']) . '</option>';
+            $grpPrefix = !empty($r['group_code']) ? '[' . $r['group_code'] . '] ' : '';
+            $h .= '<option value="' . $r['id'] . '"' . ((int)$r['id'] === $selected ? ' selected' : '') . ' data-group="' . (int)$r['asset_group_id'] . '">' . e($grpPrefix . $r['type_code'] . ' - ' . $r['type_name']) . '</option>';
         }
     }
     return $h;
 }
 
-function asset_brand_options(PDO $pdo, int $selected = 0, bool $includeEmpty = true, string $emptyLabel = '- Pilih Brand / Merk -'): string
+function asset_brand_options(PDO $pdo, int $selected = 0, bool $includeEmpty = true, string $emptyLabel = '- Pilih Brand / Merk -', int $groupId = 0, int $typeId = 0): string
 {
     $h = $includeEmpty ? '<option value="">' . e($emptyLabel) . '</option>' : '';
     if (!db_table_exists($pdo, 'asset_brands')) {
         return $h;
     }
-    foreach ($pdo->query('SELECT * FROM asset_brands WHERE is_active=1 ORDER BY brand_name ASC') as $r) {
-        $h .= '<option value="' . $r['id'] . '"' . ((int)$r['id'] === $selected ? ' selected' : '') . '>' . e($r['brand_name'] . ($r['brand_code'] ? ' (' . $r['brand_code'] . ')' : '')) . '</option>';
+    $sql = 'SELECT b.*, g.group_name, g.group_code, t.type_name, t.type_code 
+            FROM asset_brands b 
+            LEFT JOIN asset_groups g ON g.id = b.asset_group_id 
+            LEFT JOIN asset_types t ON t.id = b.asset_type_id 
+            WHERE b.is_active = 1';
+    $params = [];
+    if ($groupId > 0) {
+        $sql .= ' AND (b.asset_group_id = ? OR b.asset_group_id IS NULL)';
+        $params[] = $groupId;
+    }
+    if ($typeId > 0) {
+        $sql .= ' AND (b.asset_type_id = ? OR b.asset_type_id IS NULL)';
+        $params[] = $typeId;
+    }
+    $sql .= ' ORDER BY b.brand_name ASC';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $catInfo = '';
+        if (!empty($r['type_name'])) {
+            $catInfo = ' [' . $r['type_name'] . ']';
+        } elseif (!empty($r['group_name'])) {
+            $catInfo = ' [' . $r['group_name'] . ']';
+        }
+        $h .= '<option value="' . $r['id'] . '"' . ((int)$r['id'] === $selected ? ' selected' : '') 
+            . ' data-group="' . (int)($r['asset_group_id'] ?? 0) . '"'
+            . ' data-type="' . (int)($r['asset_type_id'] ?? 0) . '"'
+            . ' data-name="' . e($r['brand_name']) . '">' 
+            . e($r['brand_name'] . ($r['brand_code'] ? ' (' . $r['brand_code'] . ')' : '') . $catInfo) 
+            . '</option>';
     }
     return $h;
 }
@@ -2661,6 +2690,7 @@ function asset_master_page(PDO $pdo, string $route, array $user): void
         $name = trim((string)($_POST['name'] ?? ''));
         $active = isset($_POST['is_active']) ? 1 : 0;
         $groupId = (int)($_POST['asset_group_id'] ?? 0);
+        $typeId = (int)($_POST['asset_type_id'] ?? 0);
         if ($name === '' || ($route === 'asset_types' && $groupId <= 0)) {
             flash('Semua field wajib diisi.', 'err');
             redirect_to($route, $id ? ['id' => $id] : []);
@@ -2672,6 +2702,11 @@ function asset_master_page(PDO $pdo, string $route, array $user): void
             if ($route === 'asset_types') {
                 $sql = $id ? 'UPDATE ' . $table . ' SET asset_group_id=?, ' . $codeCol . '=?, ' . $nameCol . '=?, is_active=? WHERE id=?' : 'INSERT INTO ' . $table . ' (asset_group_id,' . $codeCol . ',' . $nameCol . ',is_active) VALUES (?,?,?,?)';
                 $p = $id ? [$groupId, $code, $name, $active, $id] : [$groupId, $code, $name, $active];
+            } elseif ($route === 'asset_brands') {
+                $gIdVal = $groupId > 0 ? $groupId : null;
+                $tIdVal = $typeId > 0 ? $typeId : null;
+                $sql = $id ? 'UPDATE asset_brands SET asset_group_id=?, asset_type_id=?, brand_code=?, brand_name=?, is_active=? WHERE id=?' : 'INSERT INTO asset_brands (asset_group_id, asset_type_id, brand_code, brand_name, is_active) VALUES (?,?,?,?,?)';
+                $p = $id ? [$gIdVal, $tIdVal, $code, $name, $active, $id] : [$gIdVal, $tIdVal, $code, $name, $active];
             } else {
                 $sql = $id ? 'UPDATE ' . $table . ' SET ' . $codeCol . '=?, ' . $nameCol . '=?, is_active=? WHERE id=?' : 'INSERT INTO ' . $table . ' (' . $codeCol . ',' . $nameCol . ',is_active) VALUES (?,?,?)';
                 $p = $id ? [$code, $name, $active, $id] : [$code, $name, $active];
@@ -2698,6 +2733,34 @@ function asset_master_page(PDO $pdo, string $route, array $user): void
     echo '</div><form method="post" style="margin-top:14px"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="id" value="' . e($edit['id'] ?? '') . '">';
     if ($route === 'asset_types') {
         echo '<label>Komoditas (Grup Aset) *<select name="asset_group_id" required>' . asset_group_options($pdo, (int)($edit['asset_group_id'] ?? 0)) . '</select></label>';
+    } elseif ($route === 'asset_brands') {
+        $selGroupId = (int)($edit['asset_group_id'] ?? 0);
+        $selTypeId = (int)($edit['asset_type_id'] ?? 0);
+        echo '<div class="grid two">'
+            . '<label>Komoditas (Grup Aset)<select id="brandGroupId" name="asset_group_id" onchange="filterBrandTypes()">' . asset_group_options($pdo, $selGroupId, true, '- Pilih Komoditas -') . '</select></label>'
+            . '<label>Kategori (Tipe Aset)<select id="brandTypeId" name="asset_type_id">' . asset_type_options($pdo, $selTypeId, 0, true, '- Pilih Kategori -', true) . '</select></label>'
+            . '</div>'
+            . '<script>
+            function filterBrandTypes() {
+                var gSel = document.getElementById("brandGroupId");
+                var tSel = document.getElementById("brandTypeId");
+                if (!gSel || !tSel) return;
+                var gVal = gSel.value;
+                for (var i = 0; i < tSel.options.length; i++) {
+                    var opt = tSel.options[i];
+                    if (!opt.value) { opt.style.display = ""; continue; }
+                    var optG = opt.getAttribute("data-group");
+                    if (!gVal || optG === gVal) {
+                        opt.style.display = "";
+                    } else {
+                        opt.style.display = "none";
+                        if (opt.selected) { opt.selected = false; }
+                    }
+                }
+            }
+            document.addEventListener("DOMContentLoaded", filterBrandTypes);
+            if (document.readyState === "complete" || document.readyState === "interactive") { filterBrandTypes(); }
+            </script>';
     }
     $placeholderCode = $route === 'asset_brands' ? 'LEN' : ($route === 'asset_locations' ? 'HO' : ($route === 'asset_groups' ? 'IT' : 'LPT'));
     $placeholderName = $route === 'asset_brands' ? 'Lenovo' : ($route === 'asset_locations' ? 'Head Office' : ($route === 'asset_groups' ? 'IT & Komputer' : 'Laptop'));
@@ -2708,6 +2771,7 @@ function asset_master_page(PDO $pdo, string $route, array $user): void
     echo '</div></form></section>';
 
     $filterGroupId = (int)($_GET['group_id'] ?? 0);
+    $filterTypeId = (int)($_GET['type_id'] ?? 0);
     echo '<section class="panel">';
     if ($route === 'asset_types') {
         echo '<div class="split"><h2>Daftar ' . e($title) . '</h2>'
@@ -2717,9 +2781,18 @@ function asset_master_page(PDO $pdo, string $route, array $user): void
             . ($filterGroupId ? ' <a class="btn" href="' . route_url('asset_types') . '">Reset</a>' : '')
             . '</form></div>';
         echo '<table><thead><tr><th>ID</th><th>Komoditas (Grup Aset)</th><th>Kode Kategori</th><th>Nama Kategori</th><th>Total Master Model</th><th>Total Unit Fisik</th><th>Status</th><th>Aksi</th></tr></thead><tbody>';
+    } elseif ($route === 'asset_brands') {
+        echo '<div class="split"><h2>Daftar ' . e($title) . '</h2>'
+            . '<form method="get" class="actions" style="margin:0;display:flex;gap:8px;flex-wrap:wrap;">'
+            . '<input type="hidden" name="route" value="asset_brands">'
+            . '<select name="group_id" onchange="this.form.submit()">' . asset_group_options($pdo, $filterGroupId, true, 'Semua Komoditas') . '</select>'
+            . '<select name="type_id" onchange="this.form.submit()">' . asset_type_options($pdo, $filterTypeId, $filterGroupId, true, 'Semua Kategori', true) . '</select>'
+            . ($filterGroupId || $filterTypeId ? ' <a class="btn" href="' . route_url('asset_brands') . '">Reset</a>' : '')
+            . '</form></div>';
+        echo '<table><thead><tr><th>ID</th><th>Komoditas</th><th>Kategori</th><th>Kode</th><th>Nama Brand / Merk</th><th>Total Master Barang</th><th>Total Unit Fisik</th><th>Status</th><th>Aksi</th></tr></thead><tbody>';
     } else {
         echo '<h2>Daftar ' . e($title) . '</h2>';
-        echo '<table><thead><tr><th>ID</th><th>Kode</th><th>Nama</th>' . ($route === 'asset_brands' ? '<th>Total Master Barang</th><th>Total Unit Fisik</th>' : ($route === 'asset_groups' ? '<th>Total Kategori</th><th>Total Unit Fisik</th>' : ($route === 'asset_locations' ? '<th>Total Unit Aset</th>' : ''))) . '<th>Status</th><th>Aksi</th></tr></thead><tbody>';
+        echo '<table><thead><tr><th>ID</th><th>Kode</th><th>Nama</th>' . ($route === 'asset_groups' ? '<th>Total Kategori</th><th>Total Unit Fisik</th>' : ($route === 'asset_locations' ? '<th>Total Unit Aset</th>' : '')) . '<th>Status</th><th>Aksi</th></tr></thead><tbody>';
     }
     
     if ($route === 'asset_types') {
@@ -2736,10 +2809,22 @@ function asset_master_page(PDO $pdo, string $route, array $user): void
             (SELECT COUNT(*) FROM asset_items ai WHERE ai.asset_group_id = g.id) AS unit_count 
             FROM asset_groups g ORDER BY g.group_name')->fetchAll();
     } elseif ($route === 'asset_brands') {
-        $rows = $pdo->query('SELECT b.*, 
+        $whereB = ["1=1"];
+        if ($filterGroupId > 0) {
+            $whereB[] = "b.asset_group_id = " . (int)$filterGroupId;
+        }
+        if ($filterTypeId > 0) {
+            $whereB[] = "b.asset_type_id = " . (int)$filterTypeId;
+        }
+        $sql = 'SELECT b.*, g.group_name, g.group_code, t.type_name, t.type_code,
             (SELECT COUNT(*) FROM asset_master_items ami WHERE ami.brand_id = b.id) AS master_count,
             (SELECT COUNT(*) FROM asset_items ai WHERE ai.brand_id = b.id) AS unit_count 
-            FROM asset_brands b ORDER BY b.brand_name ASC')->fetchAll();
+            FROM asset_brands b 
+            LEFT JOIN asset_groups g ON g.id = b.asset_group_id 
+            LEFT JOIN asset_types t ON t.id = b.asset_type_id 
+            WHERE ' . implode(' AND ', $whereB) . ' 
+            ORDER BY COALESCE(g.group_name, "Z"), COALESCE(t.type_name, "Z"), b.brand_name ASC';
+        $rows = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
     } elseif ($route === 'asset_locations') {
         $rows = $pdo->query('SELECT l.*, 
             (SELECT COUNT(*) FROM asset_items ai WHERE ai.location_id = l.id) AS unit_count 
@@ -2763,12 +2848,28 @@ function asset_master_page(PDO $pdo, string $route, array $user): void
                 . '<td>' . ((int)$r['is_active'] ? '<span class="badge ok">Aktif</span>' : '<span class="badge danger">Nonaktif</span>') . '</td>'
                 . '<td><div class="actions" style="display:flex;gap:6px;align-items:center;"><a class="btn" href="' . route_url($route, ['id' => $r['id']]) . '">Edit</a> ' . $delBtn . '</div></td>'
                 . '</tr>';
+        } elseif ($route === 'asset_brands') {
+            $grpBadge = !empty($r['group_code']) 
+                ? '<span class="badge" style="background:#e0f2fe;color:#0369a1;font-weight:600;">' . e($r['group_code'] . ' - ' . $r['group_name']) . '</span>' 
+                : '<span class="muted">-</span>';
+            $typeBadge = !empty($r['type_name']) 
+                ? '<span class="badge" style="background:#f1f5f9;color:#334155;font-weight:600;">' . e($r['type_name']) . '</span>' 
+                : '<span class="muted">-</span>';
+            echo '<tr>'
+                . '<td>' . e($r['id']) . '</td>'
+                . '<td>' . $grpBadge . '</td>'
+                . '<td>' . $typeBadge . '</td>'
+                . '<td><strong>' . e($r['brand_code'] ?: '-') . '</strong></td>'
+                . '<td>' . e($r['brand_name']) . '</td>'
+                . '<td>' . (int)$r['master_count'] . ' Model</td>'
+                . '<td><strong>' . (int)$r['unit_count'] . ' Unit</strong></td>'
+                . '<td>' . ((int)$r['is_active'] ? '<span class="badge ok">Aktif</span>' : '<span class="badge danger">Nonaktif</span>') . '</td>'
+                . '<td><div class="actions" style="display:flex;gap:6px;align-items:center;"><a class="btn" href="' . route_url($route, ['id' => $r['id']]) . '">Edit</a> ' . $delBtn . '</div></td>'
+                . '</tr>';
         } else {
             $extraCol = '';
             if ($route === 'asset_groups') {
                 $extraCol = '<td>' . (int)$r['type_count'] . ' Kategori</td><td><strong>' . (int)$r['unit_count'] . ' Unit</strong></td>';
-            } elseif ($route === 'asset_brands') {
-                $extraCol = '<td>' . (int)$r['master_count'] . ' Model</td><td><strong>' . (int)$r['unit_count'] . ' Unit</strong></td>';
             } elseif ($route === 'asset_locations') {
                 $extraCol = '<td><strong>' . (int)$r['unit_count'] . ' Unit</strong></td>';
             }
