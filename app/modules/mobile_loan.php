@@ -687,6 +687,7 @@ function handle_route_mobile_asset_loan_create(PDO $pdo): void
         var config = { fps: 10, qrbox: { width: 220, height: 220 } };
         html5QrCode.start({ facingMode: "environment" }, config, function(decodedText) {
             camStatus.textContent = "QR Terbaca: " + decodedText;
+            toggleCameraScanner(); // Otomatis keluar dari foto scan QR setelah berhasil membaca kode
             lookupAndAddAsset(decodedText);
         }).catch(function(err) {
             camStatus.textContent = "Kamera tidak dapat diakses (" + err + ").";
@@ -1106,12 +1107,24 @@ function handle_route_mobile_asset_loan_return(PDO $pdo): void
             });
     }
 
+    function stopLiveReturnScanner() {
+        if (html5QrCode) {
+            try {
+                html5QrCode.stop().then(function() {
+                    html5QrCode.clear();
+                }).catch(function() {});
+            } catch(e) {}
+        }
+    }
+
     function startLiveReturnScanner() {
         var camStatus = document.getElementById("camStatus");
+        camStatus.textContent = "Kamera scanner live QR aktif";
         html5QrCode = new Html5Qrcode("reader");
         var config = { fps: 10, qrbox: { width: 220, height: 220 } };
         html5QrCode.start({ facingMode: "environment" }, config, function(decodedText) {
             camStatus.textContent = "QR Terbaca: " + decodedText;
+            stopLiveReturnScanner(); // Otomatis keluar dari foto scan QR setelah berhasil membaca kode
             lookupLoanForReturn(decodedText);
         }).catch(function(err) {
             camStatus.textContent = "Kamera tidak aktif (" + err + "). Silakan gunakan input kode manual di bawah.";

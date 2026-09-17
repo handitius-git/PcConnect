@@ -870,6 +870,7 @@ function handle_route_asset_loan_form(PDO $pdo): void
             var config = { fps: 10, qrbox: { width: 250, height: 250 } };
             html5QrCode.start({ facingMode: "environment" }, config, function(decodedText) {
                 camStatus.textContent = "QR Terbaca: " + decodedText;
+                toggleCameraScanner(); // Otomatis keluar dari foto scan QR setelah berhasil membaca kode
                 lookupAndAddAsset(decodedText);
             }).catch(function(err) {
                 camStatus.textContent = "Kamera tidak dapat diakses atau diblokir (" + err + ").";
