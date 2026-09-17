@@ -484,35 +484,13 @@ function asset_master_item_form_html(PDO $pdo, array $i, bool $editing): string
             . '</div>';
     }
 
-    $maintInfo = null;
-    if ($editing && !empty($i['id']) && db_table_exists($pdo, 'maintenance_assets')) {
-        $mStmt = $pdo->prepare('SELECT id, maintenance_asset_code, name, status FROM maintenance_assets WHERE asset_item_id = ? AND status <> "inactive" LIMIT 1');
-        $mStmt->execute([(int)$i['id']]);
-        $maintInfo = $mStmt->fetch(PDO::FETCH_ASSOC);
-    }
-
-    $maintHeaderBtn = '';
-    if ($rawItemMode !== 'child') {
-        if ($editing && $maintInfo) {
-            $maintHeaderBtn = '<a class="btn" href="' . route_url('maintenance_asset_form', ['id' => (int)$maintInfo['id']]) . '" style="background:#059669;color:#fff;display:inline-flex;align-items:center;gap:6px;padding:8px 16px;font-weight:600;" title="Buka Data Maintenance Asset"><span style="font-size:16px;">🛠️</span> Maintenance: ' . e($maintInfo['maintenance_asset_code']) . ' ↗</a>';
-        } elseif ($editing && !empty($i['id'])) {
-            $maintHeaderBtn = '<a class="btn" href="' . route_url('maintenance_asset_form', ['asset_item_id' => (int)$i['id']]) . '" style="background:#0284c7;color:#fff;display:inline-flex;align-items:center;gap:6px;padding:8px 16px;font-weight:600;" title="Daftarkan Unit Aset ini ke Maintenance Asset"><span style="font-size:16px;">🛠️</span> Daftarkan ke Maintenance Aset ↗</a>';
-        }
-    }
-
     if ($parentId > 0) {
         $cancelBtn = '<a class="btn" href="' . route_url('asset_item_form', ['id' => $parentId]) . '">Batal / Kembali ke Bundle</a><button class="btn primary">Simpan & Masukkan ke Bundle</button>';
     } else {
-        $maintBtnHtml = '';
-        if ($rawItemMode !== 'child') {
-            if ($editing && $maintInfo) {
-                $maintBtnHtml = ' <button type="submit" name="save_action" value="to_maintenance" class="btn" style="background:#059669;color:#fff;display:inline-flex;align-items:center;gap:6px;"><span style="font-size:15px;">💾</span> Simpan & Buka Maintenance Asset</button>';
-            } else {
-                $maintBtnHtml = ' <button type="submit" name="save_action" value="to_maintenance" class="btn" style="background:#0284c7;color:#fff;display:inline-flex;align-items:center;gap:6px;" title="Simpan data unit aset lalu langsung lanjutkan pendaftaran ke Maintenance Asset"><span style="font-size:15px;">🛠️</span> Simpan & Daftarkan ke Maintenance Aset</button>';
-            }
-        }
-        $cancelBtn = '<a class="btn" href="' . route_url('asset_items') . '">Batal</a><button class="btn primary">Simpan Unit Aset</button>' . $maintBtnHtml;
+        $cancelBtn = '<a class="btn" href="' . route_url('asset_items') . '">Batal</a><button class="btn primary">Simpan Unit Aset</button>';
     }
+
+    $maintHeaderBtn = '';
 
     return '<section class="panel">' . $bundleBanner . '<div class="split" style="align-items:center;margin-bottom:16px;"><div><h1 style="margin:0;">' . ($editing ? 'Edit' : 'Tambah') . ' Unit Aset' . ($parentAsset && !$editing ? ' (Anggota Bundle)' : '') . '</h1>' . $headerBadge . '</div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' . $maintHeaderBtn . '<button type="button" class="btn warning" id="btnImportPc" onclick="openImportPcModal()" style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;font-weight:600;" title="Pilih Master Barang terlebih dahulu sebelum Import PC"><span style="font-size:16px;">📥</span> Import dari Data PC</button></div></div><form method="post"><input type="hidden" name="csrf" value="' . csrf_token() . '">' . ($parentId > 0 ? '<input type="hidden" name="parent_asset_item_id" value="' . e($parentId) . '"><input type="hidden" name="bundle_role" value="Unit Anggota">' : '') . '<input type="hidden" name="source_pc_id" id="sourcePcId" value="' . e($effectivePcId) . '"><input type="hidden" name="linked_pc_id" id="linkedPcId" value="' . e($effectivePcId) . '"><div id="upgradeHiddenInputs"></div><h2>1. Klasifikasi Aset & Master Barang</h2><div class="grid three"><label>Komoditas (Grup Aset) *<select id="assetGroup" name="asset_group_id" onchange="onGroupSelectChanged()" required>' . asset_group_options($pdo, (int)$i['asset_group_id'], true, '- Pilih Komoditas (Grup Aset) -') . '</select></label><label>Kategori (Tipe Aset) *<select id="assetType" name="asset_type_id" onchange="reloadAssetForm()" required>' . $types . '</select></label><label>ID Aset (Kode Unit)<input id="assetCode" name="asset_code" value="' . e($code) . '" readonly></label></div><div class="grid two"><div style="position:relative;"><label for="masterItemSearch" style="display:flex;justify-content:space-between;align-items:center;"><span>Pilih / Cari Master Barang <span style="color:#ef4444;" title="Wajib dipilih">*</span></span><a href="' . route_url('asset_master_items') . '" target="_blank" style="font-size:12px;color:#0284c7;text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:3px;" title="Buka form Master Barang di tab baru">➕ Tambah Master Barang Baru ↗</a></label><div style="display:flex;gap:6px;align-items:stretch;"><div style="position:relative;flex:1;"><input type="text" id="masterItemSearch" placeholder="' . e($searchPlaceholder) . '" autocomplete="off" value="' . e($masterItemText) . '" style="width:100%;box-sizing:border-box;padding-right:58px;background:#fff;cursor:text;" onfocus="onMasterItemInput(this.value)" onclick="onMasterItemInput(this.value)" oninput="onMasterItemInput(this.value)" onkeydown="onMasterItemKeyDown(event)"><button type="button" id="masterItemClearBtn" style="display:' . (!empty($i['master_item_id']) ? 'block' : 'none') . ';position:absolute;right:28px;top:50%;transform:translateY(-50%);background:none;border:none;color:#94a3b8;cursor:pointer;font-size:16px;padding:4px 8px;z-index:2;" onclick="clearMasterItem()" title="Hapus pilihan">✕</button><span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);pointer-events:none;color:#94a3b8;font-size:12px;">▾</span><input type="hidden" id="masterItemIdInput" name="master_item_id" value="' . (int)($i['master_item_id'] ?? 0) . '"><div id="masterItemResults" style="display:none;position:absolute;left:0;right:0;top:calc(100% + 2px);max-height:280px;overflow-y:auto;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 12px 30px rgba(0,0,0,0.18);z-index:99999;"></div></div><a href="' . route_url('asset_master_items') . '" target="_blank" class="btn" style="padding:0 14px;background:#0284c7;color:#fff;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:bold;text-decoration:none;white-space:nowrap;" title="Tambah Master Barang Baru (Buka di Tab Baru)">➕</a></div><small id="masterItemHint" style="display:block;color:#64748b;margin-top:4px">' . (!empty($i['master_item_id']) ? '<span style="color:#166534;font-weight:600;">✓ Master Barang Terpilih (Siap Import dari PC)</span>' : 'Pilih Master Barang terlebih dahulu sebelum Import dari Data PC. Ketik nama untuk mencari.') . '</small></div><label>Mode Aset<select name="asset_mode" id="assetModeSelect">' . $modeOptions . '</select><small id="assetModeHint" style="display:block;color:#64748b;margin-top:4px">' . e($modeHint) . '</small></label></div><h2>2. Identifikasi & Serial Number Unit</h2><div id="identifierFields" class="grid three">' . $fields . '</div><h2>3. Spesifikasi Teknis Unit</h2><div id="specificationFields" class="grid three">' . $specFields . '</div>' . $logHtml . '<h2>4. Detail Barang & Merek</h2><div class="grid three"><label>Brand / Merk<select id="assetBrandId" name="brand_id">' . $brandOptions . '</select></label><label>Nama Brand (Teks)<input id="assetBrandInput" name="brand" value="' . e($i['brand']) . '" placeholder="Auto terisi dari master merk"></label><label>Model / Varian<input id="assetModelInput" name="model" value="' . e($i['model']) . '" placeholder="Contoh: ThinkPad T480 / OptiPlex 3080"></label></div><div class="grid two"><label>Nama Unit Aset (Deskriptif)<input id="assetNameInput" name="asset_name" value="' . e($i['asset_name']) . '" placeholder="Contoh: Laptop ThinkPad T480 IT"></label><label>Keterangan Tambahan<textarea name="notes" style="min-height:42px">' . e($i['notes']) . '</textarea></label></div><h2>5. Lokasi & Tanggung Jawab (Custodian)</h2><div class="grid three"><label>Lokasi Unit Aset *<select name="location_id" id="assetLocationId" required>' . $locationOptions . '</select></label><label>Detail Ruangan / Gedung<input name="location_label" id="assetLocationLabel" value="' . e($i['location_label']) . '" placeholder="Gedung / Lantai / Ruangan"></label><label>Company<select name="company_id">' . company_options($pdo, (int)$i['company_id']) . '</select></label></div><div class="grid two"><label>NIK Pengguna / Custodian<input id="assetCustodianNik" name="custodian_nik" value="' . e($i['custodian_nik'] ?? '') . '" placeholder="NIK karyawan"></label><label>Nama Pengguna / Custodian<input id="assetCustodianName" name="custodian_name" value="' . e($i['custodian_name'] ?? '') . '" placeholder="Nama pemakai / PIC aset"></label></div>' . (function_exists('employee_portal_name_picker_html') ? employee_portal_name_picker_html('assetCustodian', 'assetCustodianName', 'assetCustodianNik') : '') . '<h2>6. Pembelian / Garansi / Status</h2><div class="grid four"><label>Tanggal Perolehan / Beli<input type="date" name="installed_at" value="' . e($i['installed_at']) . '"></label><label>Harga Perolehan (Rp)<input type="number" name="purchase_value" value="' . e($i['purchase_value']) . '"></label><label>Garansi Berakhir<input type="date" name="warranty_until" value="' . e($i['warranty_until']) . '"></label><label>Status Unit *<select name="asset_status_id" required>' . asset_status_options($pdo, (int)$i['asset_status_id']) . '</select></label></div><div class="actions">' . $cancelBtn . '</div></form>' . $pcModalHtml . '</section><script>
 (function(){
@@ -4972,11 +4950,6 @@ function handle_route_asset_item_form(PDO $pdo): void
                 flash('Unit Aset baru berhasil dibuat dan digabungkan sebagai anggota bundle ' . $pCode . '.');
                 redirect_to('asset_item_form', ['id' => $parentId]);
             }
-            // Jika user memilih tombol "Simpan & Daftarkan ke Maintenance Aset"
-            if (!empty($_POST['save_action']) && $_POST['save_action'] === 'to_maintenance') {
-                flash('Unit Aset berhasil disimpan. Silakan lengkapi pendaftaran Maintenance Asset.');
-                redirect_to('maintenance_asset_form', ['asset_item_id' => $id]);
-            }
             flash('Unit Aset berhasil disimpan.');
             redirect_to('asset_item_form', ['id' => $id]);
         } catch (Throwable $e) {
@@ -4987,7 +4960,6 @@ function handle_route_asset_item_form(PDO $pdo): void
     echo asset_nav_html();
     echo asset_master_item_form_html($pdo, $item, $id > 0);
     if ($id > 0) {
-        echo asset_item_maintenance_link_panel_html($pdo, $id);
         echo asset_item_member_manager_html($pdo, $id);
     }
     render_footer();

@@ -312,11 +312,78 @@ function handle_route_api_ingest(PDO $pdo): void
 
 function handle_route_employee_search(PDO $pdo): void
 {
-    require_role(['admin', 'maintenance_admin']);
+    require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance']);
     $query = trim((string)($_GET['q'] ?? ''));
     $limit = max(1, min(200, (int)($_GET['limit'] ?? 50)));
     $rows = employee_search_rows($pdo, $query, $limit);
+    header('Content-Type: application/json; charset=utf-8');
     echo json_encode(['ok' => true, 'data' => $rows], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function handle_route_api_lookup_asset_for_loan(PDO $pdo): void
+{
+    require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance']);
+    $raw = trim((string)($_GET['code'] ?? $_POST['code'] ?? $_GET['eqr'] ?? $_POST['eqr'] ?? ''));
+    
+    if (!function_exists('find_asset_item_for_loan')) {
+        require_once dirname(__DIR__) . '/modules/asset_loan.php';
+    }
+
+    $item = find_asset_item_for_loan($pdo, $raw);
+    header('Content-Type: application/json; charset=utf-8');
+
+    if (!$item) {
+        echo json_encode([
+            'ok' => true,
+            'found' => false,
+            'message' => 'Unit aset dengan kode atau QR tersebut tidak ditemukan di database.'
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+
+    $status = strtolower(trim((string)$item['status']));
+    $isAvailable = ($status === 'active' || $status === 'standalone');
+    $loanInfo = null;
+
+    if ($status === 'borrowed') {
+        $isAvailable = false;
+        $qLoan = $pdo->prepare("SELECT al.id AS loan_id, al.loan_code, al.borrower_name, al.borrower_department, al.loan_date, al.expected_return_date
+                                FROM asset_loan_items ali
+                                JOIN asset_loans al ON al.id = ali.loan_id
+                                WHERE ali.asset_item_id = ? AND ali.status = 'borrowed' AND al.status = 'active'
+                                ORDER BY al.id DESC LIMIT 1");
+        $qLoan->execute([(int)$item['id']]);
+        $loanInfo = $qLoan->fetch(PDO::FETCH_ASSOC);
+        $borrower = !empty($loanInfo['borrower_name']) ? $loanInfo['borrower_name'] : 'Peminjam lain';
+        $lCode = !empty($loanInfo['loan_code']) ? ' (No. ' . $loanInfo['loan_code'] . ')' : '';
+        $message = "Unit " . $item['asset_code'] . " sedang dalam status DIPINJAM oleh {$borrower}{$lCode}.";
+    } elseif (!$isAvailable) {
+        $message = "Unit " . $item['asset_code'] . " tidak dapat dipinjam karena berstatus: " . ucfirst($status) . ".";
+    } else {
+        $message = "Unit " . $item['asset_code'] . " tersedia dan siap dipinjam.";
+    }
+
+    echo json_encode([
+        'ok' => true,
+        'found' => true,
+        'is_available' => $isAvailable,
+        'message' => $message,
+        'data' => [
+            'id' => (int)$item['id'],
+            'asset_code' => (string)$item['asset_code'],
+            'asset_name' => (string)$item['asset_name'],
+            'brand' => (string)($item['brand'] ?? ''),
+            'model' => (string)($item['model'] ?? ''),
+            'serial_number' => (string)($item['serial_number'] ?? ''),
+            'group_name' => (string)($item['group_name'] ?? 'IT'),
+            'type_name' => (string)($item['type_name'] ?? 'General'),
+            'location_name' => (string)($item['location_name'] ?: ($item['location_label'] ?? '-')),
+            'status' => $status,
+            'loan_info' => $loanInfo,
+        ]
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
 }
 
 function handle_route_api_asset_types(PDO $pdo): void

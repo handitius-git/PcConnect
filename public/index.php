@@ -48,6 +48,7 @@ $moduleFiles = [
     'app/modules/field_service.php',
     'app/modules/pengguna.php',
     'app/modules/asset_loan.php',
+    'app/modules/mobile_loan.php',
 ];
 
 $missingFiles = [];
@@ -209,6 +210,7 @@ switch ($route) {
         handle_route_asset_loans($pdo);
         break;
     case 'asset_loan_form':
+    case 'asset_loan_edit':
         handle_route_asset_loan_form($pdo);
         break;
     case 'asset_loan_detail':
@@ -216,6 +218,18 @@ switch ($route) {
         break;
     case 'asset_loan_return':
         handle_route_asset_loan_return($pdo);
+        break;
+    case 'mobile_asset_loans':
+        handle_route_mobile_asset_loans($pdo);
+        break;
+    case 'mobile_asset_loan_create':
+        handle_route_mobile_asset_loan_create($pdo);
+        break;
+    case 'mobile_asset_loan_return':
+        handle_route_mobile_asset_loan_return($pdo);
+        break;
+    case 'mobile_asset_loan_detail':
+        handle_route_mobile_asset_loan_detail($pdo);
         break;
     case 'report_asset_loans':
         handle_route_report_asset_loans($pdo);
@@ -435,6 +449,9 @@ switch ($route) {
         break;
     case 'api_eligible_maintenance_asset_items':
         handle_route_api_eligible_maintenance_asset_items($pdo);
+        break;
+    case 'api_lookup_asset_for_loan':
+        handle_route_api_lookup_asset_for_loan($pdo);
         break;
 
     default:

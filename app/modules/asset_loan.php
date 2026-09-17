@@ -5,7 +5,101 @@ declare(strict_types=1);
 /**
  * Modul Peminjaman Aset (Asset Loan Management)
  * Terintegrasi dengan Unit Aset (asset_items), Master Karyawan (employee_directory), dan Status Aset.
+/**
+ * Temukan unit aset berdasarkan kode aset atau hasil scan QR (plain / URL / terenkripsi)
  */
+function find_asset_item_for_loan(PDO $pdo, string $raw): ?array
+{
+    $raw = trim($raw);
+    if ($raw === '') {
+        return null;
+    }
+
+    $code = $raw;
+    // Cek jika raw berupa URL yang mengandung query parameter eqr atau code
+    if (str_contains($raw, 'eqr=')) {
+        $parts = parse_url($raw);
+        if (!empty($parts['query'])) {
+            parse_str($parts['query'], $q);
+            if (!empty($q['eqr']) && function_exists('qr_decrypt_payload')) {
+                $decrypted = qr_decrypt_payload((string)$q['eqr']);
+                if ($decrypted) {
+                    $code = $decrypted;
+                }
+            }
+        } elseif (function_exists('qr_decrypt_payload')) {
+            $eqrVal = substr($raw, strpos($raw, 'eqr=') + 4);
+            $eqrVal = explode('&', $eqrVal)[0];
+            $decrypted = qr_decrypt_payload(urldecode($eqrVal));
+            if ($decrypted) {
+                $code = $decrypted;
+            }
+        }
+    } elseif (str_contains($raw, 'code=')) {
+        $parts = parse_url($raw);
+        if (!empty($parts['query'])) {
+            parse_str($parts['query'], $q);
+            if (!empty($q['code'])) {
+                $code = trim((string)$q['code']);
+            }
+        } else {
+            $cVal = substr($raw, strpos($raw, 'code=') + 5);
+            $code = trim(urldecode(explode('&', $cVal)[0]));
+        }
+    } else {
+        // Cek apakah raw adalah payload terenkripsi
+        if (function_exists('qr_decrypt_payload')) {
+            $decrypted = qr_decrypt_payload($raw);
+            if ($decrypted) {
+                $code = $decrypted;
+            }
+        }
+    }
+
+    $code = trim($code);
+    if ($code === '') {
+        return null;
+    }
+
+    // 1. Cari exact match asset_code
+    $stmt = $pdo->prepare("SELECT ai.*, g.group_name, t.type_name, loc.location_name
+                           FROM asset_items ai
+                           LEFT JOIN asset_groups g ON g.id = ai.asset_group_id
+                           LEFT JOIN asset_types t ON t.id = ai.asset_type_id
+                           LEFT JOIN asset_locations loc ON loc.id = ai.location_id
+                           WHERE UPPER(TRIM(ai.asset_code)) = UPPER(?)
+                           LIMIT 1");
+    $stmt->execute([$code]);
+    $item = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    // 2. Cari serial_number
+    if (!$item) {
+        $stmt2 = $pdo->prepare("SELECT ai.*, g.group_name, t.type_name, loc.location_name
+                                FROM asset_items ai
+                                LEFT JOIN asset_groups g ON g.id = ai.asset_group_id
+                                LEFT JOIN asset_types t ON t.id = ai.asset_type_id
+                                LEFT JOIN asset_locations loc ON loc.id = ai.location_id
+                                WHERE UPPER(TRIM(ai.serial_number)) = UPPER(?)
+                                LIMIT 1");
+        $stmt2->execute([$code]);
+        $item = $stmt2->fetch(PDO::FETCH_ASSOC);
+    }
+
+    // 3. Cari id jika format #123 atau angka murni
+    if (!$item && preg_match('/^#?(\d+)$/', $code, $m)) {
+        $stmt3 = $pdo->prepare("SELECT ai.*, g.group_name, t.type_name, loc.location_name
+                                FROM asset_items ai
+                                LEFT JOIN asset_groups g ON g.id = ai.asset_group_id
+                                LEFT JOIN asset_types t ON t.id = ai.asset_type_id
+                                LEFT JOIN asset_locations loc ON loc.id = ai.location_id
+                                WHERE ai.id = ?
+                                LIMIT 1");
+        $stmt3->execute([(int)$m[1]]);
+        $item = $stmt3->fetch(PDO::FETCH_ASSOC);
+    }
+
+    return $item ?: null;
+}
 
 function handle_route_asset_loans(PDO $pdo): void
 {
@@ -93,11 +187,13 @@ function handle_route_asset_loans(PDO $pdo): void
         . '    <h1 style="margin:0;display:flex;align-items:center;gap:8px;">📦 Peminjaman Aset</h1>'
         . '    <p class="muted" style="margin:4px 0 0 0;">Pengelolaan serah-terima peminjaman perkakas, alat kerja, dan unit aset operasional.</p>'
         . '  </div>'
-        . '  <div class="actions">'
+        . '  <div class="actions" style="display:flex;gap:8px;flex-wrap:wrap;">'
+        . '    <a class="btn" href="' . route_url('mobile_asset_loans') . '" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:#f0fdf4;border-color:#86efac;color:#166534;font-weight:600;">'
+        . '      <span>📱</span> Versi Mobile'
+        . '    </a>'
         . '    <a class="btn primary" href="' . route_url('asset_loan_form') . '" style="display:inline-flex;align-items:center;gap:6px;font-weight:bold;">'
         . '      <span>➕</span> Catat Peminjaman Aset'
         . '    </a>'
-        . '    <a class="btn" href="' . route_url('report_asset_loans') . '">📊 Laporan Peminjaman</a>'
         . '  </div>'
         . '</div>'
 
@@ -221,6 +317,7 @@ function handle_route_asset_loans(PDO $pdo): void
                 . '  <td style="padding:10px 12px;vertical-align:top;text-align:center;white-space:nowrap;">'
                 . '    <div style="display:inline-flex;gap:4px;flex-wrap:wrap;justify-content:center;">'
                 . '      <a class="btn" href="' . route_url('asset_loan_detail', ['id' => $l['id']]) . '" style="padding:4px 8px;font-size:12px;" title="Lihat Detail & Bukti Pinjam">📄 Detail</a>'
+                . ($l['status'] === 'active' ? '      <a class="btn" href="' . route_url('asset_loan_form', ['id' => $l['id']]) . '" style="padding:4px 8px;font-size:12px;background:#f59e0b;border-color:#f59e0b;color:#fff;" title="Edit Data Peminjaman">✏️ Edit</a>' : '')
                 . ($l['status'] === 'active' ? '      <a class="btn primary" href="' . route_url('asset_loan_return', ['id' => $l['id']]) . '" style="padding:4px 8px;font-size:12px;background:#16a34a;border-color:#16a34a;" title="Proses Pengembalian">📥 Kembalikan</a>' : '')
                 . '    </div>'
                 . '  </td>'
@@ -237,11 +334,37 @@ function handle_route_asset_loans(PDO $pdo): void
 /**
  * Form Peminjaman Aset Baru
  */
+/**
+ * Form Peminjaman Aset (Tambah Baru & Edit)
+ */
 function handle_route_asset_loan_form(PDO $pdo): void
 {
     $user = require_role(['admin', 'maintenance_admin', 'technician']);
+    $id = (int)($_GET['id'] ?? $_POST['loan_id'] ?? 0);
+    $loan = null;
+    $existingItems = [];
 
-    // Proses Simpan Transaksi Peminjaman
+    if ($id > 0) {
+        $stmt = $pdo->prepare("SELECT * FROM asset_loans WHERE id = ?");
+        $stmt->execute([$id]);
+        $loan = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$loan) {
+            flash('Data peminjaman tidak ditemukan.', 'err');
+            redirect_to('asset_loans');
+        }
+        $itemStmt = $pdo->prepare("SELECT ali.*, ai.asset_code, ai.asset_name, ai.brand, ai.model, g.group_name, t.type_name, loc.location_name
+                                   FROM asset_loan_items ali
+                                   JOIN asset_items ai ON ai.id = ali.asset_item_id
+                                   LEFT JOIN asset_groups g ON g.id = ai.asset_group_id
+                                   LEFT JOIN asset_types t ON t.id = ai.asset_type_id
+                                   LEFT JOIN asset_locations loc ON loc.id = ai.location_id
+                                   WHERE ali.loan_id = ?
+                                   ORDER BY ali.id ASC");
+        $itemStmt->execute([$id]);
+        $existingItems = $itemStmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    // Proses Simpan Transaksi Peminjaman (Tambah Baru / Edit)
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $borrowerName = trim((string)($_POST['borrower_name'] ?? ''));
         $borrowerNik = trim((string)($_POST['borrower_nik'] ?? ''));
@@ -257,16 +380,16 @@ function handle_route_asset_loan_form(PDO $pdo): void
         if (!is_array($selectedAssetIds)) {
             $selectedAssetIds = [];
         }
-        $selectedAssetIds = array_map('intval', array_filter($selectedAssetIds));
+        $selectedAssetIds = array_values(array_unique(array_map('intval', array_filter($selectedAssetIds))));
 
         if ($borrowerName === '') {
-            flash('Nama peminjam wajib diisi.', 'err');
-            redirect_to('asset_loan_form');
+            flash('Nama peminjam wajib diisi (pilih dari database atau ketik nama).', 'err');
+            redirect_to('asset_loan_form', $id > 0 ? ['id' => $id] : []);
         }
 
         if (empty($selectedAssetIds)) {
-            flash('Pilih minimal 1 unit aset yang akan dipinjam.', 'err');
-            redirect_to('asset_loan_form');
+            flash('Pilih/scan minimal 1 unit aset yang akan dipinjam.', 'err');
+            redirect_to('asset_loan_form', $id > 0 ? ['id' => $id] : []);
         }
 
         if ($loanDate === '') {
@@ -277,69 +400,127 @@ function handle_route_asset_loan_form(PDO $pdo): void
 
         $expectedReturn = !empty($expectedReturnDate) ? date('Y-m-d', strtotime($expectedReturnDate)) : null;
 
-        // Ambil ID status BORROWED
+        // Ambil ID status BORROWED & ACTIVE
         $borrowedStatusId = (int)$pdo->query("SELECT id FROM asset_statuses WHERE status_code = 'BORROWED' LIMIT 1")->fetchColumn();
         if ($borrowedStatusId <= 0) {
             $pdo->exec("INSERT IGNORE INTO asset_statuses (status_code, status_name, is_active) VALUES ('BORROWED', 'Dipinjam', 1)");
             $borrowedStatusId = (int)$pdo->lastInsertId();
         }
+        $activeStatusId = (int)$pdo->query("SELECT id FROM asset_statuses WHERE status_code = 'ACTIVE' LIMIT 1")->fetchColumn();
 
         try {
             $pdo->beginTransaction();
 
-            // Generate nomor peminjaman: LN-YYYYMM-XXXX
-            $prefix = 'LN-' . date('Ym') . '-';
-            $stmtSeq = $pdo->prepare("SELECT COUNT(*) FROM asset_loans WHERE loan_code LIKE ?");
-            $stmtSeq->execute([$prefix . '%']);
-            $nextSeq = (int)$stmtSeq->fetchColumn() + 1;
-            $loanCode = $prefix . str_pad((string)$nextSeq, 4, '0', STR_PAD_LEFT);
-
-            // Double check keunikan loan_code
-            $chkStmt = $pdo->prepare("SELECT COUNT(*) FROM asset_loans WHERE loan_code = ?");
-            $chkStmt->execute([$loanCode]);
-            while ((int)$chkStmt->fetchColumn() > 0) {
-                $nextSeq++;
-                $loanCode = $prefix . str_pad((string)$nextSeq, 4, '0', STR_PAD_LEFT);
-                $chkStmt->execute([$loanCode]);
-            }
-
-            // Insert Header
-            $insHeader = $pdo->prepare("INSERT INTO asset_loans 
-                (loan_code, borrower_nik, borrower_name, borrower_department, borrower_phone, loan_date, expected_return_date, purpose, location_note, status, officer_user_id, officer_notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)");
-            $insHeader->execute([
-                $loanCode,
-                $borrowerNik ?: null,
-                $borrowerName,
-                $borrowerDept ?: null,
-                $borrowerPhone ?: null,
-                $loanDate,
-                $expectedReturn,
-                $purpose ?: null,
-                $locationNote ?: null,
-                $user['id'] ?? null,
-                $officerNotes ?: null
-            ]);
-            $loanId = (int)$pdo->lastInsertId();
-
-            // Insert Detail Items & Update Unit Aset
-            $insItem = $pdo->prepare("INSERT INTO asset_loan_items (loan_id, asset_item_id, condition_out, notes_out, status) VALUES (?, ?, ?, ?, 'borrowed')");
-            $updAsset = $pdo->prepare("UPDATE asset_items SET status = 'borrowed', asset_status_id = ?, custodian_name = ?, custodian_nik = ? WHERE id = ?");
-
             $conditionsOut = $_POST['condition_out'] ?? [];
             $itemNotesOut = $_POST['item_notes_out'] ?? [];
 
-            foreach ($selectedAssetIds as $aid) {
-                $cOut = trim((string)($conditionsOut[$aid] ?? 'Normal / Baik'));
-                $nOut = trim((string)($itemNotesOut[$aid] ?? ''));
+            if ($id > 0) {
+                // UPDATE Transaksi Peminjaman (Edit Mode)
+                $updHeader = $pdo->prepare("UPDATE asset_loans 
+                    SET borrower_nik = ?, borrower_name = ?, borrower_department = ?, borrower_phone = ?,
+                        loan_date = ?, expected_return_date = ?, purpose = ?, location_note = ?, officer_notes = ?, updated_at = NOW()
+                    WHERE id = ?");
+                $updHeader->execute([
+                    $borrowerNik ?: null,
+                    $borrowerName,
+                    $borrowerDept ?: null,
+                    $borrowerPhone ?: null,
+                    $loanDate,
+                    $expectedReturn,
+                    $purpose ?: null,
+                    $locationNote ?: null,
+                    $officerNotes ?: null,
+                    $id
+                ]);
 
-                $insItem->execute([$loanId, $aid, $cOut ?: 'Normal / Baik', $nOut ?: null]);
-                $updAsset->execute([$borrowedStatusId, $borrowerName, $borrowerNik ?: null, $aid]);
+                // Ambil ID aset yang lama di transaksi ini
+                $oldItemStmt = $pdo->prepare("SELECT asset_item_id FROM asset_loan_items WHERE loan_id = ?");
+                $oldItemStmt->execute([$id]);
+                $oldAssetIds = array_map('intval', $oldItemStmt->fetchAll(PDO::FETCH_COLUMN));
+
+                // 1. Item yang dihapus dari transaksi (kembalikan ke active)
+                $deletedAssetIds = array_diff($oldAssetIds, $selectedAssetIds);
+                if (!empty($deletedAssetIds)) {
+                    $delStmt = $pdo->prepare("DELETE FROM asset_loan_items WHERE loan_id = ? AND asset_item_id = ?");
+                    $relAsset = $pdo->prepare("UPDATE asset_items SET status = 'active', asset_status_id = ?, custodian_name = NULL, custodian_nik = NULL WHERE id = ?");
+                    foreach ($deletedAssetIds as $delAid) {
+                        $delStmt->execute([$id, $delAid]);
+                        $relAsset->execute([$activeStatusId ?: null, $delAid]);
+                    }
+                }
+
+                // 2. Item yang baru ditambahkan
+                $newAssetIds = array_diff($selectedAssetIds, $oldAssetIds);
+                $insItem = $pdo->prepare("INSERT INTO asset_loan_items (loan_id, asset_item_id, condition_out, notes_out, status) VALUES (?, ?, ?, ?, 'borrowed')");
+                $updNewAsset = $pdo->prepare("UPDATE asset_items SET status = 'borrowed', asset_status_id = ?, custodian_name = ?, custodian_nik = ? WHERE id = ?");
+                foreach ($newAssetIds as $newAid) {
+                    $cOut = trim((string)($conditionsOut[$newAid] ?? 'Normal / Baik'));
+                    $nOut = trim((string)($itemNotesOut[$newAid] ?? ''));
+                    $insItem->execute([$id, $newAid, $cOut ?: 'Normal / Baik', $nOut ?: null]);
+                    $updNewAsset->execute([$borrowedStatusId, $borrowerName, $borrowerNik ?: null, $newAid]);
+                }
+
+                // 3. Item yang tetap ada: update condition_out & notes_out
+                $keptAssetIds = array_intersect($selectedAssetIds, $oldAssetIds);
+                $updKept = $pdo->prepare("UPDATE asset_loan_items SET condition_out = ?, notes_out = ? WHERE loan_id = ? AND asset_item_id = ?");
+                foreach ($keptAssetIds as $keptAid) {
+                    $cOut = trim((string)($conditionsOut[$keptAid] ?? 'Normal / Baik'));
+                    $nOut = trim((string)($itemNotesOut[$keptAid] ?? ''));
+                    $updKept->execute([$cOut ?: 'Normal / Baik', $nOut ?: null, $id, $keptAid]);
+                }
+
+                $pdo->commit();
+                flash("Perubahan peminjaman aset <strong>{$loan['loan_code']}</strong> berhasil disimpan.", 'ok');
+                redirect_to('asset_loans');
+            } else {
+                // INSERT Transaksi Baru
+                $prefix = 'LN-' . date('Ym') . '-';
+                $stmtSeq = $pdo->prepare("SELECT COUNT(*) FROM asset_loans WHERE loan_code LIKE ?");
+                $stmtSeq->execute([$prefix . '%']);
+                $nextSeq = (int)$stmtSeq->fetchColumn() + 1;
+                $loanCode = $prefix . str_pad((string)$nextSeq, 4, '0', STR_PAD_LEFT);
+
+                $chkStmt = $pdo->prepare("SELECT COUNT(*) FROM asset_loans WHERE loan_code = ?");
+                $chkStmt->execute([$loanCode]);
+                while ((int)$chkStmt->fetchColumn() > 0) {
+                    $nextSeq++;
+                    $loanCode = $prefix . str_pad((string)$nextSeq, 4, '0', STR_PAD_LEFT);
+                    $chkStmt->execute([$loanCode]);
+                }
+
+                $insHeader = $pdo->prepare("INSERT INTO asset_loans 
+                    (loan_code, borrower_nik, borrower_name, borrower_department, borrower_phone, loan_date, expected_return_date, purpose, location_note, status, officer_user_id, officer_notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)");
+                $insHeader->execute([
+                    $loanCode,
+                    $borrowerNik ?: null,
+                    $borrowerName,
+                    $borrowerDept ?: null,
+                    $borrowerPhone ?: null,
+                    $loanDate,
+                    $expectedReturn,
+                    $purpose ?: null,
+                    $locationNote ?: null,
+                    $user['id'] ?? null,
+                    $officerNotes ?: null
+                ]);
+                $loanId = (int)$pdo->lastInsertId();
+
+                $insItem = $pdo->prepare("INSERT INTO asset_loan_items (loan_id, asset_item_id, condition_out, notes_out, status) VALUES (?, ?, ?, ?, 'borrowed')");
+                $updAsset = $pdo->prepare("UPDATE asset_items SET status = 'borrowed', asset_status_id = ?, custodian_name = ?, custodian_nik = ? WHERE id = ?");
+
+                foreach ($selectedAssetIds as $aid) {
+                    $cOut = trim((string)($conditionsOut[$aid] ?? 'Normal / Baik'));
+                    $nOut = trim((string)($itemNotesOut[$aid] ?? ''));
+
+                    $insItem->execute([$loanId, $aid, $cOut ?: 'Normal / Baik', $nOut ?: null]);
+                    $updAsset->execute([$borrowedStatusId, $borrowerName, $borrowerNik ?: null, $aid]);
+                }
+
+                $pdo->commit();
+                flash("Peminjaman aset berhasil disimpan dengan nomor: <strong>{$loanCode}</strong>.", 'ok');
+                redirect_to('asset_loans');
             }
-
-            $pdo->commit();
-            flash("Peminjaman aset berhasil disimpan dengan nomor: <strong>{$loanCode}</strong>.", 'ok');
-            redirect_to('asset_loans');
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();
@@ -348,30 +529,41 @@ function handle_route_asset_loan_form(PDO $pdo): void
         }
     }
 
-    // Ambil daftar unit aset yang tersedia (Active & Not Borrowed)
-    $availableAssets = [];
-    try {
-        $availStmt = $pdo->query("SELECT ai.id, ai.asset_code, ai.asset_name, ai.brand, ai.model, ai.serial_number,
-            g.group_name, g.group_code, t.type_name, t.type_code, loc.location_name
-            FROM asset_items ai
-            LEFT JOIN asset_groups g ON g.id = ai.asset_group_id
-            LEFT JOIN asset_types t ON t.id = ai.asset_type_id
-            LEFT JOIN asset_locations loc ON loc.id = ai.location_id
-            LEFT JOIN asset_statuses st ON st.id = ai.asset_status_id
-            WHERE (ai.status = 'active' OR (st.status_code = 'ACTIVE' OR st.status_code IS NULL))
-              AND ai.status <> 'borrowed'
-            ORDER BY g.group_name ASC, t.type_name ASC, ai.asset_name ASC, ai.asset_code ASC");
-        $availableAssets = $availStmt->fetchAll(PDO::FETCH_ASSOC);
-    } catch (Throwable $e) {
-    }
+    $pageTitle = $id > 0 ? ('Edit Peminjaman Aset #' . ($loan['loan_code'] ?? '')) : 'Catat Peminjaman Aset Baru';
+    render_header($pageTitle, $user);
 
-    render_header('Catat Peminjaman Aset Baru', $user);
+    $borrowerNameVal = $loan['borrower_name'] ?? '';
+    $borrowerNikVal = $loan['borrower_nik'] ?? '';
+    $borrowerDeptVal = $loan['borrower_department'] ?? '';
+    $borrowerPhoneVal = $loan['borrower_phone'] ?? '';
+    $loanDateVal = !empty($loan['loan_date']) ? date('Y-m-d\TH:i', strtotime($loan['loan_date'])) : date('Y-m-d\TH:i');
+    $expReturnVal = !empty($loan['expected_return_date']) ? date('Y-m-d', strtotime($loan['expected_return_date'])) : date('Y-m-d', strtotime('+1 day'));
+    $purposeVal = $loan['purpose'] ?? '';
+    $locationNoteVal = $loan['location_note'] ?? '';
+    $officerNotesVal = $loan['officer_notes'] ?? '';
+
+    // Data awal unit terverifikasi jika edit
+    $initialItemsJs = [];
+    foreach ($existingItems as $it) {
+        $initialItemsJs[] = [
+            'id' => (int)$it['asset_item_id'],
+            'asset_code' => (string)$it['asset_code'],
+            'asset_name' => (string)$it['asset_name'],
+            'brand' => (string)($it['brand'] ?? ''),
+            'model' => (string)($it['model'] ?? ''),
+            'group_name' => (string)($it['group_name'] ?? 'IT'),
+            'type_name' => (string)($it['type_name'] ?? 'General'),
+            'location_name' => (string)($it['location_name'] ?? '-'),
+            'condition_out' => (string)($it['condition_out'] ?: 'Normal / Baik'),
+            'notes_out' => (string)($it['notes_out'] ?? ''),
+        ];
+    }
 
     echo '<section class="panel">'
         . '<div class="split" style="align-items:center;margin-bottom:16px;">'
         . '  <div>'
-        . '    <h1 style="margin:0;">📝 Catat Peminjaman Aset</h1>'
-        . '    <p class="muted" style="margin:4px 0 0 0;">Lengkapi formulir serah-terima peminjaman aset fisik kepada karyawan / divisi.</p>'
+        . '    <h1 style="margin:0;">' . e($pageTitle) . '</h1>'
+        . '    <p class="muted" style="margin:4px 0 0 0;">Lengkapi identitas peminjam dari Master Pengguna dan scan QR code unit aset fisik yang diserahterimakan.</p>'
         . '  </div>'
         . '  <div class="actions">'
         . '    <a class="btn" href="' . route_url('asset_loans') . '">⬅️ Kembali ke Daftar</a>'
@@ -380,30 +572,42 @@ function handle_route_asset_loan_form(PDO $pdo): void
 
         . '<form method="post" id="loanForm" onsubmit="return validateLoanForm();">'
         . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
+        . ($id > 0 ? '<input type="hidden" name="loan_id" value="' . $id . '">' : '')
 
         // Bagian 1: Identitas Peminjam
         . '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:20px;">'
-        . '  <h2 style="margin:0 0 12px 0;font-size:16px;color:#0f172a;display:flex;align-items:center;gap:6px;">👤 1. Identitas Peminjam (Karyawan)</h2>'
+        . '  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">'
+        . '    <h2 style="margin:0;font-size:16px;color:#0f172a;display:flex;align-items:center;gap:6px;">👤 1. Identitas Peminjam (Dari Master Pengguna)</h2>'
+        . '    <span id="borrowerSourceBadge" style="font-size:12px;background:#dcfce7;color:#166534;padding:3px 10px;border-radius:12px;font-weight:600;' . ($borrowerNameVal !== '' ? '' : 'display:none;') . '">✓ Terpilih dari Database</span>'
+        . '  </div>'
+
+        // Search Autocomplete Master Pengguna
+        . '  <div style="position:relative;margin-bottom:12px;">'
+        . '    <label style="font-weight:600;font-size:13px;color:#334155;margin-bottom:4px;display:block;">🔍 Cari & Pilih Karyawan dari Database Master Pengguna:'
+        . '      <input type="text" id="employeeSearchInput" placeholder="Ketik nama atau NIK karyawan (contoh: Budi, Agus, 00123)..." autocomplete="off" style="width:100%;box-sizing:border-box;padding:10px 14px;background:#fff;border:2px solid #0284c7;border-radius:6px;font-size:14px;">'
+        . '    </label>'
+        . '    <div id="employeeDropdownList" style="display:none;position:absolute;left:0;right:0;top:calc(100% + 2px);max-height:260px;overflow-y:auto;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 12px 30px rgba(0,0,0,0.18);z-index:99999;"></div>'
+        . '  </div>'
+
         . '  <div class="grid three">'
         . '    <label>NIK Peminjam'
-        . '      <input id="borrowerNikInput" name="borrower_nik" placeholder="NIK Karyawan (opsional)">'
+        . '      <input id="borrowerNikInput" name="borrower_nik" value="' . e($borrowerNikVal) . '" placeholder="NIK Karyawan">'
         . '    </label>'
         . '    <label>Nama Peminjam *'
-        . '      <input id="borrowerNameInput" name="borrower_name" required placeholder="Nama Lengkap Karyawan">'
+        . '      <input id="borrowerNameInput" name="borrower_name" value="' . e($borrowerNameVal) . '" required placeholder="Nama Lengkap Karyawan">'
         . '    </label>'
         . '    <label>Departemen / Divisi'
-        . '      <input id="borrowerDeptInput" name="borrower_department" placeholder="Contoh: IT, Produksi, GA, Logistik">'
+        . '      <input id="borrowerDeptInput" name="borrower_department" value="' . e($borrowerDeptVal) . '" placeholder="Contoh: IT, Produksi, GA, Logistik">'
         . '    </label>'
         . '  </div>'
         . '  <div class="grid two" style="margin-top:8px;">'
         . '    <label>No. HP / WhatsApp (Peminjam)'
-        . '      <input name="borrower_phone" placeholder="Contoh: 08123456789">'
+        . '      <input name="borrower_phone" value="' . e($borrowerPhoneVal) . '" placeholder="Contoh: 08123456789">'
         . '    </label>'
         . '    <label>Lokasi / Ruang Penggunaan'
-        . '      <input name="location_note" placeholder="Contoh: Area Pabrik Line 2, Gedung B Lantai 2, Ruang Rapat">'
+        . '      <input name="location_note" value="' . e($locationNoteVal) . '" placeholder="Contoh: Area Pabrik Line 2, Gedung B Lantai 2, Ruang Rapat">'
         . '    </label>'
         . '  </div>'
-        . (function_exists('employee_portal_name_picker_html') ? employee_portal_name_picker_html('borrowerPicker', 'borrowerNameInput', 'borrowerNikInput') : '')
         . '</div>'
 
         // Bagian 2: Waktu & Keperluan
@@ -411,133 +615,362 @@ function handle_route_asset_loan_form(PDO $pdo): void
         . '  <h2 style="margin:0 0 12px 0;font-size:16px;color:#0f172a;display:flex;align-items:center;gap:6px;">⏰ 2. Jadwal Peminjaman & Keperluan</h2>'
         . '  <div class="grid two">'
         . '    <label>Tanggal & Waktu Pinjam *'
-        . '      <input type="datetime-local" name="loan_date" value="' . date('Y-m-d\TH:i') . '" required>'
+        . '      <input type="datetime-local" name="loan_date" value="' . e($loanDateVal) . '" required>'
         . '    </label>'
         . '    <label>Estimasi Tanggal Kembali *'
-        . '      <input type="date" name="expected_return_date" value="' . date('Y-m-d', strtotime('+1 day')) . '" required>'
+        . '      <input type="date" name="expected_return_date" value="' . e($expReturnVal) . '" required>'
         . '      <small class="muted">Batas waktu pengembalian sebelum ditandai Overdue.</small>'
         . '    </label>'
         . '  </div>'
         . '  <label style="margin-top:8px;">Keperluan Peminjaman / Nama Proyek'
-        . '    <textarea name="purpose" style="min-height:50px;" placeholder="Contoh: Penarikan kabel LAN ruang meeting, instalasi CCTV, perbaikan instalasi lampu plafon..."></textarea>'
+        . '    <textarea name="purpose" style="min-height:50px;" placeholder="Contoh: Penarikan kabel LAN ruang meeting, instalasi CCTV, perbaikan instalasi lampu plafon...">' . e($purposeVal) . '</textarea>'
         . '  </label>'
         . '  <label style="margin-top:8px;">Catatan Tambahan Petugas'
-        . '    <input name="officer_notes" placeholder="Catatan internal serah terima...">'
+        . '    <input name="officer_notes" value="' . e($officerNotesVal) . '" placeholder="Catatan internal serah terima...">'
         . '  </label>'
         . '</div>'
 
-        // Bagian 3: Pilih Unit Aset
+        // Bagian 3: Scanner Kode Unit / QR Code
         . '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:20px;">'
-        . '  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">'
-        . '    <div>'
-        . '      <h2 style="margin:0;font-size:16px;color:#0f172a;display:flex;align-items:center;gap:6px;">🔧 3. Pilih Unit Aset yang Dipinjam <span style="color:#ef4444;">*</span></h2>'
-        . '      <p class="muted" style="margin:2px 0 0 0;font-size:12px;">Pilih satu atau lebih perkakas/alat yang sedang tersedia (Active).</p>'
+        . '  <div style="background:#f0f9ff;border:1px solid #0284c7;border-radius:8px;padding:16px;margin-bottom:16px;">'
+        . '    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">'
+        . '      <div>'
+        . '        <h3 style="margin:0;color:#0369a1;font-size:16px;display:flex;align-items:center;gap:8px;">📷 3. Scan QR Code atau Masukkan Kode Unit Aset <span style="color:#ef4444;">*</span></h3>'
+        . '        <p style="margin:4px 0 0 0;font-size:13px;color:#0369a1;">Wajib scan QR code pada stiker fisik atau ketik kode unit aset (contoh: <code>IT-CMP-000001</code> / <code>TL-IT-000001</code>) untuk validasi unit.</p>'
+        . '      </div>'
+        . '      <button type="button" class="btn" id="btnToggleCamera" onclick="toggleCameraScanner()" style="background:#0284c7;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">'
+        . '        📷 <span id="cameraBtnText">Buka Live Scan Kamera QR</span>'
+        . '      </button>'
         . '    </div>'
-        . '    <div style="display:flex;gap:6px;align-items:center;">'
-        . '      <input type="text" id="assetSearchBox" oninput="filterAssetList()" placeholder="🔍 Cari kode, nama alat, model, kategori..." style="padding:6px 12px;font-size:13px;width:280px;background:#fff;">'
-        . '      <span id="selectedCountBadge" style="background:#0284c7;color:#fff;font-size:12px;font-weight:bold;padding:6px 12px;border-radius:20px;">0 unit terpilih</span>'
+
+        // Kotak Live Scanner Kamera
+        . '    <div id="cameraScannerBox" style="display:none;margin-top:14px;background:#0f172a;border-radius:8px;padding:14px;text-align:center;">'
+        . '      <div id="reader" style="width:100%;max-width:340px;margin:0 auto;border-radius:8px;overflow:hidden;background:#000;"></div>'
+        . '      <p id="camStatus" style="color:#38bdf8;font-size:13px;margin:10px 0 4px 0;">Menyiapkan kamera live scan QR...</p>'
+        . '      <button type="button" class="btn" onclick="toggleCameraScanner()" style="margin-top:8px;background:#334155;color:#fff;padding:6px 14px;font-size:12px;">✕ Tutup Kamera</button>'
         . '    </div>'
-        . '  </div>';
 
-    if (empty($availableAssets)) {
-        echo '<div style="background:#fffbeb;border:1px solid #fde68a;padding:12px;border-radius:6px;color:#92400e;font-size:13px;">'
-            . '⚠️ Saat ini belum ada Unit Aset yang berstatus aktif atau semua unit sedang dipinjam. Silakan periksa di menu <strong>Manajemen Aset ➡️ Unit Aset</strong>.'
-            . '</div>';
-    } else {
-        echo '<div style="max-height:360px;overflow-y:auto;border:1px solid #cbd5e1;border-radius:6px;background:#fff;">'
-            . '<table id="assetTable" style="width:100%;border-collapse:collapse;font-size:13px;">'
-            . '<thead><tr style="background:#f1f5f9;position:sticky;top:0;z-index:2;border-bottom:1px solid #cbd5e1;">'
-            . '  <th style="padding:8px 12px;width:36px;text-align:center;">Pilih</th>'
-            . '  <th style="padding:8px 12px;text-align:left;">Kode Aset</th>'
-            . '  <th style="padding:8px 12px;text-align:left;">Komoditas / Kategori</th>'
-            . '  <th style="padding:8px 12px;text-align:left;">Nama Unit & Model</th>'
-            . '  <th style="padding:8px 12px;text-align:left;">Kondisi Awal</th>'
-            . '  <th style="padding:8px 12px;text-align:left;">Catatan Kelengkapan</th>'
-            . '</tr></thead>'
-            . '<tbody>';
+        // Input Barcode / Manual
+        . '    <div style="display:flex;gap:8px;margin-top:12px;">'
+        . '      <input type="text" id="barcodeAssetInput" placeholder="Ketik Kode Unit Aset / scan barcode fisik (contoh: IT-CMP-000001) lalu tekan Enter..." style="flex:1;font-size:14px;padding:10px 14px;font-family:monospace;font-weight:600;background:#fff;border:1px solid #cbd5e1;border-radius:6px;" onkeydown="if(event.key===\'Enter\'){event.preventDefault();lookupAndAddAsset(this.value);}">'
+        . '      <button type="button" class="btn primary" onclick="lookupAndAddAsset(document.getElementById(\'barcodeAssetInput\').value)" style="padding:10px 20px;font-weight:700;white-space:nowrap;">'
+        . '        + Tambah Unit'
+        . '      </button>'
+        . '    </div>'
+        . '    <div id="scanFeedbackAlert" style="display:none;margin-top:10px;padding:10px 14px;border-radius:6px;font-size:13px;font-weight:600;"></div>'
+        . '  </div>'
 
-        foreach ($availableAssets as $ast) {
-            $aid = (int)$ast['id'];
-            $fullDesc = trim(($ast['brand'] ?? '') . ' ' . ($ast['model'] ?? ''));
-            $searchText = strtolower($ast['asset_code'] . ' ' . $ast['asset_name'] . ' ' . $fullDesc . ' ' . ($ast['group_name'] ?? '') . ' ' . ($ast['type_name'] ?? ''));
-
-            echo '<tr class="asset-row" data-search="' . e($searchText) . '" style="border-bottom:1px solid #f1f5f9;">'
-                . '  <td style="padding:8px 12px;text-align:center;">'
-                . '    <input type="checkbox" name="asset_item_ids[]" value="' . $aid . '" id="chk_' . $aid . '" onchange="updateSelectedCount()" style="width:18px;height:18px;cursor:pointer;">'
-                . '  </td>'
-                . '  <td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#0284c7;">'
-                . '    <label for="chk_' . $aid . '" style="cursor:pointer;margin:0;">' . e($ast['asset_code']) . '</label>'
-                . '  </td>'
-                . '  <td style="padding:8px 12px;color:#475569;">'
-                . '    <div>' . e($ast['group_name'] ?: 'IT') . ' &bull; <strong>' . e($ast['type_name'] ?: 'General') . '</strong></div>'
-                . '  </td>'
-                . '  <td style="padding:8px 12px;">'
-                . '    <div style="font-weight:600;color:#1e293b;">' . e($ast['asset_name']) . '</div>'
-                . (!empty($fullDesc) ? '<div style="font-size:11px;color:#64748b;">' . e($fullDesc) . '</div>' : '')
-                . '  </td>'
-                . '  <td style="padding:8px 12px;min-width:130px;">'
-                . '    <input name="condition_out[' . $aid . ']" value="Normal / Baik" placeholder="Kondisi awal" style="padding:4px 8px;font-size:12px;width:100%;">'
-                . '  </td>'
-                . '  <td style="padding:8px 12px;min-width:150px;">'
-                . '    <input name="item_notes_out[' . $aid . ']" placeholder="Contoh: Unit lengkap kabel" style="padding:4px 8px;font-size:12px;width:100%;">'
-                . '  </td>'
-                . '</tr>';
-        }
-
-        echo '</tbody></table></div>';
-    }
-
-    echo '</div>'
+        // Tabel Keranjang Unit Terverifikasi
+        . '  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
+        . '    <h3 style="margin:0;font-size:15px;color:#1e293b;">Daftar Unit Aset Terverifikasi yang Dipinjam</h3>'
+        . '    <span id="selectedCountBadge" style="background:#0284c7;color:#fff;font-size:12px;font-weight:bold;padding:4px 12px;border-radius:20px;">0 unit</span>'
+        . '  </div>'
+        . '  <div style="overflow-x:auto;border:1px solid #cbd5e1;border-radius:6px;background:#fff;">'
+        . '    <table id="loanItemsTable" style="width:100%;border-collapse:collapse;font-size:13px;">'
+        . '      <thead>'
+        . '        <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;text-align:left;">'
+        . '          <th style="padding:8px 10px;width:36px;text-align:center;">No</th>'
+        . '          <th style="padding:8px 10px;">Kode Unit</th>'
+        . '          <th style="padding:8px 10px;">Nama & Model Barang</th>'
+        . '          <th style="padding:8px 10px;">Komoditas / Kategori</th>'
+        . '          <th style="padding:8px 10px;width:150px;">Kondisi Awal</th>'
+        . '          <th style="padding:8px 10px;width:200px;">Catatan Kelengkapan</th>'
+        . '          <th style="padding:8px 10px;width:50px;text-align:center;">Aksi</th>'
+        . '        </tr>'
+        . '      </thead>'
+        . '      <tbody id="loanItemsBody">'
+        . '      </tbody>'
+        . '    </table>'
+        . '    <div id="emptyLoanItemsMsg" style="padding:28px 16px;text-align:center;color:#64748b;font-size:13px;background:#fafafa;">'
+        . '      Belum ada unit aset yang di-scan atau dimasukkan. Silakan scan stiker QR atau ketik kode unit aset di atas.'
+        . '    </div>'
+        . '  </div>'
+        . '</div>'
 
         // Tombol Aksi
         . '<div class="actions" style="margin-top:20px;">'
-        . '  <button type="submit" class="btn primary" style="padding:10px 24px;font-size:14px;font-weight:bold;">💾 Simpan Peminjaman Aset</button>'
+        . '  <button type="submit" class="btn primary" style="padding:10px 26px;font-size:14px;font-weight:bold;">💾 Simpan Peminjaman Aset</button>'
         . '  <a class="btn" href="' . route_url('asset_loans') . '" style="padding:10px 18px;">Batal</a>'
         . '</div>'
         . '</form>'
 
-        // JavaScript Filter & Validasi
+        // Skrip JS Lengkap (Lookup Autocomplete Master Pengguna, Live Scanner QR, Dynamic Table)
+        . '<script src="https://unpkg.com/html5-qrcode"></script>'
         . '<script>
-        function filterAssetList() {
-            var q = (document.getElementById("assetSearchBox").value || "").toLowerCase().trim();
-            var rows = document.querySelectorAll("#assetTable tbody tr.asset-row");
-            rows.forEach(function(r) {
-                var txt = r.getAttribute("data-search") || "";
-                if (!q || txt.indexOf(q) !== -1) {
-                    r.style.display = "";
-                } else {
-                    r.style.display = "none";
-                }
+        var scannedItems = ' . json_encode($initialItemsJs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . ';
+        var html5QrCode = null;
+        var isCameraOpen = false;
+
+        function renderScannedTable() {
+            var tbody = document.getElementById("loanItemsBody");
+            var emptyMsg = document.getElementById("emptyLoanItemsMsg");
+            var badge = document.getElementById("selectedCountBadge");
+            tbody.innerHTML = "";
+
+            if (scannedItems.length === 0) {
+                emptyMsg.style.display = "block";
+                badge.textContent = "0 unit";
+                badge.style.background = "#64748b";
+                return;
+            }
+
+            emptyMsg.style.display = "none";
+            badge.textContent = scannedItems.length + " unit terpilih";
+            badge.style.background = "#16a34a";
+
+            scannedItems.forEach(function(item, idx) {
+                var tr = document.createElement("tr");
+                tr.style.borderBottom = "1px solid #e2e8f0";
+                tr.innerHTML = "<td style=\'padding:8px 10px;text-align:center;\'>" + (idx + 1) + "</td>"
+                    + "<td style=\'padding:8px 10px;font-family:monospace;font-weight:700;color:#0284c7;\'>"
+                    + "<input type=\'hidden\' name=\'asset_item_ids[]\' value=\'" + item.id + "\'>"
+                    + item.asset_code
+                    + "</td>"
+                    + "<td style=\'padding:8px 10px;\'>"
+                    + "<div style=\'font-weight:600;color:#1e293b;\'>" + (item.asset_name || "-") + "</div>"
+                    + "<div style=\'font-size:11px;color:#64748b;\'>" + (item.brand ? (item.brand + " ") : "") + (item.model || "") + "</div>"
+                    + "</td>"
+                    + "<td style=\'padding:8px 10px;font-size:12px;color:#475569;\'>"
+                    + (item.group_name || "IT") + " &bull; " + (item.type_name || "General")
+                    + "</td>"
+                    + "<td style=\'padding:8px 10px;\'>"
+                    + "<input name=\'condition_out[" + item.id + "]\' value=\'" + (item.condition_out || "Normal / Baik") + "\' placeholder=\'Kondisi awal\' style=\'width:100%;box-sizing:border-box;padding:4px 8px;font-size:12px;\'>"
+                    + "</td>"
+                    + "<td style=\'padding:8px 10px;\'>"
+                    + "<input name=\'item_notes_out[" + item.id + "]\' value=\'" + (item.notes_out || "") + "\' placeholder=\'Keterangan kelengkapan...\' style=\'width:100%;box-sizing:border-box;padding:4px 8px;font-size:12px;\'>"
+                    + "</td>"
+                    + "<td style=\'padding:8px 10px;text-align:center;\'>"
+                    + "<button type=\'button\' class=\'btn danger\' onclick=\'removeScannedItem(" + item.id + ")\' style=\'padding:3px 8px;font-size:12px;\' title=\'Hapus dari daftar\'>✕</button>"
+                    + "</td>";
+                tbody.appendChild(tr);
             });
         }
 
-        function updateSelectedCount() {
-            var chks = document.querySelectorAll("#assetTable input[name=\'asset_item_ids[]\']:checked");
-            var badge = document.getElementById("selectedCountBadge");
-            if (badge) {
-                badge.textContent = chks.length + " unit terpilih";
-                badge.style.background = chks.length > 0 ? "#16a34a" : "#0284c7";
+        function removeScannedItem(id) {
+            scannedItems = scannedItems.filter(function(x) { return x.id !== id; });
+            renderScannedTable();
+            showFeedback("Unit telah dihapus dari daftar pinjaman.", "info");
+        }
+
+        function showFeedback(msg, type) {
+            var fb = document.getElementById("scanFeedbackAlert");
+            if (!fb) return;
+            fb.style.display = "block";
+            fb.textContent = msg;
+            if (type === "success") {
+                fb.style.background = "#dcfce7";
+                fb.style.color = "#166534";
+                fb.style.border = "1px solid #86efac";
+            } else if (type === "error") {
+                fb.style.background = "#fee2e2";
+                fb.style.color = "#991b1b";
+                fb.style.border = "1px solid #fca5a5";
+            } else {
+                fb.style.background = "#f1f5f9";
+                fb.style.color = "#334155";
+                fb.style.border = "1px solid #cbd5e1";
             }
         }
+
+        function lookupAndAddAsset(code) {
+            code = (code || "").trim();
+            if (!code) {
+                showFeedback("Silakan masukkan atau scan kode unit aset terlebih dahulu.", "error");
+                return;
+            }
+
+            // Cek apakah sudah ada di keranjang
+            var already = scannedItems.some(function(item) {
+                return item.asset_code.toUpperCase() === code.toUpperCase() || String(item.id) === code;
+            });
+            if (already) {
+                showFeedback("Unit " + code + " sudah ada dalam daftar peminjaman di bawah.", "error");
+                document.getElementById("barcodeAssetInput").value = "";
+                return;
+            }
+
+            showFeedback("Memverifikasi unit: " + code + "...", "info");
+            var url = "index.php?route=api_lookup_asset_for_loan&code=" + encodeURIComponent(code);
+
+            fetch(url)
+                .then(function(r) { return r.json(); })
+                .then(function(resp) {
+                    if (!resp || !resp.ok || !resp.found) {
+                        showFeedback(resp && resp.message ? resp.message : "Unit aset tidak ditemukan di database.", "error");
+                        return;
+                    }
+                    if (!resp.is_available) {
+                        showFeedback(resp.message || "Unit tidak dapat dipinjam saat ini.", "error");
+                        return;
+                    }
+                    var item = resp.data;
+                    // Cek duplikasi ID
+                    if (scannedItems.some(function(x) { return x.id === item.id; })) {
+                        showFeedback("Unit " + item.asset_code + " sudah ada dalam daftar di bawah.", "error");
+                        document.getElementById("barcodeAssetInput").value = "";
+                        return;
+                    }
+
+                    scannedItems.push({
+                        id: item.id,
+                        asset_code: item.asset_code,
+                        asset_name: item.asset_name,
+                        brand: item.brand,
+                        model: item.model,
+                        group_name: item.group_name,
+                        type_name: item.type_name,
+                        location_name: item.location_name,
+                        condition_out: "Normal / Baik",
+                        notes_out: ""
+                    });
+
+                    renderScannedTable();
+                    showFeedback("✓ Berhasil! Unit " + item.asset_code + " (" + item.asset_name + ") ditambahkan ke daftar.", "success");
+                    document.getElementById("barcodeAssetInput").value = "";
+                    document.getElementById("barcodeAssetInput").focus();
+                })
+                .catch(function(err) {
+                    showFeedback("Gagal menghubungi server: " + err.message, "error");
+                });
+        }
+
+        // Live Camera Scanner Toggle
+        function toggleCameraScanner() {
+            var box = document.getElementById("cameraScannerBox");
+            var btnText = document.getElementById("cameraBtnText");
+            if (isCameraOpen) {
+                if (html5QrCode) {
+                    html5QrCode.stop().then(function() {
+                        html5QrCode.clear();
+                        box.style.display = "none";
+                        btnText.textContent = "Buka Live Scan Kamera QR";
+                        isCameraOpen = false;
+                    }).catch(function() {
+                        box.style.display = "none";
+                        btnText.textContent = "Buka Live Scan Kamera QR";
+                        isCameraOpen = false;
+                    });
+                } else {
+                    box.style.display = "none";
+                    btnText.textContent = "Buka Live Scan Kamera QR";
+                    isCameraOpen = false;
+                }
+            } else {
+                box.style.display = "block";
+                btnText.textContent = "Tutup Kamera";
+                isCameraOpen = true;
+                startCameraScanner();
+            }
+        }
+
+        function startCameraScanner() {
+            var camStatus = document.getElementById("camStatus");
+            camStatus.textContent = "Menyalakan kamera...";
+            html5QrCode = new Html5Qrcode("reader");
+            var config = { fps: 10, qrbox: { width: 250, height: 250 } };
+            html5QrCode.start({ facingMode: "environment" }, config, function(decodedText) {
+                camStatus.textContent = "QR Terbaca: " + decodedText;
+                lookupAndAddAsset(decodedText);
+            }).catch(function(err) {
+                camStatus.textContent = "Kamera tidak dapat diakses atau diblokir (" + err + ").";
+            });
+        }
+
+        // Autocomplete Master Pengguna
+        (function() {
+            var searchInput = document.getElementById("employeeSearchInput");
+            var dropdown = document.getElementById("employeeDropdownList");
+            var nikInput = document.getElementById("borrowerNikInput");
+            var nameInput = document.getElementById("borrowerNameInput");
+            var deptInput = document.getElementById("borrowerDeptInput");
+            var badge = document.getElementById("borrowerSourceBadge");
+            var timer = null;
+
+            function hideDropdown() {
+                setTimeout(function() { dropdown.style.display = "none"; }, 200);
+            }
+
+            function selectEmployee(item) {
+                nameInput.value = item.name || "";
+                nikInput.value = item.nik || "";
+                deptInput.value = item.department || "";
+                searchInput.value = (item.name || "") + " (" + (item.nik || "-") + ")";
+                badge.style.display = "inline-block";
+                badge.textContent = "✓ Terpilih: " + (item.name || "");
+                dropdown.style.display = "none";
+            }
+
+            function searchEmployees(q) {
+                fetch("index.php?route=employee_search&limit=30&q=" + encodeURIComponent(q))
+                    .then(function(r) { return r.json(); })
+                    .then(function(res) {
+                        var data = (res && res.data) ? res.data : [];
+                        dropdown.innerHTML = "";
+                        if (data.length === 0) {
+                            dropdown.innerHTML = "<div style=\'padding:10px 14px;color:#94a3b8;font-size:13px;\'>Tidak ada karyawan cocok di Master Pengguna.</div>";
+                            dropdown.style.display = "block";
+                            return;
+                        }
+                        data.forEach(function(row) {
+                            var div = document.createElement("div");
+                            div.style.padding = "10px 14px";
+                            div.style.cursor = "pointer";
+                            div.style.borderBottom = "1px solid #f1f5f9";
+                            div.style.fontSize = "13px";
+                            div.innerHTML = "<strong style=\'color:#0f172a;\'>" + (row.name || "-") + "</strong>"
+                                + " <span style=\'color:#64748b;\'>(" + (row.nik || "-") + ")</span>"
+                                + (row.department ? (" &bull; <span style=\'color:#0284c7;\'>" + row.department + "</span>") : "");
+                            div.onmouseenter = function() { div.style.background = "#f0f9ff"; };
+                            div.onmouseleave = function() { div.style.background = "#fff"; };
+                            div.onmousedown = function() { selectEmployee(row); };
+                            dropdown.appendChild(div);
+                        });
+                        dropdown.style.display = "block";
+                    })
+                    .catch(function() {});
+            }
+
+            if (searchInput) {
+                searchInput.addEventListener("input", function() {
+                    clearTimeout(timer);
+                    var q = searchInput.value.trim();
+                    if (q.length === 0) {
+                        dropdown.style.display = "none";
+                        return;
+                    }
+                    timer = setTimeout(function() { searchEmployees(q); }, 250);
+                });
+                searchInput.addEventListener("focus", function() {
+                    if (searchInput.value.trim()) {
+                        searchEmployees(searchInput.value.trim());
+                    }
+                });
+                searchInput.addEventListener("blur", hideDropdown);
+            }
+        })();
 
         function validateLoanForm() {
             var name = document.getElementById("borrowerNameInput").value.trim();
             if (!name) {
                 alert("Nama peminjam wajib diisi.");
+                document.getElementById("borrowerNameInput").focus();
                 return false;
             }
-            var chks = document.querySelectorAll("#assetTable input[name=\'asset_item_ids[]\']:checked");
-            if (chks.length === 0) {
-                alert("Silakan pilih minimal 1 unit aset yang akan dipinjam dengan mencentang checkbox-nya.");
+            if (scannedItems.length === 0) {
+                alert("Pilih / scan minimal 1 unit aset fisik yang akan dipinjam terlebih dahulu.");
+                document.getElementById("barcodeAssetInput").focus();
                 return false;
             }
             return true;
         }
+
+        renderScannedTable();
         </script>'
         . '</section>';
 
     render_footer();
 }
+
 
 /**
  * Detail Peminjaman & Tanda Terima Siap Cetak
