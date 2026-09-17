@@ -49,6 +49,7 @@ $moduleFiles = [
     'app/modules/pengguna.php',
     'app/modules/asset_loan.php',
     'app/modules/mobile_loan.php',
+    'app/modules/regulations.php',
 ];
 
 $missingFiles = [];
@@ -60,7 +61,7 @@ foreach ($moduleFiles as $mf) {
 
 if (!empty($missingFiles)) {
     http_response_code(503);
-    echo '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>Sinkronisasi Modul Diperlukan - PcConnect</title><style>body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;box-sizing:border-box}.box{max-width:680px;background:#1e293b;border:1px solid #334155;border-radius:12px;padding:32px;box-shadow:0 20px 40px rgba(0,0,0,.4)}h1{color:#38bdf8;margin:0 0 12px;font-size:24px}p{color:#cbd5e1;line-height:1.6;margin:8px 0}.missing{background:#0f172a;border-radius:8px;padding:12px 18px;margin:16px 0;font-family:Consolas,monospace;color:#f43f5e;font-size:13px;line-height:1.7}.guide{background:#334155;border-radius:8px;padding:16px 20px;margin-top:20px}.guide h2{color:#f8fafc;font-size:16px;margin:0 0 8px}.guide ol{margin:0;padding-left:20px;color:#e2e8f0;line-height:1.8}code{background:#0f172a;padding:2px 8px;border-radius:4px;color:#38bdf8;font-weight:700}.btn{display:inline-block;background:#0284c7;color:#fff;text-decoration:none;padding:10px 18px;border-radius:6px;font-weight:600;margin-top:16px;cursor:pointer;border:none}</style></head><body><div class="box"><h1>PcConnect: Sinkronisasi Modul Diperlukan</h1><p>Kode aplikasi telah dipecah menjadi modul-modul independen. Beberapa berkas modul baru belum berada di server QNAP NAS ini:</p><div class="missing">' . implode('<br>', array_map('htmlspecialchars', $missingFiles)) . '</div><div class="guide"><h2>Langkah 1 Kali Klik di VS Code untuk Sinkronisasi ke Server:</h2><ol><li>Buka window VS Code di komputer Anda.</li><li>Tekan tombol kombinasi <code>Ctrl</code> + <code>Shift</code> + <code>P</code> (membuka Command Palette).</li><li>Ketik <code>SFTP: Sync Local -> Remote</code> lalu tekan <b>Enter</b>.</li><li>Tunggu sampai proses upload selesai (lihat notifikasi / status bar SFTP di bagian bawah VS Code).</li></ol></div><p style="margin-top:20px">Setelah proses sinkronisasi di VS Code selesai, klik tombol di bawah untuk memuat PcConnect:</p><a class="btn" href="' . htmlspecialchars($_SERVER['REQUEST_URI'] ?? 'index.php') . '">Muat Ulang Halaman</a></div></body></html>';
+    echo '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>Sinkronisasi Modul Diperlukan - AsetConnect</title><style>body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;box-sizing:border-box}.box{max-width:680px;background:#1e293b;border:1px solid #334155;border-radius:12px;padding:32px;box-shadow:0 20px 40px rgba(0,0,0,.4)}h1{color:#38bdf8;margin:0 0 12px;font-size:24px}p{color:#cbd5e1;line-height:1.6;margin:8px 0}.missing{background:#0f172a;border-radius:8px;padding:12px 18px;margin:16px 0;font-family:Consolas,monospace;color:#f43f5e;font-size:13px;line-height:1.7}.guide{background:#334155;border-radius:8px;padding:16px 20px;margin-top:20px}.guide h2{color:#f8fafc;font-size:16px;margin:0 0 8px}.guide ol{margin:0;padding-left:20px;color:#e2e8f0;line-height:1.8}code{background:#0f172a;padding:2px 8px;border-radius:4px;color:#38bdf8;font-weight:700}.btn{display:inline-block;background:#0284c7;color:#fff;text-decoration:none;padding:10px 18px;border-radius:6px;font-weight:600;margin-top:16px;cursor:pointer;border:none}</style></head><body><div class="box"><h1>AsetConnect: Sinkronisasi Modul Diperlukan</h1><p>Kode aplikasi telah dipecah menjadi modul-modul independen. Beberapa berkas modul baru belum berada di server QNAP NAS ini:</p><div class="missing">' . implode('<br>', array_map('htmlspecialchars', $missingFiles)) . '</div><div class="guide"><h2>Langkah 1 Kali Klik di VS Code untuk Sinkronisasi ke Server:</h2><ol><li>Buka window VS Code di komputer Anda.</li><li>Tekan tombol kombinasi <code>Ctrl</code> + <code>Shift</code> + <code>P</code> (membuka Command Palette).</li><li>Ketik <code>SFTP: Sync Local -> Remote</code> lalu tekan <b>Enter</b>.</li><li>Tunggu sampai proses upload selesai (lihat notifikasi / status bar SFTP di bagian bawah VS Code).</li></ol></div><p style="margin-top:20px">Setelah proses sinkronisasi di VS Code selesai, klik tombol di bawah untuk memuat AsetConnect:</p><a class="btn" href="' . htmlspecialchars($_SERVER['REQUEST_URI'] ?? 'index.php') . '">Muat Ulang Halaman</a></div></body></html>';
     exit;
 }
 
@@ -109,6 +110,9 @@ switch ($route) {
         break;
     case 'users':
         handle_route_users($pdo);
+        break;
+    case 'setup_regulations':
+        handle_route_setup_regulations($pdo);
         break;
     case 'master_pengguna':
         handle_route_master_pengguna($pdo);
@@ -241,13 +245,16 @@ switch ($route) {
         handle_route_employee_source($pdo);
         break;
     case 'asset_groups':
-    case 'asset_statuses':
     case 'asset_types':
     case 'asset_brands':
     case 'asset_locations':
     case 'asset_identifiers':
     case 'asset_specifications':
     case 'asset_maintenance_templates':
+        $user = require_regulation($route, 'view');
+        asset_master_page($pdo, $route, $user);
+        break;
+    case 'asset_statuses':
         $user = require_role(['admin']);
         asset_master_page($pdo, $route, $user);
         break;

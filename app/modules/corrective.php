@@ -522,8 +522,36 @@ function resolve_maintenance_asset_id_from_raw_input(PDO $pdo, string $rawInput)
 
 function handle_route_tickets(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance']);
+    $user = require_regulation('tickets', 'view');
     ensure_corrective_maintenance_schema($pdo);
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_ticket') {
+        require_regulation('tickets', 'delete');
+        $delTicketId = (int)($_POST['ticket_id'] ?? 0);
+        if ($delTicketId > 0) {
+            try {
+                $pdo->beginTransaction();
+                // Hapus sparepart & riwayat perbaikan
+                $repStmt = $pdo->prepare("SELECT id FROM corrective_repairs WHERE ticket_id = ?");
+                $repStmt->execute([$delTicketId]);
+                $repIds = $repStmt->fetchAll(PDO::FETCH_COLUMN);
+                if (!empty($repIds)) {
+                    $inR = implode(',', array_map('intval', $repIds));
+                    $pdo->exec("DELETE FROM corrective_repair_parts WHERE repair_id IN ($inR)");
+                    $pdo->prepare("DELETE FROM corrective_repairs WHERE ticket_id = ?")->execute([$delTicketId]);
+                }
+                $pdo->prepare("DELETE FROM corrective_tickets WHERE id = ?")->execute([$delTicketId]);
+                $pdo->commit();
+                flash('Tiket corrective maintenance berhasil dihapus.');
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                flash('Gagal menghapus tiket: ' . $e->getMessage(), 'err');
+            }
+        }
+        redirect_to('tickets');
+    }
 
     $catFilter = trim((string)($_GET['category'] ?? ''));
     $statusFilter = trim((string)($_GET['status'] ?? ''));
@@ -583,7 +611,9 @@ function handle_route_tickets(PDO $pdo): void
                 <p class="muted">Kelola pelaporan masalah dan perbaikan unit berbasis <strong>Maintenance Asset ID</strong> (IT, Kendaraan, dan Fasilitas).</p>
             </div>
             <div class="actions">
-                <a class="btn primary" href="<?= route_url('ticket_form') ?>">+ Buat Tiket Baru</a>
+                <?php if (has_regulation('tickets', 'create')): ?>
+                    <a class="btn primary" href="<?= route_url('ticket_form') ?>">+ Buat Tiket Baru</a>
+                <?php endif; ?>
                 <a class="btn good" href="<?= route_url('mobile_service') ?>" target="_blank">📱 Buka Mobile Service (Teknisi)</a>
                 <a class="btn" href="<?= route_url('corrective_repairs') ?>">Riwayat Reparasi & Part</a>
                 <a class="btn" href="<?= route_url('walkarounds') ?>">Patroli Walkaround</a>
@@ -687,6 +717,14 @@ function handle_route_tickets(PDO $pdo): void
                             </td>
                             <td>
                                 <a class="btn" href="<?= route_url('ticket_detail', ['id' => $t['id']]) ?>">Detail & Eksekusi</a>
+                                <?php if (has_regulation('tickets', 'delete')): ?>
+                                    <form method="post" action="<?= route_url('tickets') ?>" style="display:inline;" onsubmit="return confirm('Hapus tiket <?= e($t['ticket_code']) ?> beserta seluruh data perbaikan terkait?');">
+                                        <?= csrf_field() ?>
+                                        <input type="hidden" name="action" value="delete_ticket">
+                                        <input type="hidden" name="ticket_id" value="<?= (int)$t['id'] ?>">
+                                        <button type="submit" class="btn danger" style="padding:4px 8px;font-size:12px;">Hapus</button>
+                                    </form>
+                                <?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -700,7 +738,7 @@ function handle_route_tickets(PDO $pdo): void
 
 function handle_route_ticket_form(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance']);
+    $user = require_regulation('tickets', 'create');
     ensure_corrective_maintenance_schema($pdo);
 
     $preMntId = (int)($_GET['maintenance_asset_id'] ?? 0);
@@ -944,7 +982,7 @@ function handle_route_ticket_form(PDO $pdo): void
 
 function handle_route_ticket_detail(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance']);
+    $user = require_regulation('tickets', 'view');
     ensure_corrective_maintenance_schema($pdo);
 
     $id = (int)($_GET['id'] ?? 0);
@@ -997,6 +1035,14 @@ function handle_route_ticket_detail(PDO $pdo): void
             </div>
             <div class="actions">
                 <a class="btn" href="<?= route_url('tickets') ?>">← Kembali ke Daftar</a>
+                <?php if (has_regulation('tickets', 'delete')): ?>
+                    <form method="post" action="<?= route_url('tickets') ?>" style="display:inline;" onsubmit="return confirm('Hapus tiket <?= e($ticket['ticket_code']) ?> beserta seluruh data perbaikan terkait?');">
+                        <?= csrf_field() ?>
+                        <input type="hidden" name="action" value="delete_ticket">
+                        <input type="hidden" name="ticket_id" value="<?= (int)$ticket['id'] ?>">
+                        <button type="submit" class="btn danger">Hapus Tiket</button>
+                    </form>
+                <?php endif; ?>
             </div>
         </div>
 
@@ -1337,8 +1383,22 @@ function handle_route_corrective_repairs(PDO $pdo): void
 
 function handle_route_walkarounds(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin', 'corrective_maintenance']);
+    $user = require_regulation('walkarounds', 'view');
     ensure_corrective_maintenance_schema($pdo);
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        $action = (string)($_POST['action'] ?? '');
+        if ($action === 'delete_walkaround') {
+            require_regulation('walkarounds', 'delete');
+            $delId = (int)($_POST['walkaround_id'] ?? 0);
+            if ($delId > 0) {
+                $pdo->prepare("DELETE FROM asset_walkarounds WHERE id = ?")->execute([$delId]);
+                flash("Log walkaround berhasil dihapus.");
+            }
+            redirect_to('walkarounds');
+        }
+    }
 
     $sql = "SELECT w.*, ma.maintenance_asset_code, ma.name AS maintenance_asset_name, t.ticket_code
             FROM asset_walkarounds w
@@ -1356,7 +1416,9 @@ function handle_route_walkarounds(PDO $pdo): void
                 <p class="muted">Pengecekan fisik cepat unit di lapangan. Jika ditemukan kerusakan, sistem otomatis menerbitkan tiket perbaikan.</p>
             </div>
             <div class="actions">
-                <a class="btn primary" href="<?= route_url('walkaround_form') ?>">+ Mulai Walkaround Baru</a>
+                <?php if (has_regulation('walkarounds', 'create')): ?>
+                    <a class="btn primary" href="<?= route_url('walkaround_form') ?>">+ Mulai Walkaround Baru</a>
+                <?php endif; ?>
                 <a class="btn" href="<?= route_url('tickets') ?>">Daftar Tiket</a>
             </div>
         </div>
@@ -1370,11 +1432,14 @@ function handle_route_walkarounds(PDO $pdo): void
                     <th>Kondisi Fisik</th>
                     <th>Catatan Temuan</th>
                     <th>Tiket Masalah</th>
+                    <?php if (has_regulation('walkarounds', 'delete')): ?>
+                        <th>Aksi</th>
+                    <?php endif; ?>
                 </tr>
             </thead>
             <tbody>
                 <?php if (!$rows): ?>
-                    <tr><td colspan="6" class="muted" style="text-align:center;padding:24px;">Belum ada log walkaround.</td></tr>
+                    <tr><td colspan="<?= has_regulation('walkarounds', 'delete') ? 7 : 6 ?>" class="muted" style="text-align:center;padding:24px;">Belum ada log walkaround.</td></tr>
                 <?php else: ?>
                     <?php foreach ($rows as $w): ?>
                         <tr>
@@ -1404,6 +1469,16 @@ function handle_route_walkarounds(PDO $pdo): void
                                     <span class="muted">-</span>
                                 <?php endif; ?>
                             </td>
+                            <?php if (has_regulation('walkarounds', 'delete')): ?>
+                                <td>
+                                    <form method="post" style="display:inline" onsubmit="return confirm('Hapus riwayat walkaround ini?')">
+                                        <input type="hidden" name="csrf" value="<?= csrf_token() ?>">
+                                        <input type="hidden" name="action" value="delete_walkaround">
+                                        <input type="hidden" name="walkaround_id" value="<?= (int)$w['id'] ?>">
+                                        <button class="btn danger" style="padding:4px 8px;font-size:12px;">Hapus</button>
+                                    </form>
+                                </td>
+                            <?php endif; ?>
                         </tr>
                     <?php endforeach; ?>
                 <?php endif; ?>
@@ -1416,7 +1491,7 @@ function handle_route_walkarounds(PDO $pdo): void
 
 function handle_route_walkaround_form(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin', 'corrective_maintenance']);
+    $user = require_regulation('walkarounds', 'create');
     ensure_corrective_maintenance_schema($pdo);
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -1544,7 +1619,7 @@ function handle_route_corrective_action_types(PDO $pdo): void
 
 function handle_route_corrective_job_desks(PDO $pdo): void
 {
-    $user = require_role(['admin']);
+    $user = require_regulation('corrective_job_desks', 'view');
     ensure_corrective_maintenance_schema($pdo);
 
     $editDeskId = (int)($_GET['edit_id'] ?? 0);
@@ -1573,6 +1648,7 @@ function handle_route_corrective_job_desks(PDO $pdo): void
 
         // --- TAMBAH JOB DESK CORRECTIVE MAINTENANCE ---
         if ($action === 'add_desk') {
+            require_regulation('corrective_job_desks', 'create');
             $groupId = (int)($_POST['asset_group_id'] ?? 0);
             $typeId = (int)($_POST['asset_type_id'] ?? 0);
 
@@ -1623,6 +1699,7 @@ function handle_route_corrective_job_desks(PDO $pdo): void
 
         // --- EDIT JOB DESK CORRECTIVE MAINTENANCE ---
         if ($action === 'edit_desk') {
+            require_regulation('corrective_job_desks', 'edit');
             $deskId = (int)($_POST['desk_id'] ?? 0);
             $origDesk = trim((string)($_POST['original_desk_name'] ?? ''));
             $newDesk = trim((string)($_POST['job_desk_name'] ?? ''));
@@ -1659,6 +1736,7 @@ function handle_route_corrective_job_desks(PDO $pdo): void
 
         // --- HAPUS JOB DESK CORRECTIVE MAINTENANCE ---
         if ($action === 'delete_desk') {
+            require_regulation('corrective_job_desks', 'delete');
             $deskId = (int)($_POST['desk_id'] ?? 0);
             $deskName = trim((string)($_POST['job_desk_name'] ?? ''));
 
@@ -1691,6 +1769,7 @@ function handle_route_corrective_job_desks(PDO $pdo): void
 
         // --- TAMBAH TINDAKAN / ACTION KE JOB DESK ---
         if ($action === 'add_action') {
+            require_regulation('corrective_job_desks', 'create');
             $manageDeskId = (int)($_POST['manage_desk_id'] ?? 0);
             $stmtDesk = $pdo->prepare('SELECT * FROM corrective_job_desks WHERE id=?');
             $stmtDesk->execute([$manageDeskId]);
@@ -1735,6 +1814,7 @@ function handle_route_corrective_job_desks(PDO $pdo): void
 
         // --- UPDATE TINDAKAN / ACTION ---
         if ($action === 'update_action') {
+            require_regulation('corrective_job_desks', 'edit');
             $actionId = (int)($_POST['action_id'] ?? 0);
             $manageDeskId = (int)($_POST['manage_desk_id'] ?? 0);
             $actionName = trim((string)($_POST['action_name'] ?? ''));
@@ -1752,6 +1832,7 @@ function handle_route_corrective_job_desks(PDO $pdo): void
 
         // --- TOGGLE STATUS AKTIF TINDAKAN ---
         if ($action === 'toggle_action') {
+            require_regulation('corrective_job_desks', 'edit');
             $actionId = (int)($_POST['id'] ?? 0);
             $manageDeskId = (int)($_POST['manage_desk_id'] ?? 0);
             if ($actionId > 0) {
@@ -1763,6 +1844,7 @@ function handle_route_corrective_job_desks(PDO $pdo): void
 
         // --- HAPUS TINDAKAN / ACTION ---
         if ($action === 'delete_action') {
+            require_regulation('corrective_job_desks', 'delete');
             $actionId = (int)($_POST['id'] ?? 0);
             $manageDeskId = (int)($_POST['manage_desk_id'] ?? 0);
             if ($actionId > 0) {
@@ -1786,6 +1868,7 @@ function handle_route_corrective_job_desks(PDO $pdo): void
 
         // --- SALIN TINDAKAN DARI IT COMP KE JOB DESK INI ---
         if ($action === 'copy_default_actions') {
+            require_regulation('corrective_job_desks', 'create');
             $manageDeskId = (int)($_POST['manage_desk_id'] ?? 0);
             $stmtDesk = $pdo->prepare('SELECT * FROM corrective_job_desks WHERE id=?');
             $stmtDesk->execute([$manageDeskId]);
@@ -1882,51 +1965,59 @@ function handle_route_corrective_job_desks(PDO $pdo): void
     }
 
     // FORM TAMBAH / EDIT JOB DESK CORRECTIVE MAINTENANCE
+    $canCreateDesk = has_regulation('corrective_job_desks', 'create');
+    $canEditDesk = has_regulation('corrective_job_desks', 'edit');
+    $canDeleteDesk = has_regulation('corrective_job_desks', 'delete');
+    $showDeskForm = ($isEditing && $canEditDesk) || (!$isEditing && $canCreateDesk);
+
     $formTitle = $isEditing ? ('Edit Job Desk Corrective Maintenance #' . $editDeskId) : 'Tambah Job Desk Corrective Maintenance';
     $formAction = $isEditing ? 'edit_desk' : 'add_desk';
 
-    echo '<section class="grid two"><div class="panel">';
-    echo '<div class="split" style="align-items:center;margin-bottom:12px;">'
-        . '<h1 style="margin:0;font-size:18px;">' . e($formTitle) . '</h1>'
-        . ($isEditing ? '<a class="btn" href="' . route_url('corrective_job_desks') . '">+ Tambah Job Desk Baru</a>' : '')
-        . '</div>';
+    echo '<section class="' . ($showDeskForm ? 'grid two' : '') . '">';
+    if ($showDeskForm) {
+        echo '<div class="panel">';
+        echo '<div class="split" style="align-items:center;margin-bottom:12px;">'
+            . '<h1 style="margin:0;font-size:18px;">' . e($formTitle) . '</h1>'
+            . ($isEditing ? '<a class="btn" href="' . route_url('corrective_job_desks') . '">+ Tambah Job Desk Baru</a>' : '')
+            . '</div>';
 
-    echo '<form method="post">'
-        . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
-        . '<input type="hidden" name="action" value="' . $formAction . '">'
-        . ($isEditing ? '<input type="hidden" name="desk_id" value="' . $editDeskId . '">' : '')
-        . ($isEditing ? '<input type="hidden" name="original_desk_name" value="' . e($editDeskName) . '">' : '')
-        . '<div class="grid two">'
-        . '<label>ID Job Desk'
-        . '<input type="text" readonly value="' . ($isEditing ? ('#' . $editDeskId) : '(Otomatis setelah disimpan)') . '" style="background:#f8fafc;color:#64748b;font-weight:700;">'
-        . '</label>'
-        . '<label>Komoditas (Asset Group) *'
-        . '<select id="cJobAssetGroup" name="asset_group_id" required>'
-        . '<option value="">- Pilih Komoditas -</option>'
-        . asset_group_options($pdo, $editGroupId, false)
-        . '</select>'
-        . '</label>'
-        . '</div>'
-        . '<div class="grid two">'
-        . '<label>Kategori (Asset Type) *'
-        . '<select id="cJobAssetType" name="asset_type_id" required>'
-        . '<option value="">- Pilih Kategori -</option>'
-        . ($editGroupId > 0 ? asset_type_options($pdo, $editTypeId, $editGroupId) : '')
-        . '</select>'
-        . '</label>'
-        . '<label>Deskripsi / Catatan'
-        . '<input name="description" value="' . e($editDesc) . '" placeholder="Keterangan kategori corrective...">'
-        . '</label>'
-        . '</div>'
-        . '<label>Nama Job Desk Corrective Maintenance *'
-        . '<input id="cJobDeskName" name="job_desk_name" value="' . e($editDeskName) . '" required style="font-weight:700;color:#0f172a;" placeholder="Job Desk Corrective [Komoditas] [Kategori]">'
-        . '</label>'
-        . '<div class="actions" style="margin-top:14px;">'
-        . '<button class="btn primary">' . ($isEditing ? 'Perbarui Job Desk' : 'Simpan Job Desk') . '</button>'
-        . ($isEditing ? '<a class="btn" href="' . route_url('corrective_job_desks') . '">Batal Edit</a>' : '')
-        . '</div>'
-        . '</form>'
-        . '</div>';
+        echo '<form method="post">'
+            . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
+            . '<input type="hidden" name="action" value="' . $formAction . '">'
+            . ($isEditing ? '<input type="hidden" name="desk_id" value="' . $editDeskId . '">' : '')
+            . ($isEditing ? '<input type="hidden" name="original_desk_name" value="' . e($editDeskName) . '">' : '')
+            . '<div class="grid two">'
+            . '<label>ID Job Desk'
+            . '<input type="text" readonly value="' . ($isEditing ? ('#' . $editDeskId) : '(Otomatis setelah disimpan)') . '" style="background:#f8fafc;color:#64748b;font-weight:700;">'
+            . '</label>'
+            . '<label>Komoditas (Asset Group) *'
+            . '<select id="cJobAssetGroup" name="asset_group_id" required>'
+            . '<option value="">- Pilih Komoditas -</option>'
+            . asset_group_options($pdo, $editGroupId, false)
+            . '</select>'
+            . '</label>'
+            . '</div>'
+            . '<div class="grid two">'
+            . '<label>Kategori (Asset Type) *'
+            . '<select id="cJobAssetType" name="asset_type_id" required>'
+            . '<option value="">- Pilih Kategori -</option>'
+            . ($editGroupId > 0 ? asset_type_options($pdo, $editTypeId, $editGroupId) : '')
+            . '</select>'
+            . '</label>'
+            . '<label>Deskripsi / Catatan'
+            . '<input name="description" value="' . e($editDesc) . '" placeholder="Keterangan kategori corrective...">'
+            . '</label>'
+            . '</div>'
+            . '<label>Nama Job Desk Corrective Maintenance *'
+            . '<input id="cJobDeskName" name="job_desk_name" value="' . e($editDeskName) . '" required style="font-weight:700;color:#0f172a;" placeholder="Job Desk Corrective [Komoditas] [Kategori]">'
+            . '</label>'
+            . '<div class="actions" style="margin-top:14px;">'
+            . '<button class="btn primary">' . ($isEditing ? 'Perbarui Job Desk' : 'Simpan Job Desk') . '</button>'
+            . ($isEditing ? '<a class="btn" href="' . route_url('corrective_job_desks') . '">Batal Edit</a>' : '')
+            . '</div>'
+            . '</form>'
+            . '</div>';
+    }
 
     // TABEL DAFTAR JOB DESK CORRECTIVE MAINTENANCE
     echo '<div class="panel">'
@@ -1934,7 +2025,7 @@ function handle_route_corrective_job_desks(PDO $pdo): void
         . '<p class="muted" style="margin-top:-6px;margin-bottom:12px;">Pilih Job Desk untuk mengisi atau mengelola daftar tindakan / pekerjaan perbaikannya.</p>';
 
     if (!$deskRows) {
-        echo '<p class="muted">Belum ada Job Desk tersimpan. Silakan tambahkan pada form di samping.</p>';
+        echo '<p class="muted">Belum ada Job Desk tersimpan.' . ($canCreateDesk ? ' Silakan tambahkan pada form di samping.' : '') . '</p>';
     } else {
         echo '<div style="overflow-x:auto;"><table><tr><th>ID</th><th>Nama Job Desk</th><th>Komoditas / Kategori</th><th>Tindakan</th><th>Dipakai</th><th>Aksi</th></tr>';
         foreach ($deskRows as $d) {
@@ -1953,13 +2044,19 @@ function handle_route_corrective_job_desks(PDO $pdo): void
                 ? ('Job Desk Corrective &quot;' . e($dName) . '&quot; ini pernah digunakan pada ' . $rCount . ' data reparasi. Menghapusnya akan menghapus Job Desk ini dari daftar dan mengarsipkan tindakannya secara aman tanpa merusak riwayat perbaikan. Lanjutkan hapus?')
                 : ('Yakin hapus Job Desk Corrective &quot;' . e($dName) . '&quot; beserta seluruh tindakannya?');
 
-            $deleteBtn = '<form method="post" style="display:inline" onsubmit="return confirm(\'' . $confirmMsg . '\')">'
-                . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
-                . '<input type="hidden" name="action" value="delete_desk">'
-                . '<input type="hidden" name="desk_id" value="' . $dId . '">'
-                . '<input type="hidden" name="job_desk_name" value="' . e($dName) . '">'
-                . '<button class="btn danger" style="padding:4px 8px;font-size:12px;">Hapus</button>'
-                . '</form>';
+            $deleteBtn = $canDeleteDesk
+                ? ('<form method="post" style="display:inline" onsubmit="return confirm(\'' . $confirmMsg . '\')">'
+                    . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
+                    . '<input type="hidden" name="action" value="delete_desk">'
+                    . '<input type="hidden" name="desk_id" value="' . $dId . '">'
+                    . '<input type="hidden" name="job_desk_name" value="' . e($dName) . '">'
+                    . '<button class="btn danger" style="padding:4px 8px;font-size:12px;">Hapus</button>'
+                    . '</form>')
+                : '';
+
+            $editBtn = $canEditDesk
+                ? ('<a class="btn" style="padding:4px 8px;font-size:12px;" href="' . route_url('corrective_job_desks', ['edit_id' => $dId, 'manage_desk_id' => $dId]) . '">Edit</a>')
+                : '';
 
             $trBg = $isActive ? ' style="background:#eff6ff;"' : '';
             echo '<tr' . $trBg . '>'
@@ -1970,7 +2067,7 @@ function handle_route_corrective_job_desks(PDO $pdo): void
                 . '<td>' . $usageBadge . '</td>'
                 . '<td><div class="actions" style="display:flex;gap:4px;align-items:center;">'
                 . '<a class="btn ' . ($isActive ? 'primary' : '') . '" style="padding:4px 8px;font-size:12px;" href="' . route_url('corrective_job_desks', ['manage_desk_id' => $dId]) . '" title="Isi & Kelola Tindakan">📋 Isi Tindakan</a>'
-                . '<a class="btn" style="padding:4px 8px;font-size:12px;" href="' . route_url('corrective_job_desks', ['edit_id' => $dId, 'manage_desk_id' => $dId]) . '">Edit</a>'
+                . $editBtn
                 . $deleteBtn
                 . '</div></td>'
                 . '</tr>';
@@ -1992,7 +2089,7 @@ function handle_route_corrective_job_desks(PDO $pdo): void
         }
 
         echo '<div class="panel" style="margin-top:20px;border-top:3px solid #0284c7;">';
-        $copyHeaderBtn = ($actName !== 'Job Desk Corrective IT Comp')
+        $copyHeaderBtn = ($canCreateDesk && $actName !== 'Job Desk Corrective IT Comp')
             ? '<form method="post" style="display:inline;"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="copy_default_actions"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><button class="btn" style="padding:5px 10px;font-size:12px;background:#f0fdf4;border:1px solid #86efac;color:#166534;font-weight:600;" title="Salin tindakan standar IT Comp yang belum ada ke Job Desk ini">+ Salin Tindakan Standar</button></form>'
             : '';
 
@@ -2007,50 +2104,52 @@ function handle_route_corrective_job_desks(PDO $pdo): void
             . '</div>'
             . '</div>';
 
-        echo '<div class="grid two" style="align-items:start;">';
+        echo '<div class="' . ($canCreateDesk ? 'grid two' : '') . '" style="align-items:start;">';
 
         // FORM TAMBAH TINDAKAN
-        echo '<div style="background:#f8fafc;padding:16px;border-radius:8px;border:1px solid #e2e8f0;">'
-            . '<h3 style="margin-top:0;font-size:15px;">+ Tambah Tindakan Perbaikan Baru</h3>'
-            . '<form method="post">'
-            . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
-            . '<input type="hidden" name="action" value="add_action">'
-            . '<input type="hidden" name="manage_desk_id" value="' . $actId . '">'
-            . '<label style="margin-top:4px;">Nama Tindakan / Solusi Perbaikan *'
-            . '<input name="action_name" required placeholder="Contoh: Penggantian Power Supply, Kalibrasi Sensor, Tune Up Mesin">'
-            . '</label>'
-            . '<div class="grid two">'
-            . '<label>Kode Sistem (Opsional)'
-            . '<input name="action_code" placeholder="Otomatis jika kosong">'
-            . '</label>'
-            . '<label>Estimasi Menit'
-            . '<input type="number" name="estimated_minutes" value="15" min="1">'
-            . '</label>'
-            . '</div>'
-            . '<label>Urutan Tampilan'
-            . '<input type="number" name="sort_order" value="10">'
-            . '</label>'
-            . '<label>Panduan / Keterangan Tindakan'
-            . '<textarea name="description" style="min-height:70px;" placeholder="Langkah-langkah atau catatan standar pengerjaan..."></textarea>'
-            . '</label>'
-            . '<button class="btn primary" style="margin-top:10px;">+ Tambah Tindakan ke Job Desk</button>'
-            . '</form>'
-            . '</div>';
+        if ($canCreateDesk) {
+            echo '<div style="background:#f8fafc;padding:16px;border-radius:8px;border:1px solid #e2e8f0;">'
+                . '<h3 style="margin-top:0;font-size:15px;">+ Tambah Tindakan Perbaikan Baru</h3>'
+                . '<form method="post">'
+                . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
+                . '<input type="hidden" name="action" value="add_action">'
+                . '<input type="hidden" name="manage_desk_id" value="' . $actId . '">'
+                . '<label style="margin-top:4px;">Nama Tindakan / Solusi Perbaikan *'
+                . '<input name="action_name" required placeholder="Contoh: Penggantian Power Supply, Kalibrasi Sensor, Tune Up Mesin">'
+                . '</label>'
+                . '<div class="grid two">'
+                . '<label>Kode Sistem (Opsional)'
+                . '<input name="action_code" placeholder="Otomatis jika kosong">'
+                . '</label>'
+                . '<label>Estimasi Menit'
+                . '<input type="number" name="estimated_minutes" value="15" min="1">'
+                . '</label>'
+                . '</div>'
+                . '<label>Urutan Tampilan'
+                . '<input type="number" name="sort_order" value="10">'
+                . '</label>'
+                . '<label>Panduan / Keterangan Tindakan'
+                . '<textarea name="description" style="min-height:70px;" placeholder="Langkah-langkah atau catatan standar pengerjaan..."></textarea>'
+                . '</label>'
+                . '<button class="btn primary" style="margin-top:10px;">+ Tambah Tindakan ke Job Desk</button>'
+                . '</form>'
+                . '</div>';
+        }
 
         // TABEL RINCIAN TINDAKAN
         echo '<div>';
         if (empty($activeDeskActions)) {
-            $copyEmptyBtn = ($actName !== 'Job Desk Corrective IT Comp')
+            $copyEmptyBtn = ($canCreateDesk && $actName !== 'Job Desk Corrective IT Comp')
                 ? '<form method="post" style="margin-top:12px;"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="copy_default_actions"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><button class="btn primary" style="font-size:13px;">📥 Salin 6 Tindakan Standar dari IT Comp</button></form>'
                 : '';
             echo '<div style="text-align:center;padding:32px 16px;background:#f8fafc;border-radius:8px;border:1px dashed #cbd5e1;">'
                 . '<p class="muted" style="margin:0 0 8px 0;">Belum ada tindakan perbaikan untuk Job Desk <strong>' . e($actName) . '</strong>.</p>'
-                . '<p class="muted" style="font-size:12px;margin:0;">Silakan tambahkan pada form di samping' . ($copyEmptyBtn ? ' atau klik tombol di bawah untuk menyalin tindakan standar:' : '.') . '</p>'
+                . '<p class="muted" style="font-size:12px;margin:0;">' . ($canCreateDesk ? ('Silakan tambahkan pada form di samping' . ($copyEmptyBtn ? ' atau klik tombol di bawah untuk menyalin tindakan standar:' : '.')) : 'Belum ada tindakan yang terdaftar.') . '</p>'
                 . $copyEmptyBtn
                 . '</div>';
         } else {
             echo '<div style="overflow-x:auto;"><table>'
-                . '<tr><th style="width:30px;">No</th><th>Nama Tindakan & Kode</th><th>Estimasi</th><th>Status</th><th>Aksi</th></tr>';
+                . '<tr><th style="width:30px;">No</th><th>Nama Tindakan & Kode</th><th>Estimasi</th><th>Status</th>' . ($canEditDesk || $canDeleteDesk ? '<th>Aksi</th>' : '') . '</tr>';
             $no = 1;
             foreach ($activeDeskActions as $act) {
                 $tId = (int)$act['id'];
@@ -2059,6 +2158,30 @@ function handle_route_corrective_job_desks(PDO $pdo): void
                 $statusBadge = $isAct
                     ? '<span class="badge ok">Aktif</span>'
                     : '<span class="badge danger">Nonaktif</span>';
+
+                $toggleBtn = $canEditDesk
+                    ? ('<form method="post" style="display:inline">'
+                        . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
+                        . '<input type="hidden" name="action" value="toggle_action">'
+                        . '<input type="hidden" name="id" value="' . $tId . '">'
+                        . '<input type="hidden" name="manage_desk_id" value="' . $actId . '">'
+                        . '<button class="btn" style="padding:3px 7px;font-size:11px;" title="Aktif/Nonaktifkan">' . ($isAct ? 'Off' : 'On') . '</button>'
+                        . '</form>')
+                    : '';
+
+                $deleteActBtn = $canDeleteDesk
+                    ? ('<form method="post" style="display:inline" onsubmit="return confirm(\'Yakin ingin menghapus tindakan ini?\')">'
+                        . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
+                        . '<input type="hidden" name="action" value="delete_action">'
+                        . '<input type="hidden" name="id" value="' . $tId . '">'
+                        . '<input type="hidden" name="manage_desk_id" value="' . $actId . '">'
+                        . '<button class="btn danger" style="padding:3px 7px;font-size:11px;">Hapus</button>'
+                        . '</form>')
+                    : '';
+
+                $actionTd = ($canEditDesk || $canDeleteDesk)
+                    ? ('<td><div class="actions" style="display:flex;gap:4px;">' . $toggleBtn . $deleteActBtn . '</div></td>')
+                    : '';
 
                 echo '<tr' . (!$isAct ? ' style="opacity:0.6;background:#f8fafc;"' : '') . '>'
                     . '<td>' . $no++ . '</td>'
@@ -2069,22 +2192,7 @@ function handle_route_corrective_job_desks(PDO $pdo): void
                     . '</td>'
                     . '<td><span class="badge">' . (int)$act['estimated_minutes'] . ' mnt</span></td>'
                     . '<td>' . $statusBadge . '</td>'
-                    . '<td><div class="actions" style="display:flex;gap:4px;">'
-                    . '<form method="post" style="display:inline">'
-                    . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
-                    . '<input type="hidden" name="action" value="toggle_action">'
-                    . '<input type="hidden" name="id" value="' . $tId . '">'
-                    . '<input type="hidden" name="manage_desk_id" value="' . $actId . '">'
-                    . '<button class="btn" style="padding:3px 7px;font-size:11px;" title="Aktif/Nonaktifkan">' . ($isAct ? 'Off' : 'On') . '</button>'
-                    . '</form>'
-                    . '<form method="post" style="display:inline" onsubmit="return confirm(\'Yakin ingin menghapus tindakan ini?\')">'
-                    . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
-                    . '<input type="hidden" name="action" value="delete_action">'
-                    . '<input type="hidden" name="id" value="' . $tId . '">'
-                    . '<input type="hidden" name="manage_desk_id" value="' . $actId . '">'
-                    . '<button class="btn danger" style="padding:3px 7px;font-size:11px;">Hapus</button>'
-                    . '</form>'
-                    . '</div></td>'
+                    . $actionTd
                     . '</tr>';
             }
             echo '</table></div>';

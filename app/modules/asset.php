@@ -228,7 +228,16 @@ function asset_items_table(PDO $pdo, array $rows): string
             $sourcePcBadge = '<div style="margin-top:4px;"><span class="badge" style="background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;font-size:11px;font-weight:600;" title="Diimport dari Data PC">📥 Import PC: ' . e($row['source_pc_id']) . '</span></div>';
         }
 
-        $html .= '<tr><td><strong>' . e($row['asset_code']) . '</strong><br><span class="muted">SN: ' . e($row['serial_number'] ?: '-') . '</span>' . $sourcePcBadge . $idfHtml . '</td><td>' . nl2br(e($maintenanceText)) . '</td><td>' . e($row['company_name'] ?: '-') . $locationText . '</td><td>' . $custodianText . '</td><td>' . e($row['asset_category'] ?? '-') . '</td><td>' . $mode . '</td><td>' . e($row['asset_type']) . '</td><td>' . e($row['asset_name']) . '<br><span class="muted">' . e(trim(($row['brand'] ?? '') . ' ' . ($row['model'] ?? ''))) . '</span>' . $specHtml . '</td><td>Awal: Rp ' . e(number_format((float)$row['purchase_value'], 0, ',', '.')) . '<br>Current: Rp ' . e(number_format((float)$row['current_value'], 0, ',', '.')) . '</td><td><span class="badge">' . e($row['status']) . '</span></td><td><a class="btn" href="' . route_url('asset_item_form', ['id' => $row['id']]) . '">Buka</a> <a class="btn" href="' . route_url('asset_repair_form', ['asset_item_id' => $row['id']]) . '">Repair</a></td></tr>';
+        $itemActions = '';
+        if (has_regulation('asset_items', 'edit')) {
+            $itemActions .= '<a class="btn" href="' . route_url('asset_item_form', ['id' => $row['id']]) . '">Buka</a> ';
+        }
+        $itemActions .= '<a class="btn" href="' . route_url('asset_repair_form', ['asset_item_id' => $row['id']]) . '">Repair</a>';
+        if (has_regulation('asset_items', 'delete')) {
+            $itemActions .= ' <form method="post" action="' . route_url('asset_items') . '" style="display:inline;" onsubmit="return confirm(\'Hapus unit aset ' . addslashes((string)$row['asset_code']) . '?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete_item"><input type="hidden" name="id" value="' . (int)$row['id'] . '"><button class="btn danger" style="padding:4px 8px;font-size:12px;">Hapus</button></form>';
+        }
+
+        $html .= '<tr><td><strong>' . e($row['asset_code']) . '</strong><br><span class="muted">SN: ' . e($row['serial_number'] ?: '-') . '</span>' . $sourcePcBadge . $idfHtml . '</td><td>' . nl2br(e($maintenanceText)) . '</td><td>' . e($row['company_name'] ?: '-') . $locationText . '</td><td>' . $custodianText . '</td><td>' . e($row['asset_category'] ?? '-') . '</td><td>' . $mode . '</td><td>' . e($row['asset_type']) . '</td><td>' . e($row['asset_name']) . '<br><span class="muted">' . e(trim(($row['brand'] ?? '') . ' ' . ($row['model'] ?? ''))) . '</span>' . $specHtml . '</td><td>Awal: Rp ' . e(number_format((float)$row['purchase_value'], 0, ',', '.')) . '<br>Current: Rp ' . e(number_format((float)$row['current_value'], 0, ',', '.')) . '</td><td><span class="badge">' . e($row['status']) . '</span></td><td><div class="actions" style="display:flex;gap:4px;flex-wrap:nowrap;">' . $itemActions . '</div></td></tr>';
     }
     return $html . '</table>';
 }
@@ -2388,6 +2397,7 @@ function asset_movements_table(array $rows): string
     if (!$rows) {
         return '<p class="muted" style="padding:16px 0;">Belum ada data riwayat mutasi aset yang sesuai.</p>';
     }
+    $canDelete = has_regulation('asset_movements', 'delete');
     $html = '<div style="overflow-x:auto;"><table>'
         . '<thead><tr>'
         . '<th>Tanggal</th>'
@@ -2398,6 +2408,7 @@ function asset_movements_table(array $rows): string
         . '<th>Company</th>'
         . '<th>Alasan / Keterangan</th>'
         . '<th>PIC / Petugas</th>'
+        . ($canDelete ? '<th>Aksi</th>' : '')
         . '</tr></thead><tbody>';
 
     foreach ($rows as $row) {
@@ -2420,6 +2431,11 @@ function asset_movements_table(array $rows): string
         $to = $row['to_parent_code'] ? ($row['to_parent_code'] . ' - ' . $row['to_parent_name']) : ($row['to_bundle'] ?: '-');
         $comp = ($row['from_company'] || $row['to_company']) ? (($row['from_company'] ?: '-') . ' -> ' . ($row['to_company'] ?: '-')) : '-';
 
+        $delCell = '';
+        if ($canDelete) {
+            $delCell = '<td><form method="post" action="' . route_url('asset_movements') . '" style="display:inline;" onsubmit="return confirm(\'Hapus riwayat mutasi aset ini?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete_movement"><input type="hidden" name="id" value="' . (int)$row['id'] . '"><button class="btn danger" style="padding:3px 8px;font-size:11.5px;">Hapus</button></form></td>';
+        }
+
         $html .= '<tr>'
             . '<td>' . e($row['movement_date']) . '</td>'
             . '<td>' . $badge . '</td>'
@@ -2429,6 +2445,7 @@ function asset_movements_table(array $rows): string
             . '<td>' . e($comp) . '</td>'
             . '<td>' . nl2br(e($row['reason'] ?: '-')) . '</td>'
             . '<td>' . e($row['pic'] ?: '-') . '</td>'
+            . $delCell
             . '</tr>';
     }
     $html .= '</tbody></table></div>';
@@ -2671,6 +2688,7 @@ function asset_master_page(PDO $pdo, string $route, array $user): void
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = $_POST['action'] ?? 'save';
         if ($action === 'delete') {
+            require_regulation($route, 'delete');
             $delId = (int)($_POST['id'] ?? 0);
             if ($delId <= 0) {
                 flash('ID data tidak valid.', 'err');
@@ -2722,6 +2740,12 @@ function asset_master_page(PDO $pdo, string $route, array $user): void
         }
 
         $id = (int)($_POST['id'] ?? 0);
+        if ($id > 0) {
+            require_regulation($route, 'edit');
+        } else {
+            require_regulation($route, 'create');
+        }
+
         $code = strtoupper(trim((string)($_POST['code'] ?? '')));
         $name = trim((string)($_POST['name'] ?? ''));
         $active = isset($_POST['is_active']) ? 1 : 0;
@@ -2762,49 +2786,57 @@ function asset_master_page(PDO $pdo, string $route, array $user): void
     }
     render_header($title, $user);
     echo asset_nav_html();
-    echo '<section class="panel"><div class="split"><h1>' . e($edit ? 'Edit ' : 'Tambah ') . e($title) . '</h1>';
-    if ($edit) {
-        echo '<a class="btn" href="' . route_url($route) . '">+ Tambah ' . e($title) . ' Baru</a>';
-    }
-    echo '</div><form method="post" style="margin-top:14px"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="id" value="' . e($edit['id'] ?? '') . '">';
-    if ($route === 'asset_types') {
-        echo '<label>Komoditas (Grup Aset) *<select name="asset_group_id" required>' . asset_group_options($pdo, (int)($edit['asset_group_id'] ?? 0)) . '</select></label>';
-    } elseif ($route === 'asset_brands') {
-        $selGroupId = (int)($edit['asset_group_id'] ?? 0);
-        $selTypeId = (int)($edit['asset_type_id'] ?? 0);
-        echo '<div class="grid two">'
-            . '<label>Komoditas (Grup Aset)<select id="brandGroupId" name="asset_group_id" onchange="filterBrandTypes()">' . asset_group_options($pdo, $selGroupId, true, '- Pilih Komoditas -') . '</select></label>'
-            . '<label>Kategori (Tipe Aset)<select id="brandTypeId" name="asset_type_id">' . asset_type_options($pdo, $selTypeId, 0, true, '- Pilih Kategori -', true) . '</select></label>'
-            . '</div>'
-            . '<script>
-            function filterBrandTypes() {
-                var gSel = document.getElementById("brandGroupId");
-                var tSel = document.getElementById("brandTypeId");
-                if (!gSel || !tSel) return;
-                var gVal = gSel.value;
-                for (var i = 0; i < tSel.options.length; i++) {
-                    var opt = tSel.options[i];
-                    if (!opt.value) { opt.style.display = ""; continue; }
-                    var optG = opt.getAttribute("data-group");
-                    if (!gVal || optG === gVal) {
-                        opt.style.display = "";
-                    } else {
-                        opt.style.display = "none";
-                        if (opt.selected) { opt.selected = false; }
+
+    $canCreateMaster = has_regulation($route, 'create');
+    $canEditMaster = has_regulation($route, 'edit');
+    $canDeleteMaster = has_regulation($route, 'delete');
+    $showMasterForm = ($edit && $canEditMaster) || (!$edit && $canCreateMaster);
+
+    if ($showMasterForm) {
+        echo '<section class="panel"><div class="split"><h1>' . e($edit ? 'Edit ' : 'Tambah ') . e($title) . '</h1>';
+        if ($edit) {
+            echo '<a class="btn" href="' . route_url($route) . '">+ Tambah ' . e($title) . ' Baru</a>';
+        }
+        echo '</div><form method="post" style="margin-top:14px"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="id" value="' . e($edit['id'] ?? '') . '">';
+        if ($route === 'asset_types') {
+            echo '<label>Komoditas (Grup Aset) *<select name="asset_group_id" required>' . asset_group_options($pdo, (int)($edit['asset_group_id'] ?? 0)) . '</select></label>';
+        } elseif ($route === 'asset_brands') {
+            $selGroupId = (int)($edit['asset_group_id'] ?? 0);
+            $selTypeId = (int)($edit['asset_type_id'] ?? 0);
+            echo '<div class="grid two">'
+                . '<label>Komoditas (Grup Aset)<select id="brandGroupId" name="asset_group_id" onchange="filterBrandTypes()">' . asset_group_options($pdo, $selGroupId, true, '- Pilih Komoditas -') . '</select></label>'
+                . '<label>Kategori (Tipe Aset)<select id="brandTypeId" name="asset_type_id">' . asset_type_options($pdo, $selTypeId, 0, true, '- Pilih Kategori -', true) . '</select></label>'
+                . '</div>'
+                . '<script>
+                function filterBrandTypes() {
+                    var gSel = document.getElementById("brandGroupId");
+                    var tSel = document.getElementById("brandTypeId");
+                    if (!gSel || !tSel) return;
+                    var gVal = gSel.value;
+                    for (var i = 0; i < tSel.options.length; i++) {
+                        var opt = tSel.options[i];
+                        if (!opt.value) { opt.style.display = ""; continue; }
+                        var optG = opt.getAttribute("data-group");
+                        if (!gVal || optG === gVal) {
+                            opt.style.display = "";
+                        } else {
+                            opt.style.display = "none";
+                            if (opt.selected) { opt.selected = false; }
+                        }
                     }
                 }
-            }
-            document.addEventListener("DOMContentLoaded", filterBrandTypes);
-            if (document.readyState === "complete" || document.readyState === "interactive") { filterBrandTypes(); }
-            </script>';
+                document.addEventListener("DOMContentLoaded", filterBrandTypes);
+                if (document.readyState === "complete" || document.readyState === "interactive") { filterBrandTypes(); }
+                </script>';
+        }
+        $placeholderCode = $route === 'asset_brands' ? 'LEN' : ($route === 'asset_locations' ? 'HO' : ($route === 'asset_groups' ? 'IT' : 'LPT'));
+        $placeholderName = $route === 'asset_brands' ? 'Lenovo' : ($route === 'asset_locations' ? 'Head Office' : ($route === 'asset_groups' ? 'IT & Komputer' : 'Laptop'));
+        echo '<div class="grid two"><label>Kode ' . e($title) . ' *<input name="code" required value="' . e($edit[$codeCol] ?? '') . '" placeholder="Contoh: ' . $placeholderCode . '"></label><label>Nama ' . e($title) . ' *<input name="name" required value="' . e($edit[$nameCol] ?? '') . '" placeholder="Contoh: ' . $placeholderName . '"></label></div><label><input style="width:auto" type="checkbox" name="is_active" ' . ((!$edit || (int)$edit['is_active']) ? 'checked' : '') . '> Aktif</label><div class="actions" style="margin-top:14px"><button class="btn primary">Simpan ' . e($title) . '</button>';
+        if ($edit) {
+            echo ' <a class="btn" href="' . route_url($route) . '">Batal</a>';
+        }
+        echo '</div></form></section>';
     }
-    $placeholderCode = $route === 'asset_brands' ? 'LEN' : ($route === 'asset_locations' ? 'HO' : ($route === 'asset_groups' ? 'IT' : 'LPT'));
-    $placeholderName = $route === 'asset_brands' ? 'Lenovo' : ($route === 'asset_locations' ? 'Head Office' : ($route === 'asset_groups' ? 'IT & Komputer' : 'Laptop'));
-    echo '<div class="grid two"><label>Kode ' . e($title) . ' *<input name="code" required value="' . e($edit[$codeCol] ?? '') . '" placeholder="Contoh: ' . $placeholderCode . '"></label><label>Nama ' . e($title) . ' *<input name="name" required value="' . e($edit[$nameCol] ?? '') . '" placeholder="Contoh: ' . $placeholderName . '"></label></div><label><input style="width:auto" type="checkbox" name="is_active" ' . ((!$edit || (int)$edit['is_active']) ? 'checked' : '') . '> Aktif</label><div class="actions" style="margin-top:14px"><button class="btn primary">Simpan ' . e($title) . '</button>';
-    if ($edit) {
-        echo ' <a class="btn" href="' . route_url($route) . '">Batal</a>';
-    }
-    echo '</div></form></section>';
 
     $filterGroupId = (int)($_GET['group_id'] ?? 0);
     $filterTypeId = (int)($_GET['type_id'] ?? 0);
@@ -2870,7 +2902,15 @@ function asset_master_page(PDO $pdo, string $route, array $user): void
     }
     
     foreach ($rows as $r) {
-        $delBtn = '<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus ' . e($title) . ' ini?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><button class="btn danger" style="padding:4px 8px;font-size:12px">Hapus</button></form>';
+        $delBtn = $canDeleteMaster
+            ? ('<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus ' . e($title) . ' ini?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><button class="btn danger" style="padding:4px 8px;font-size:12px">Hapus</button></form>')
+            : '';
+        $editBtn = $canEditMaster
+            ? ('<a class="btn" href="' . route_url($route, ['id' => $r['id']]) . '">Edit</a> ')
+            : '';
+        $actionCell = ($canEditMaster || $canDeleteMaster)
+            ? ('<td><div class="actions" style="display:flex;gap:6px;align-items:center;">' . $editBtn . $delBtn . '</div></td>')
+            : '<td><span class="muted">-</span></td>';
         
         if ($route === 'asset_types') {
             $grpBadge = '<span class="badge" style="background:#e0f2fe;color:#0369a1;font-weight:600;">' . e($r['group_code'] . ' - ' . $r['group_name']) . '</span>';
@@ -2882,7 +2922,7 @@ function asset_master_page(PDO $pdo, string $route, array $user): void
                 . '<td>' . (int)$r['master_count'] . ' Model</td>'
                 . '<td><strong>' . (int)$r['unit_count'] . ' Unit</strong></td>'
                 . '<td>' . ((int)$r['is_active'] ? '<span class="badge ok">Aktif</span>' : '<span class="badge danger">Nonaktif</span>') . '</td>'
-                . '<td><div class="actions" style="display:flex;gap:6px;align-items:center;"><a class="btn" href="' . route_url($route, ['id' => $r['id']]) . '">Edit</a> ' . $delBtn . '</div></td>'
+                . $actionCell
                 . '</tr>';
         } elseif ($route === 'asset_brands') {
             $grpBadge = !empty($r['group_code']) 
@@ -2900,7 +2940,7 @@ function asset_master_page(PDO $pdo, string $route, array $user): void
                 . '<td>' . (int)$r['master_count'] . ' Model</td>'
                 . '<td><strong>' . (int)$r['unit_count'] . ' Unit</strong></td>'
                 . '<td>' . ((int)$r['is_active'] ? '<span class="badge ok">Aktif</span>' : '<span class="badge danger">Nonaktif</span>') . '</td>'
-                . '<td><div class="actions" style="display:flex;gap:6px;align-items:center;"><a class="btn" href="' . route_url($route, ['id' => $r['id']]) . '">Edit</a> ' . $delBtn . '</div></td>'
+                . $actionCell
                 . '</tr>';
         } else {
             $extraCol = '';
@@ -2909,7 +2949,7 @@ function asset_master_page(PDO $pdo, string $route, array $user): void
             } elseif ($route === 'asset_locations') {
                 $extraCol = '<td><strong>' . (int)$r['unit_count'] . ' Unit</strong></td>';
             }
-            echo '<tr><td>' . e($r['id']) . '</td><td><strong>' . e($r[$codeCol]) . '</strong></td><td>' . e($r[$nameCol]) . '</td>' . $extraCol . '<td>' . ((int)$r['is_active'] ? '<span class="badge ok">Aktif</span>' : '<span class="badge danger">Nonaktif</span>') . '</td><td><div class="actions" style="display:flex;gap:6px;align-items:center;"><a class="btn" href="' . route_url($route, ['id' => $r['id']]) . '">Edit</a> ' . $delBtn . '</div></td></tr>';
+            echo '<tr><td>' . e($r['id']) . '</td><td><strong>' . e($r[$codeCol]) . '</strong></td><td>' . e($r[$nameCol]) . '</td>' . $extraCol . '<td>' . ((int)$r['is_active'] ? '<span class="badge ok">Aktif</span>' : '<span class="badge danger">Nonaktif</span>') . '</td>' . $actionCell . '</tr>';
         }
     }
     echo '</tbody></table></section>';
@@ -2921,6 +2961,7 @@ function asset_identifier_master_page(PDO $pdo, array $user): void
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = $_POST['action'] ?? 'save';
         if ($action === 'delete') {
+            require_regulation('asset_identifiers', 'delete');
             $delId = (int)($_POST['id'] ?? 0);
             if ($delId > 0) {
                 try {
@@ -2935,6 +2976,12 @@ function asset_identifier_master_page(PDO $pdo, array $user): void
         }
 
         $id = (int)($_POST['id'] ?? 0);
+        if ($id > 0) {
+            require_regulation('asset_identifiers', 'edit');
+        } else {
+            require_regulation('asset_identifiers', 'create');
+        }
+
         $groupId = (int)($_POST['asset_group_id'] ?? 0);
         $type = (int)($_POST['asset_type_id'] ?? 0);
         $code = strtoupper(trim((string)($_POST['identifier_code'] ?? '')));
@@ -3022,44 +3069,51 @@ function asset_identifier_master_page(PDO $pdo, array $user): void
     echo asset_nav_html();
 
     // Form Section
-    echo '<section class="panel"><div class="split"><h1>' . ($edit ? 'Edit' : 'Tambah') . ' Identifier Aset</h1>';
-    if ($edit) {
-        echo '<a class="btn" href="' . route_url('asset_identifiers') . '">+ Tambah Identifier Baru</a>';
+    $canCreateIdf = has_regulation('asset_identifiers', 'create');
+    $canEditIdf = has_regulation('asset_identifiers', 'edit');
+    $canDeleteIdf = has_regulation('asset_identifiers', 'delete');
+    $showIdfForm = ($edit && $canEditIdf) || (!$edit && $canCreateIdf);
+
+    if ($showIdfForm) {
+        echo '<section class="panel"><div class="split"><h1>' . ($edit ? 'Edit' : 'Tambah') . ' Identifier Aset</h1>';
+        if ($edit) {
+            echo '<a class="btn" href="' . route_url('asset_identifiers') . '">+ Tambah Identifier Baru</a>';
+        }
+        echo '</div><form method="post" style="margin-top:14px"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" id="idfEditId" name="id" value="' . (int)($edit['id'] ?? 0) . '">';
+        
+        // Group and Category selection
+        echo '<div class="grid two">';
+        echo '<label>Komoditas (Grup Aset) *<select id="idfGroup" name="asset_group_id" onchange="onIdfGroupChanged()" required>' . asset_group_options($pdo, $editGroupId, true, '- Pilih Komoditas (Grup Aset) -') . '</select></label>';
+        echo '<label>Kategori (Tipe Aset) *<select id="idfType" name="asset_type_id" onchange="onIdfTypeChanged()" required>' . asset_type_options($pdo, (int)($edit['asset_type_id'] ?? 0), $editGroupId, true, $editGroupId ? '- Pilih Kategori -' : '- Pilih Komoditas Terlebih Dahulu -', true) . '</select></label>';
+        echo '</div>';
+
+        // Existing Identifiers Notice in this category
+        echo '<div id="idfExistingNotice" style="display:none;margin-bottom:12px"></div>';
+
+        echo '<div class="grid two">';
+        echo '<label>Kode Identifier *<input id="idfCodeInput" name="identifier_code" required value="' . e($edit['identifier_code'] ?? '') . '" placeholder="Contoh: SERIAL, MAC, IMEI, PLAT, VIN, ENGINE, KIR" oninput="checkIdfCodeDuplicate()"><div id="idfCodeWarn" style="display:none;color:#dc2626;font-size:12px;margin-top:4px;font-weight:600;"></div></label>';
+        echo '<label>Nama Identifier *<input id="idfNameInput" name="identifier_name" required value="' . e($edit['identifier_name'] ?? '') . '" placeholder="Contoh: Serial Number, MAC Address, Nomor Polisi, Nomor Rangka"></label>';
+        echo '</div>';
+
+        echo '<div class="grid four">';
+        echo '<label>Tipe Data<select name="data_type">';
+        $currDt = $edit['data_type'] ?? 'text';
+        foreach (['text', 'number', 'date', 'ip'] as $dt) {
+            echo '<option value="' . $dt . '"' . ($currDt === $dt ? ' selected' : '') . '>' . $dt . '</option>';
+        }
+        echo '</select></label>';
+        echo '<label><input style="width:auto" type="checkbox" name="is_required" ' . (!empty($edit['is_required']) ? 'checked' : '') . '> Wajib Diisi (Required)</label>';
+        echo '<label><input style="width:auto" type="checkbox" name="is_unique" ' . (!empty($edit['is_unique']) ? 'checked' : '') . '> Nilai Unik (Tidak Boleh Duplikat)</label>';
+        echo '<label>Urutan Tampil<input type="number" name="display_order" value="' . (int)($edit['display_order'] ?? 1) . '" min="1"></label>';
+        echo '</div>';
+
+        echo '<div class="actions" style="margin-top:14px">';
+        if ($edit) {
+            echo '<a class="btn" href="' . route_url('asset_identifiers') . '">Batal</a> ';
+        }
+        echo '<button class="btn primary" id="idfSubmitBtn">Simpan Identifier</button>';
+        echo '</div></form></section>';
     }
-    echo '</div><form method="post" style="margin-top:14px"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" id="idfEditId" name="id" value="' . (int)($edit['id'] ?? 0) . '">';
-    
-    // Group and Category selection
-    echo '<div class="grid two">';
-    echo '<label>Komoditas (Grup Aset) *<select id="idfGroup" name="asset_group_id" onchange="onIdfGroupChanged()" required>' . asset_group_options($pdo, $editGroupId, true, '- Pilih Komoditas (Grup Aset) -') . '</select></label>';
-    echo '<label>Kategori (Tipe Aset) *<select id="idfType" name="asset_type_id" onchange="onIdfTypeChanged()" required>' . asset_type_options($pdo, (int)($edit['asset_type_id'] ?? 0), $editGroupId, true, $editGroupId ? '- Pilih Kategori -' : '- Pilih Komoditas Terlebih Dahulu -', true) . '</select></label>';
-    echo '</div>';
-
-    // Existing Identifiers Notice in this category
-    echo '<div id="idfExistingNotice" style="display:none;margin-bottom:12px"></div>';
-
-    echo '<div class="grid two">';
-    echo '<label>Kode Identifier *<input id="idfCodeInput" name="identifier_code" required value="' . e($edit['identifier_code'] ?? '') . '" placeholder="Contoh: SERIAL, MAC, IMEI, PLAT, VIN, ENGINE, KIR" oninput="checkIdfCodeDuplicate()"><div id="idfCodeWarn" style="display:none;color:#dc2626;font-size:12px;margin-top:4px;font-weight:600;"></div></label>';
-    echo '<label>Nama Identifier *<input id="idfNameInput" name="identifier_name" required value="' . e($edit['identifier_name'] ?? '') . '" placeholder="Contoh: Serial Number, MAC Address, Nomor Polisi, Nomor Rangka"></label>';
-    echo '</div>';
-
-    echo '<div class="grid four">';
-    echo '<label>Tipe Data<select name="data_type">';
-    $currDt = $edit['data_type'] ?? 'text';
-    foreach (['text', 'number', 'date', 'ip'] as $dt) {
-        echo '<option value="' . $dt . '"' . ($currDt === $dt ? ' selected' : '') . '>' . $dt . '</option>';
-    }
-    echo '</select></label>';
-    echo '<label><input style="width:auto" type="checkbox" name="is_required" ' . (!empty($edit['is_required']) ? 'checked' : '') . '> Wajib Diisi (Required)</label>';
-    echo '<label><input style="width:auto" type="checkbox" name="is_unique" ' . (!empty($edit['is_unique']) ? 'checked' : '') . '> Nilai Unik (Tidak Boleh Duplikat)</label>';
-    echo '<label>Urutan Tampil<input type="number" name="display_order" value="' . (int)($edit['display_order'] ?? 1) . '" min="1"></label>';
-    echo '</div>';
-
-    echo '<div class="actions" style="margin-top:14px">';
-    if ($edit) {
-        echo '<a class="btn" href="' . route_url('asset_identifiers') . '">Batal</a> ';
-    }
-    echo '<button class="btn primary" id="idfSubmitBtn">Simpan Identifier</button>';
-    echo '</div></form></section>';
 
     // JavaScript for dynamic loading, notice, and real-time client filtering
     echo '<script>
@@ -3280,7 +3334,15 @@ function asset_identifier_master_page(PDO $pdo, array $user): void
                 echo '</tr>';
             }
 
-            $delBtn = '<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus Identifier ' . e($r['identifier_code']) . '?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><button class="btn danger" style="padding:4px 8px;font-size:12px">Hapus</button></form>';
+            $delBtn = $canDeleteIdf
+                ? ('<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus Identifier ' . e($r['identifier_code']) . '?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><button class="btn danger" style="padding:4px 8px;font-size:12px">Hapus</button></form>')
+                : '';
+            $editBtn = $canEditIdf
+                ? ('<a class="btn" href="' . route_url('asset_identifiers', ['id' => $r['id']]) . '">Edit</a> ')
+                : '';
+            $actionCell = ($canEditIdf || $canDeleteIdf)
+                ? ('<td><div class="actions" style="display:flex;gap:6px;align-items:center;">' . $editBtn . $delBtn . '</div></td>')
+                : '<td><span class="muted">-</span></td>';
             $uCnt = (int)($r['unit_count'] ?? 0);
             $unitLink = $uCnt > 0 
                 ? '<a href="' . route_url('asset_items', ['type_id' => $r['asset_type_id']]) . '" class="badge ok" style="text-decoration:none;">' . $uCnt . ' Unit</a>' 
@@ -3300,7 +3362,7 @@ function asset_identifier_master_page(PDO $pdo, array $user): void
                 . '<td>' . (!empty($r['is_searchable']) ? '<span class="badge ok">Ya</span>' : '<span class="muted">-</span>') . '</td>'
                 . '<td>' . $unitLink . '</td>'
                 . '<td>' . e($r['display_order']) . '</td>'
-                . '<td><div class="actions" style="display:flex;gap:6px;align-items:center;"><a class="btn" href="' . route_url('asset_identifiers', ['id' => $r['id']]) . '">Edit</a> ' . $delBtn . '</div></td>'
+                . $actionCell
                 . '</tr>';
         }
         echo '</tbody></table>';
@@ -3314,6 +3376,7 @@ function asset_specification_master_page(PDO $pdo, array $user): void
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = $_POST['action'] ?? 'save';
         if ($action === 'delete') {
+            require_regulation('asset_specifications', 'delete');
             $delId = (int)($_POST['id'] ?? 0);
             if ($delId > 0) {
                 try {
@@ -3328,6 +3391,12 @@ function asset_specification_master_page(PDO $pdo, array $user): void
         }
 
         $id = (int)($_POST['id'] ?? 0);
+        if ($id > 0) {
+            require_regulation('asset_specifications', 'edit');
+        } else {
+            require_regulation('asset_specifications', 'create');
+        }
+
         $groupId = (int)($_POST['asset_group_id'] ?? 0);
         $type = (int)($_POST['asset_type_id'] ?? 0);
         $code = strtoupper(trim((string)($_POST['specification_code'] ?? '')));
@@ -3359,11 +3428,7 @@ function asset_specification_master_page(PDO $pdo, array $user): void
             $pdo->prepare($sql)->execute($p);
             flash('Spesifikasi Aset berhasil disimpan.');
         } catch (Throwable $e) {
-            if ($e instanceof PDOException && (int)($e->errorInfo[1] ?? 0) === 1062) {
-                flash('Gagal: Kode spesifikasi "' . e($code) . '" sudah terdaftar pada kategori yang dipilih. Berbeda kategori diperbolehkan, namun dalam satu kategori yang sama kode spesifikasi harus unik.', 'err');
-            } else {
-                flash('Gagal: ' . $e->getMessage(), 'err');
-            }
+            flash('Gagal: ' . $e->getMessage(), 'err');
         }
         redirect_to('asset_specifications');
     }
@@ -3381,42 +3446,50 @@ function asset_specification_master_page(PDO $pdo, array $user): void
 
     render_header('Spesifikasi Aset', $user);
     echo asset_nav_html();
-    echo '<section class="panel"><div class="split"><h1>' . ($edit ? 'Edit' : 'Tambah') . ' Spesifikasi Aset</h1>';
-    if ($edit) {
-        echo '<a class="btn" href="' . route_url('asset_specifications') . '">+ Tambah Spesifikasi Baru</a>';
-    }
-    echo '</div><form method="post" style="margin-top:14px"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" id="specEditId" name="id" value="' . (int)($edit['id'] ?? 0) . '">';
-    
-    // Harus isi Komoditas dan Kategori terlebih dahulu
-    echo '<div class="grid two">';
-    echo '<label>Komoditas (Grup Aset) *<select id="specGroup" name="asset_group_id" onchange="onSpecGroupChanged()" required>' . asset_group_options($pdo, $editGroupId, true, '- Pilih Komoditas (Grup Aset) -') . '</select></label>';
-    echo '<label>Kategori (Tipe Aset) *<select id="specType" name="asset_type_id" onchange="onSpecTypeChanged()" required>' . asset_type_options($pdo, (int)($edit['asset_type_id'] ?? 0), $editGroupId, true, $editGroupId ? '- Pilih Kategori -' : '- Pilih Komoditas Terlebih Dahulu -') . '</select></label>';
-    echo '</div>';
-    echo '<div id="specExistingNotice" style="display:none;margin-bottom:12px"></div>';
 
-    echo '<div class="grid two">';
-    echo '<label>Kode Spesifikasi *<input id="specCodeInput" name="specification_code" required value="' . e($edit['specification_code'] ?? '') . '" placeholder="Contoh: PROCESSOR, RAM, STORAGE, RESOLUSI, WARNA, CC" oninput="checkSpecCodeDuplicate()"><div id="specCodeWarn" style="display:none;color:#dc2626;font-size:12px;margin-top:4px;font-weight:600;"></div></label>';
-    echo '<label>Nama Spesifikasi *<input name="specification_name" required value="' . e($edit['specification_name'] ?? '') . '" placeholder="Contoh: Processor / CPU, Kapasitas RAM, Tipe Storage, Kapasitas Mesin"></label>';
-    echo '</div>';
+    $canCreateSpec = has_regulation('asset_specifications', 'create');
+    $canEditSpec = has_regulation('asset_specifications', 'edit');
+    $canDeleteSpec = has_regulation('asset_specifications', 'delete');
+    $showSpecForm = ($edit && $canEditSpec) || (!$edit && $canCreateSpec);
 
-    echo '<div class="grid four">';
-    echo '<label>Tipe Data<select name="data_type">';
-    $currDt = $edit['data_type'] ?? 'text';
-    foreach (['text', 'number', 'date'] as $dt) {
-        echo '<option value="' . $dt . '"' . ($currDt === $dt ? ' selected' : '') . '>' . $dt . '</option>';
-    }
-    echo '</select></label>';
-    echo '<label><input style="width:auto" type="checkbox" name="is_required" ' . (!empty($edit['is_required']) ? 'checked' : '') . '> Wajib Diisi (Required)</label>';
-    echo '<label><input style="width:auto" type="checkbox" name="is_searchable" ' . (!isset($edit['is_searchable']) || !empty($edit['is_searchable']) ? 'checked' : '') . '> Searchable</label>';
-    echo '<label>Urutan Tampil<input type="number" name="display_order" value="' . (int)($edit['display_order'] ?? 1) . '" min="1"></label>';
-    echo '</div>';
+    if ($showSpecForm) {
+        echo '<section class="panel"><div class="split"><h1>' . ($edit ? 'Edit' : 'Tambah') . ' Spesifikasi Aset</h1>';
+        if ($edit) {
+            echo '<a class="btn" href="' . route_url('asset_specifications') . '">+ Tambah Spesifikasi Baru</a>';
+        }
+        echo '</div><form method="post" style="margin-top:14px"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" id="specEditId" name="id" value="' . (int)($edit['id'] ?? 0) . '">';
+        
+        // Harus isi Komoditas dan Kategori terlebih dahulu
+        echo '<div class="grid two">';
+        echo '<label>Komoditas (Grup Aset) *<select id="specGroup" name="asset_group_id" onchange="onSpecGroupChanged()" required>' . asset_group_options($pdo, $editGroupId, true, '- Pilih Komoditas (Grup Aset) -') . '</select></label>';
+        echo '<label>Kategori (Tipe Aset) *<select id="specType" name="asset_type_id" onchange="onSpecTypeChanged()" required>' . asset_type_options($pdo, (int)($edit['asset_type_id'] ?? 0), $editGroupId, true, $editGroupId ? '- Pilih Kategori -' : '- Pilih Komoditas Terlebih Dahulu -') . '</select></label>';
+        echo '</div>';
+        echo '<div id="specExistingNotice" style="display:none;margin-bottom:12px"></div>';
 
-    echo '<div class="actions" style="margin-top:14px">';
-    if ($edit) {
-        echo '<a class="btn" href="' . route_url('asset_specifications') . '">Batal</a> ';
+        echo '<div class="grid two">';
+        echo '<label>Kode Spesifikasi *<input id="specCodeInput" name="specification_code" required value="' . e($edit['specification_code'] ?? '') . '" placeholder="Contoh: PROCESSOR, RAM, STORAGE, RESOLUSI, WARNA, CC" oninput="checkSpecCodeDuplicate()"><div id="specCodeWarn" style="display:none;color:#dc2626;font-size:12px;margin-top:4px;font-weight:600;"></div></label>';
+        echo '<label>Nama Spesifikasi *<input name="specification_name" required value="' . e($edit['specification_name'] ?? '') . '" placeholder="Contoh: Processor / CPU, Kapasitas RAM, Tipe Storage, Kapasitas Mesin"></label>';
+        echo '</div>';
+
+        echo '<div class="grid four">';
+        echo '<label>Tipe Data<select name="data_type">';
+        $currDt = $edit['data_type'] ?? 'text';
+        foreach (['text', 'number', 'date'] as $dt) {
+            echo '<option value="' . $dt . '"' . ($currDt === $dt ? ' selected' : '') . '>' . $dt . '</option>';
+        }
+        echo '</select></label>';
+        echo '<label><input style="width:auto" type="checkbox" name="is_required" ' . (!empty($edit['is_required']) ? 'checked' : '') . '> Wajib Diisi (Required)</label>';
+        echo '<label><input style="width:auto" type="checkbox" name="is_searchable" ' . (!isset($edit['is_searchable']) || !empty($edit['is_searchable']) ? 'checked' : '') . '> Searchable</label>';
+        echo '<label>Urutan Tampil<input type="number" name="display_order" value="' . (int)($edit['display_order'] ?? 1) . '" min="1"></label>';
+        echo '</div>';
+
+        echo '<div class="actions" style="margin-top:14px">';
+        if ($edit) {
+            echo '<a class="btn" href="' . route_url('asset_specifications') . '">Batal</a> ';
+        }
+        echo '<button class="btn primary" id="specSubmitBtn">Simpan Spesifikasi</button>';
+        echo '</div></form></section>';
     }
-    echo '<button class="btn primary" id="specSubmitBtn">Simpan Spesifikasi</button>';
-    echo '</div></form></section>';
 
     // JavaScript to dynamically populate Kategori and inspect existing specs
     echo '<script>
@@ -3688,7 +3761,15 @@ function asset_specification_master_page(PDO $pdo, array $user): void
                 echo '</tr>';
             }
 
-            $delBtn = '<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus Spesifikasi ' . e($r['specification_code']) . '?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><button class="btn danger" style="padding:4px 8px;font-size:12px">Hapus</button></form>';
+            $delBtn = $canDeleteSpec
+                ? ('<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus Spesifikasi ' . e($r['specification_code']) . '?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><button class="btn danger" style="padding:4px 8px;font-size:12px">Hapus</button></form>')
+                : '';
+            $editBtn = $canEditSpec
+                ? ('<a class="btn" href="' . route_url('asset_specifications', ['id' => $r['id']]) . '">Edit</a> ')
+                : '';
+            $actionCell = ($canEditSpec || $canDeleteSpec)
+                ? ('<td><div class="actions" style="display:flex;gap:6px;align-items:center;">' . $editBtn . $delBtn . '</div></td>')
+                : '<td><span class="muted">-</span></td>';
             $uCnt = (int)($r['unit_count'] ?? 0);
             $unitLink = $uCnt > 0 
                 ? '<a href="' . route_url('asset_items', ['type_id' => $r['asset_type_id']]) . '" class="badge ok" style="text-decoration:none;">' . $uCnt . ' Unit</a>' 
@@ -3707,7 +3788,7 @@ function asset_specification_master_page(PDO $pdo, array $user): void
                 . '<td>' . (!empty($r['is_searchable']) ? '<span class="badge ok">Ya</span>' : '<span class="muted">Tidak</span>') . '</td>'
                 . '<td>' . $unitLink . '</td>'
                 . '<td>' . e($r['display_order']) . '</td>'
-                . '<td><div class="actions" style="display:flex;gap:6px;align-items:center;"><a class="btn" href="' . route_url('asset_specifications', ['id' => $r['id']]) . '">Edit</a> ' . $delBtn . '</div></td>'
+                . $actionCell
                 . '</tr>';
         }
         echo '</tbody></table>';
@@ -3721,6 +3802,7 @@ function asset_maintenance_template_page(PDO $pdo, array $user): void
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = $_POST['action'] ?? 'save';
         if ($action === 'delete') {
+            require_regulation('asset_maintenance_templates', 'delete');
             $delId = (int)($_POST['id'] ?? 0);
             if ($delId > 0) {
                 try {
@@ -3733,24 +3815,106 @@ function asset_maintenance_template_page(PDO $pdo, array $user): void
             redirect_to('asset_maintenance_templates');
         }
 
-        $p = [(int)($_POST['asset_type_id'] ?? 0), trim((string)($_POST['template_name'] ?? '')), (string)($_POST['frequency'] ?? 'monthly'), max(1, (int)($_POST['interval_value'] ?? 1)), (string)($_POST['meter_type'] ?? 'calendar')];
-        if (!$p[0] || $p[1] === '') {
+        $id = (int)($_POST['id'] ?? 0);
+        if ($id > 0) {
+            require_regulation('asset_maintenance_templates', 'edit');
+        } else {
+            require_regulation('asset_maintenance_templates', 'create');
+        }
+
+        $typeId = (int)($_POST['asset_type_id'] ?? 0);
+        $tmplName = trim((string)($_POST['template_name'] ?? ''));
+        $freq = (string)($_POST['frequency'] ?? 'monthly');
+        $intervalVal = max(1, (int)($_POST['interval_value'] ?? 1));
+        $meterType = (string)($_POST['meter_type'] ?? 'calendar');
+
+        if (!$typeId || $tmplName === '') {
             flash('Tipe Asset dan nama template wajib diisi.', 'err');
-            redirect_to('asset_maintenance_templates');
+            redirect_to('asset_maintenance_templates', $id ? ['id' => $id] : []);
         }
         try {
-            $pdo->prepare('INSERT INTO asset_maintenance_templates(asset_type_id,template_name,frequency,interval_value,meter_type) VALUES (?,?,?,?,?)')->execute($p);
-            flash('Template maintenance tersimpan.');
+            if ($id > 0) {
+                $stmt = $pdo->prepare('UPDATE asset_maintenance_templates SET asset_type_id=?, template_name=?, frequency=?, interval_value=?, meter_type=? WHERE id=?');
+                $stmt->execute([$typeId, $tmplName, $freq, $intervalVal, $meterType, $id]);
+                flash('Template maintenance berhasil diperbarui.');
+            } else {
+                $stmt = $pdo->prepare('INSERT INTO asset_maintenance_templates(asset_type_id,template_name,frequency,interval_value,meter_type) VALUES (?,?,?,?,?)');
+                $stmt->execute([$typeId, $tmplName, $freq, $intervalVal, $meterType]);
+                flash('Template maintenance tersimpan.');
+            }
         } catch (Throwable $e) {
             flash('Gagal: ' . $e->getMessage(), 'err');
         }
         redirect_to('asset_maintenance_templates');
     }
+
+    $edit = null;
+    if (($editId = (int)($_GET['id'] ?? 0)) > 0) {
+        $stmtEdit = $pdo->prepare('SELECT * FROM asset_maintenance_templates WHERE id = ?');
+        $stmtEdit->execute([$editId]);
+        $edit = $stmtEdit->fetch(PDO::FETCH_ASSOC) ?: null;
+    }
+
     render_header('Template Maintenance Reguler', $user);
-    echo '<section class="panel"><h1>Template Maintenance Reguler</h1><p class="muted">Template ini disiapkan per Tipe Asset.</p><form method="post"><input type="hidden" name="csrf" value="' . csrf_token() . '"><div class="grid four"><label>Tipe Asset<select name="asset_type_id" required>' . asset_type_options($pdo) . '</select></label><label>Nama Template<input name="template_name" required placeholder="Quarterly Inspection"></label><label>Frekuensi<select name="frequency"><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option></select></label><label>Basis<select name="meter_type"><option value="calendar">Calendar</option><option value="kilometer">Kilometer</option><option value="hour">Hour Meter</option></select></label></div><label>Interval<input type="number" name="interval_value" value="1" min="1"></label><button class="btn primary">Simpan Template</button></form></section><section class="panel"><table><tr><th>Tipe Asset</th><th>Template</th><th>Frekuensi</th><th>Basis</th><th>Aksi</th></tr>';
+
+    $canCreateTmpl = has_regulation('asset_maintenance_templates', 'create');
+    $canEditTmpl = has_regulation('asset_maintenance_templates', 'edit');
+    $canDeleteTmpl = has_regulation('asset_maintenance_templates', 'delete');
+    $showTmplForm = ($edit && $canEditTmpl) || (!$edit && $canCreateTmpl);
+
+    if ($showTmplForm) {
+        echo '<section class="panel">';
+        echo '<div class="split">';
+        echo '<h1>' . ($edit ? 'Edit ' : 'Tambah ') . 'Template Maintenance Reguler</h1>';
+        if ($edit) {
+            echo '<a class="btn" href="' . route_url('asset_maintenance_templates') . '">+ Tambah Template Baru</a>';
+        }
+        echo '</div>';
+        echo '<p class="muted">Template ini disiapkan per Tipe Asset.</p>';
+        echo '<form method="post">';
+        echo '<input type="hidden" name="csrf" value="' . csrf_token() . '">';
+        if ($edit) {
+            echo '<input type="hidden" name="id" value="' . (int)$edit['id'] . '">';
+        }
+        echo '<div class="grid four">';
+        echo '<label>Tipe Asset<select name="asset_type_id" required>' . asset_type_options($pdo, (int)($edit['asset_type_id'] ?? 0)) . '</select></label>';
+        echo '<label>Nama Template<input name="template_name" required value="' . e($edit['template_name'] ?? '') . '" placeholder="Quarterly Inspection"></label>';
+        $freqVal = (string)($edit['frequency'] ?? 'monthly');
+        echo '<label>Frekuensi<select name="frequency">';
+        foreach (['weekly' => 'Weekly', 'monthly' => 'Monthly', 'quarterly' => 'Quarterly', 'yearly' => 'Yearly'] as $k => $v) {
+            echo '<option value="' . $k . '"' . ($freqVal === $k ? ' selected' : '') . '>' . $v . '</option>';
+        }
+        echo '</select></label>';
+        $meterVal = (string)($edit['meter_type'] ?? 'calendar');
+        echo '<label>Basis<select name="meter_type">';
+        foreach (['calendar' => 'Calendar', 'kilometer' => 'Kilometer', 'hour' => 'Hour Meter'] as $k => $v) {
+            echo '<option value="' . $k . '"' . ($meterVal === $k ? ' selected' : '') . '>' . $v . '</option>';
+        }
+        echo '</select></label>';
+        echo '</div>';
+        echo '<label>Interval<input type="number" name="interval_value" value="' . (int)($edit['interval_value'] ?? 1) . '" min="1"></label>';
+        echo '<div class="actions" style="margin-top:14px;">';
+        echo '<button class="btn primary">' . ($edit ? 'Perbarui Template' : 'Simpan Template') . '</button>';
+        if ($edit) {
+            echo '<a class="btn" href="' . route_url('asset_maintenance_templates') . '">Batal</a>';
+        }
+        echo '</div>';
+        echo '</form>';
+        echo '</section>';
+    }
+
+    echo '<section class="panel"><table><tr><th>Tipe Asset</th><th>Template</th><th>Frekuensi</th><th>Basis</th><th>Aksi</th></tr>';
     foreach ($pdo->query('SELECT m.*,t.type_name FROM asset_maintenance_templates m JOIN asset_types t ON t.id=m.asset_type_id ORDER BY t.type_name,m.template_name') as $r) {
-        $delBtn = '<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus Template ini?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><button class="btn danger" style="padding:4px 8px;font-size:12px">Hapus</button></form>';
-        echo '<tr><td>' . e($r['type_name']) . '</td><td>' . e($r['template_name']) . '</td><td>' . e($r['frequency'] . ' / ' . $r['interval_value']) . '</td><td>' . e($r['meter_type']) . '</td><td>' . $delBtn . '</td></tr>';
+        $delBtn = $canDeleteTmpl
+            ? ('<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus Template ini?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="' . (int)$r['id'] . '"><button class="btn danger" style="padding:4px 8px;font-size:12px">Hapus</button></form>')
+            : '';
+        $editBtn = $canEditTmpl
+            ? ('<a class="btn" href="' . route_url('asset_maintenance_templates', ['id' => $r['id']]) . '">Edit</a> ')
+            : '';
+        $actionCell = ($canEditTmpl || $canDeleteTmpl)
+            ? ('<td><div class="actions" style="display:flex;gap:6px;align-items:center;">' . $editBtn . $delBtn . '</div></td>')
+            : '<td><span class="muted">-</span></td>';
+        echo '<tr><td>' . e($r['type_name']) . '</td><td>' . e($r['template_name']) . '</td><td>' . e($r['frequency'] . ' / ' . $r['interval_value']) . '</td><td>' . e($r['meter_type']) . '</td>' . $actionCell . '</tr>';
     }
     echo '</table></section>';
     render_footer();
@@ -4063,9 +4227,32 @@ function handle_route_asset_management_cleanup(PDO $pdo): void
 
 function handle_route_asset_companies(PDO $pdo): void
 {
-    $user = require_role(['admin']);
+    $user = require_login();
+    if (!is_full_admin($user) && !has_regulation('asset_companies', 'view', $user)) {
+        http_response_code(403);
+        exit('Akses ditolak.');
+    }
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $action = (string)($_POST['action'] ?? 'save');
+        if ($action === 'delete') {
+            require_regulation('asset_companies', 'delete');
+            $delId = (int)($_POST['id'] ?? 0);
+            $cnt = (int)$pdo->query("SELECT COUNT(*) FROM asset_items WHERE company_id = {$delId}")->fetchColumn();
+            if ($cnt > 0) {
+                flash("Company tidak dapat dihapus karena masih digunakan oleh {$cnt} unit aset.", 'err');
+            } else {
+                $pdo->prepare('DELETE FROM asset_companies WHERE id = ?')->execute([$delId]);
+                flash('Company berhasil dihapus.');
+            }
+            redirect_to('asset_companies');
+        }
+
         $id = (int)($_POST['id'] ?? 0);
+        if ($id > 0) {
+            require_regulation('asset_companies', 'edit');
+        } else {
+            require_regulation('asset_companies', 'create');
+        }
         $code = strtoupper(trim((string)($_POST['company_code'] ?? '')));
         $name = trim((string)($_POST['company_name'] ?? ''));
         if ($code === '' || $name === '') {
@@ -4093,10 +4280,21 @@ function handle_route_asset_companies(PDO $pdo): void
         $stmt->execute([(int)$_GET['id']]);
         $edit = $stmt->fetch() ?: null;
     }
-    echo asset_company_form_html($edit);
+    if (($edit && has_regulation('asset_companies', 'edit', $user)) || (!$edit && has_regulation('asset_companies', 'create', $user))) {
+        echo asset_company_form_html($edit);
+    }
     echo '<section class="panel"><h2>Daftar Company</h2><table><tr><th>Kode</th><th>Company</th><th>Legal Name</th><th>Status</th><th>Aksi</th></tr>';
+    $canEdit = has_regulation('asset_companies', 'edit', $user);
+    $canDelete = has_regulation('asset_companies', 'delete', $user);
     foreach ($pdo->query('SELECT * FROM asset_companies ORDER BY company_name') as $row) {
-        echo '<tr><td>' . e($row['company_code']) . '</td><td>' . e($row['company_name']) . '</td><td>' . e($row['legal_name'] ?: '-') . '</td><td>' . ((int)$row['is_active'] ? '<span class="badge ok">Aktif</span>' : '<span class="badge danger">Nonaktif</span>') . '</td><td><a class="btn" href="' . route_url('asset_companies', ['id' => $row['id']]) . '">Edit</a></td></tr>';
+        $actions = '';
+        if ($canEdit) {
+            $actions .= '<a class="btn" href="' . route_url('asset_companies', ['id' => $row['id']]) . '">Edit</a>';
+        }
+        if ($canDelete) {
+            $actions .= ' <form method="post" action="' . route_url('asset_companies') . '" style="display:inline;" onsubmit="return confirm(\'Hapus company ' . addslashes((string)$row['company_name']) . '?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="' . (int)$row['id'] . '"><button class="btn danger" style="padding:4px 8px;font-size:12px;">Hapus</button></form>';
+        }
+        echo '<tr><td>' . e($row['company_code']) . '</td><td>' . e($row['company_name']) . '</td><td>' . e($row['legal_name'] ?: '-') . '</td><td>' . ((int)$row['is_active'] ? '<span class="badge ok">Aktif</span>' : '<span class="badge danger">Nonaktif</span>') . '</td><td><div class="actions">' . ($actions ?: '-') . '</div></td></tr>';
     }
     echo '</table></section>';
     render_footer();
@@ -4198,12 +4396,13 @@ function handle_route_asset_categories(PDO $pdo): void
 
 function handle_route_asset_master_items(PDO $pdo): void
 {
-    $user = require_role(['admin']);
+    $user = require_regulation('asset_master_items', 'view');
     
     // Handle Save / Delete POST
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = (string)($_POST['action'] ?? 'save');
         if ($action === 'delete') {
+            require_regulation('asset_master_items', 'delete');
             $id = (int)($_POST['id'] ?? 0);
             if ($id > 0) {
                 // Check if physical asset items exist
@@ -4221,6 +4420,11 @@ function handle_route_asset_master_items(PDO $pdo): void
         }
 
         $id = (int)($_POST['id'] ?? 0);
+        if ($id > 0) {
+            require_regulation('asset_master_items', 'edit');
+        } else {
+            require_regulation('asset_master_items', 'create');
+        }
         $groupId = (int)($_POST['asset_group_id'] ?? 0);
         $typeId = (int)($_POST['asset_type_id'] ?? 0);
         $brandId = (int)($_POST['brand_id'] ?? 0) ?: null;
@@ -4326,55 +4530,63 @@ function handle_route_asset_master_items(PDO $pdo): void
     echo asset_nav_html();
 
     // Form Section
-    echo '<section class="panel">';
-    echo '<div class="split" style="align-items:center;"><div><h1 style="margin:0;">' . ($edit ? 'Edit Master Barang' : 'Tambah Master Barang (Katalog SKU)') . '</h1></div>';
-    echo '<div style="display:flex;gap:8px;">';
-    echo '<button type="button" class="btn warning" id="btnMiImportPc" onclick="openMiImportPcModal()" style="display:inline-flex;align-items:center;gap:6px;font-weight:600;"><span style="font-size:16px;">📥</span> Import dari Data PC</button>';
-    if ($edit) {
-        echo '<a class="btn" href="' . route_url('asset_master_items') . '">+ Tambah Barang Baru</a>';
+    $canCreateMi = has_regulation('asset_master_items', 'create', $user);
+    $canEditMi = has_regulation('asset_master_items', 'edit', $user);
+    $canDeleteMi = has_regulation('asset_master_items', 'delete', $user);
+
+    if (($edit && $canEditMi) || (!$edit && $canCreateMi)) {
+        echo '<section class="panel">';
+        echo '<div class="split" style="align-items:center;"><div><h1 style="margin:0;">' . ($edit ? 'Edit Master Barang' : 'Tambah Master Barang (Katalog SKU)') . '</h1></div>';
+        echo '<div style="display:flex;gap:8px;">';
+        if ($canCreateMi) {
+            echo '<button type="button" class="btn warning" id="btnMiImportPc" onclick="openMiImportPcModal()" style="display:inline-flex;align-items:center;gap:6px;font-weight:600;"><span style="font-size:16px;">📥</span> Import dari Data PC</button>';
+        }
+        if ($edit && $canCreateMi) {
+            echo '<a class="btn" href="' . route_url('asset_master_items') . '">+ Tambah Barang Baru</a>';
+        }
+        echo '</div></div>';
+
+        echo '<form method="post" style="margin-top:14px"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="id" value="' . (int)($edit['id'] ?? 0) . '">';
+        $editBrandId = (int)($edit['brand_id'] ?? 0);
+        $editGroupId = (int)($edit['asset_group_id'] ?? 0);
+        $editTypeId = (int)($edit['asset_type_id'] ?? 0);
+        $brandLabel = ($editGroupId > 0 || $editTypeId > 0) ? '- Pilih Brand / Merk -' : '- Pilih Komoditas & Kategori Terlebih Dahulu -';
+        $brandHtml = ($editGroupId > 0 || $editTypeId > 0)
+            ? asset_brand_options($pdo, $editBrandId, true, $brandLabel, $editGroupId, $editTypeId)
+            : '<option value="">' . $brandLabel . '</option>';
+
+        echo '<div class="grid three">';
+        echo '<label>Komoditas (Grup Aset) *<select id="miGroup" name="asset_group_id" onchange="onMiGroupChanged()" required>' . asset_group_options($pdo, $editGroupId, true, '- Pilih Komoditas -') . '</select></label>';
+        echo '<label>Kategori (Tipe Aset) *<select id="miType" name="asset_type_id" onchange="onMiTypeChanged()" required>' . asset_type_options($pdo, $editTypeId, $editGroupId, true, '- Pilih Kategori -', true) . '</select></label>';
+        echo '<label style="display:flex;flex-direction:column;gap:4px;"><span style="display:flex;justify-content:space-between;align-items:center;"><span>Brand / Merk</span><a href="' . route_url('asset_brands', ($editGroupId > 0 ? ['group_id' => $editGroupId, 'type_id' => $editTypeId] : [])) . '" id="linkManageBrands" target="_blank" style="font-size:12px;color:#0284c7;text-decoration:none;font-weight:600;" title="Kelola Master Merk di tab baru">⚙️ Master Merk ↗</a></span><select id="miBrandId" name="brand_id">' . $brandHtml . '</select></label>';
+        echo '</div>';
+        echo '<div class="grid three">';
+        echo '<label>Kode Barang / SKU<input id="miItemCode" name="item_code" value="' . e($edit['item_code'] ?? '') . '" placeholder="Auto jika dikosongkan (contoh: IT-LPT-LEN-001)"></label>';
+        echo '<label>Nama Barang / Model Lengkap *<input id="miItemName" name="item_name" required value="' . e($edit['item_name'] ?? '') . '" placeholder="Contoh: Lenovo ThinkPad T480 Core i5 8GB 256GB"></label>';
+        echo '<label>Model / Varian Spesifik<input id="miModelName" name="model_name" value="' . e($edit['model_name'] ?? '') . '" placeholder="Contoh: ThinkPad T480 / OptiPlex 3080"></label>';
+        echo '</div>';
+
+        // Dynamic Category Specifications container
+        echo '<div style="margin-top:14px;padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">';
+        echo '<h3 style="margin:0 0 10px 0;font-size:14px;font-weight:700;color:#1e293b;display:flex;align-items:center;gap:6px;"><span>⚙️ Spesifikasi Standar Master Barang (Sesuai Komoditas & Kategori)</span></h3>';
+        echo '<div id="miSpecificationFields" class="grid three"><div class="muted" style="grid-column:1/-1;font-size:13px;padding:4px 0;">ℹ️ Pilih Komoditas dan Kategori di atas untuk memuat kolom spesifikasi standar.</div></div>';
+        echo '</div>';
+
+        echo '<div class="grid one" style="margin-top:12px;">';
+        echo '<label>Deskripsi / Keterangan Katalog<textarea name="description" placeholder="Catatan kegunaan, part pengganti, atau informasi garansi vendor" style="min-height:50px;">' . e($edit['description'] ?? '') . '</textarea></label>';
+        echo '</div>';
+
+        echo '<div class="split" style="margin-top:8px">';
+        echo '<label style="margin:0"><input style="width:auto" type="checkbox" name="is_active" ' . ((!$edit || (int)$edit['is_active']) ? 'checked' : '') . '> Aktif (Tampil di pemilihan unit aset fisik)</label>';
+        echo '<div class="actions">';
+        if ($edit) {
+            echo '<a class="btn" href="' . route_url('asset_master_items') . '">Batal</a>';
+        }
+        echo '<button class="btn primary">Simpan Master Barang</button>';
+        echo '</div>';
+        echo '</div>';
+        echo '</form></section>';
     }
-    echo '</div></div>';
-
-    echo '<form method="post" style="margin-top:14px"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="id" value="' . (int)($edit['id'] ?? 0) . '">';
-    $editBrandId = (int)($edit['brand_id'] ?? 0);
-    $editGroupId = (int)($edit['asset_group_id'] ?? 0);
-    $editTypeId = (int)($edit['asset_type_id'] ?? 0);
-    $brandLabel = ($editGroupId > 0 || $editTypeId > 0) ? '- Pilih Brand / Merk -' : '- Pilih Komoditas & Kategori Terlebih Dahulu -';
-    $brandHtml = ($editGroupId > 0 || $editTypeId > 0)
-        ? asset_brand_options($pdo, $editBrandId, true, $brandLabel, $editGroupId, $editTypeId)
-        : '<option value="">' . $brandLabel . '</option>';
-
-    echo '<div class="grid three">';
-    echo '<label>Komoditas (Grup Aset) *<select id="miGroup" name="asset_group_id" onchange="onMiGroupChanged()" required>' . asset_group_options($pdo, $editGroupId, true, '- Pilih Komoditas -') . '</select></label>';
-    echo '<label>Kategori (Tipe Aset) *<select id="miType" name="asset_type_id" onchange="onMiTypeChanged()" required>' . asset_type_options($pdo, $editTypeId, $editGroupId, true, '- Pilih Kategori -', true) . '</select></label>';
-    echo '<label style="display:flex;flex-direction:column;gap:4px;"><span style="display:flex;justify-content:space-between;align-items:center;"><span>Brand / Merk</span><a href="' . route_url('asset_brands', ($editGroupId > 0 ? ['group_id' => $editGroupId, 'type_id' => $editTypeId] : [])) . '" id="linkManageBrands" target="_blank" style="font-size:12px;color:#0284c7;text-decoration:none;font-weight:600;" title="Kelola Master Merk di tab baru">⚙️ Master Merk ↗</a></span><select id="miBrandId" name="brand_id">' . $brandHtml . '</select></label>';
-    echo '</div>';
-    echo '<div class="grid three">';
-    echo '<label>Kode Barang / SKU<input id="miItemCode" name="item_code" value="' . e($edit['item_code'] ?? '') . '" placeholder="Auto jika dikosongkan (contoh: IT-LPT-LEN-001)"></label>';
-    echo '<label>Nama Barang / Model Lengkap *<input id="miItemName" name="item_name" required value="' . e($edit['item_name'] ?? '') . '" placeholder="Contoh: Lenovo ThinkPad T480 Core i5 8GB 256GB"></label>';
-    echo '<label>Model / Varian Spesifik<input id="miModelName" name="model_name" value="' . e($edit['model_name'] ?? '') . '" placeholder="Contoh: ThinkPad T480 / OptiPlex 3080"></label>';
-    echo '</div>';
-
-    // Dynamic Category Specifications container
-    echo '<div style="margin-top:14px;padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">';
-    echo '<h3 style="margin:0 0 10px 0;font-size:14px;font-weight:700;color:#1e293b;display:flex;align-items:center;gap:6px;"><span>⚙️ Spesifikasi Standar Master Barang (Sesuai Komoditas & Kategori)</span></h3>';
-    echo '<div id="miSpecificationFields" class="grid three"><div class="muted" style="grid-column:1/-1;font-size:13px;padding:4px 0;">ℹ️ Pilih Komoditas dan Kategori di atas untuk memuat kolom spesifikasi standar.</div></div>';
-    echo '</div>';
-
-    echo '<div class="grid one" style="margin-top:12px;">';
-    echo '<label>Deskripsi / Keterangan Katalog<textarea name="description" placeholder="Catatan kegunaan, part pengganti, atau informasi garansi vendor" style="min-height:50px;">' . e($edit['description'] ?? '') . '</textarea></label>';
-    echo '</div>';
-
-    echo '<div class="split" style="margin-top:8px">';
-    echo '<label style="margin:0"><input style="width:auto" type="checkbox" name="is_active" ' . ((!$edit || (int)$edit['is_active']) ? 'checked' : '') . '> Aktif (Tampil di pemilihan unit aset fisik)</label>';
-    echo '<div class="actions">';
-    if ($edit) {
-        echo '<a class="btn" href="' . route_url('asset_master_items') . '">Batal</a>';
-    }
-    echo '<button class="btn primary">Simpan Master Barang</button>';
-    echo '</div>';
-    echo '</div>';
-    echo '</form></section>';
 
     // List & Filter Section
     echo '<section class="panel">';
@@ -4413,9 +4625,15 @@ function handle_route_asset_master_items(PDO $pdo): void
             echo '<td>' . e($row['brand_name'] ?: '-') . '</td>';
             echo '<td>' . $unitLink . '</td>';
             echo '<td>' . ((int)$row['is_active'] ? '<span class="badge ok">Aktif</span>' : '<span class="badge danger">Nonaktif</span>') . '</td>';
-            echo '<td><div class="actions"><a class="btn" href="' . route_url('asset_master_items', ['id' => $row['id']]) . '">Edit</a>';
-            if ((int)$row['total_units'] === 0) {
+            echo '<td><div class="actions">';
+            if ($canEditMi) {
+                echo '<a class="btn" href="' . route_url('asset_master_items', ['id' => $row['id']]) . '">Edit</a>';
+            }
+            if ($canDeleteMi && (int)$row['total_units'] === 0) {
                 echo '<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus Master Barang ini?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="' . (int)$row['id'] . '"><button class="btn danger">Hapus</button></form>';
+            }
+            if (!$canEditMi && (!$canDeleteMi || (int)$row['total_units'] > 0)) {
+                echo '-';
             }
             echo '</div></td>';
             echo '</tr>';
@@ -4789,7 +5007,54 @@ function handle_route_asset_master_items(PDO $pdo): void
 
 function handle_route_asset_items(PDO $pdo): void
 {
-    $user = require_role(['admin']);
+    $user = require_login();
+    if (!is_full_admin($user) && !has_regulation('asset_items', 'view', $user)) {
+        http_response_code(403);
+        exit('Akses ditolak ke menu Unit Aset.');
+    }
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        $action = (string)($_POST['action'] ?? '');
+        if ($action === 'delete_item') {
+            require_regulation('asset_items', 'delete');
+            $delId = (int)($_POST['id'] ?? 0);
+            $stmtChk = $pdo->prepare('SELECT asset_code, status FROM asset_items WHERE id = ?');
+            $stmtChk->execute([$delId]);
+            $it = $stmtChk->fetch(PDO::FETCH_ASSOC);
+            if (!$it) {
+                flash('Unit aset tidak ditemukan.', 'err');
+            } elseif (($it['status'] ?? '') === 'borrowed') {
+                flash('Unit aset sedang dalam masa peminjaman dan tidak dapat dihapus.', 'err');
+            } else {
+                try {
+                    $pdo->beginTransaction();
+                    if (db_table_exists($pdo, 'asset_identifiers')) {
+                        $pdo->prepare('DELETE FROM asset_identifiers WHERE asset_item_id = ?')->execute([$delId]);
+                    }
+                    if (db_table_exists($pdo, 'asset_specifications')) {
+                        $pdo->prepare('DELETE FROM asset_specifications WHERE asset_item_id = ?')->execute([$delId]);
+                    }
+                    if (db_table_exists($pdo, 'asset_item_members')) {
+                        $pdo->prepare('DELETE FROM asset_item_members WHERE parent_asset_item_id = ? OR child_asset_item_id = ?')->execute([$delId, $delId]);
+                    }
+                    if (db_table_exists($pdo, 'pcs')) {
+                        $pdo->prepare('UPDATE pcs SET asset_item_id = NULL WHERE asset_item_id = ?')->execute([$delId]);
+                    }
+                    if (db_table_exists($pdo, 'printers')) {
+                        $pdo->prepare('UPDATE printers SET asset_item_id = NULL WHERE asset_item_id = ?')->execute([$delId]);
+                    }
+                    $pdo->prepare('DELETE FROM asset_items WHERE id = ?')->execute([$delId]);
+                    $pdo->commit();
+                    flash('Unit aset ' . e($it['asset_code']) . ' berhasil dihapus.');
+                } catch (Throwable $e) {
+                    $pdo->rollBack();
+                    flash('Gagal menghapus unit aset: ' . $e->getMessage(), 'err');
+                }
+            }
+            redirect_to('asset_items');
+        }
+    }
     
     $masterItemId = (int)($_GET['master_item_id'] ?? 0);
     $groupId = (int)($_GET['group_id'] ?? 0);
@@ -4855,8 +5120,10 @@ function handle_route_asset_items(PDO $pdo): void
         }
     }
 
+    $addBtn = has_regulation('asset_items', 'create', $user) ? '<a class="btn primary" href="' . route_url('asset_item_form', $masterItemId ? ['master_item_id' => $masterItemId] : []) . '">+ Tambah Unit Aset</a>' : '';
+
     echo '<section class="panel">';
-    echo '<div class="split"><h1>' . $filterTitle . '</h1><div class="actions"><a class="btn primary" href="' . route_url('asset_item_form', $masterItemId ? ['master_item_id' => $masterItemId] : []) . '">+ Tambah Unit Aset</a><a class="btn" href="' . route_url('export_excel', ['type' => 'asset_items']) . '">Export Excel</a></div></div>';
+    echo '<div class="split"><h1>' . $filterTitle . '</h1><div class="actions">' . $addBtn . '<a class="btn" href="' . route_url('export_excel', ['type' => 'asset_items']) . '">Export Excel</a></div></div>';
 
     // Filters
     echo '<form method="get" class="actions" style="margin:16px 0 8px 0">';
@@ -4881,8 +5148,13 @@ function handle_route_asset_items(PDO $pdo): void
 
 function handle_route_asset_item_form(PDO $pdo): void
 {
-    $user = require_role(['admin']);
+    $user = require_login();
     $id = (int)($_GET['id'] ?? 0);
+    if ($id > 0) {
+        require_regulation('asset_items', 'edit');
+    } else {
+        require_regulation('asset_items', 'create');
+    }
     $item = asset_master_item_defaults();
     $parentId = (int)($_GET['parent_id'] ?? ($_POST['parent_asset_item_id'] ?? 0));
     $parentAsset = null;
@@ -5255,10 +5527,26 @@ function handle_route_asset_repair_form(PDO $pdo): void
 
 function handle_route_asset_movements(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin']);
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_full_admin($user)) {
-        handle_asset_movement_transaction($pdo, $user);
-        redirect_to('asset_movements');
+    $user = require_login();
+    if (!is_full_admin($user) && !has_regulation('asset_movements', 'view', $user)) {
+        http_response_code(403);
+        exit('Akses ditolak.');
+    }
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        $action = (string)($_POST['action'] ?? '');
+        if ($action === 'delete_movement') {
+            require_regulation('asset_movements', 'delete');
+            $delId = (int)($_POST['id'] ?? 0);
+            if ($delId > 0) {
+                $pdo->prepare('DELETE FROM asset_movements WHERE id=?')->execute([$delId]);
+                flash('Riwayat mutasi berhasil dihapus.');
+            }
+            redirect_to('asset_movements');
+        } elseif (has_regulation('asset_movements', 'create', $user)) {
+            handle_asset_movement_transaction($pdo, $user);
+            redirect_to('asset_movements');
+        }
     }
     $q = trim((string)($_GET['q'] ?? ''));
     $startDate = trim((string)($_GET['start_date'] ?? ''));
@@ -5294,7 +5582,7 @@ function handle_route_asset_movements(PDO $pdo): void
         . asset_movements_table($rows)
         . '</section>';
 
-    if (is_full_admin($user)) {
+    if (has_regulation('asset_movements', 'create', $user)) {
         echo '<details class="panel" style="margin-top:16px;"><summary style="cursor:pointer;font-weight:600;color:#1e293b;padding:4px 0;">⚙️ Form Transaksi Mutasi Manual / Tukar Pasang</summary>'
             . '<div style="margin-top:12px;">' . asset_movement_transaction_form_html($pdo, $user) . '</div>'
             . '</details>';

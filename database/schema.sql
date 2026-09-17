@@ -620,4 +620,18 @@ CREATE TABLE IF NOT EXISTS asset_loan_items (
     INDEX idx_loan_item_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS role_regulations (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    role VARCHAR(50) NOT NULL,
+    menu_key VARCHAR(60) NOT NULL,
+    can_view TINYINT(1) NOT NULL DEFAULT 1,
+    can_create TINYINT(1) NOT NULL DEFAULT 1,
+    can_edit TINYINT(1) NOT NULL DEFAULT 1,
+    can_delete TINYINT(1) NOT NULL DEFAULT 1,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_role_menu (role, menu_key),
+    INDEX idx_role (role)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
 

@@ -1061,7 +1061,7 @@ function ensure_performance_indexes(PDO $pdo): void
 function ensure_app_schema(PDO $pdo, bool $force = false): void
 {
     if (!$force && empty($_GET['force_schema'])) {
-        $lockFile = sys_get_temp_dir() . '/pcconnect_schema_v18.lock';
+        $lockFile = sys_get_temp_dir() . '/asetconnect_schema_v19.lock';
         if (file_exists($lockFile) && (time() - filemtime($lockFile) < 1800) && db_table_exists($pdo, 'pcs')) {
             return;
         }
@@ -1086,9 +1086,10 @@ function ensure_app_schema(PDO $pdo, bool $force = false): void
     ensure_corrective_maintenance_schema($pdo);
     ensure_asset_loan_schema($pdo);
     ensure_unified_asset_schema($pdo);
+    ensure_role_regulations_schema($pdo);
     ensure_performance_indexes($pdo);
 
-    @touch(sys_get_temp_dir() . '/pcconnect_schema_v18.lock');
+    @touch(sys_get_temp_dir() . '/asetconnect_schema_v19.lock');
 }
 
 function ensure_user_roles_schema(PDO $pdo): void
@@ -2361,5 +2362,62 @@ function ensure_unified_asset_schema(PDO $pdo): void
             } catch (Throwable $ignored) {}
         }
     }
+}
+
+function ensure_role_regulations_schema(PDO $pdo): void
+{
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS role_regulations (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            role VARCHAR(50) NOT NULL,
+            menu_key VARCHAR(60) NOT NULL,
+            can_view TINYINT(1) NOT NULL DEFAULT 1,
+            can_create TINYINT(1) NOT NULL DEFAULT 1,
+            can_edit TINYINT(1) NOT NULL DEFAULT 1,
+            can_delete TINYINT(1) NOT NULL DEFAULT 1,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_role_menu (role, menu_key),
+            INDEX idx_role (role)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        // Periksa apakah tabel kosong, jika ya inisialisasi default permissions
+        $count = (int)$pdo->query("SELECT COUNT(*) FROM role_regulations")->fetchColumn();
+        if ($count === 0) {
+            $menus = [
+                // Master
+                'asset_items', 'asset_groups', 'asset_types', 'asset_brands',
+                'asset_master_items', 'asset_locations', 'asset_identifiers', 'asset_specifications',
+                'jobs', 'asset_maintenance_templates', 'corrective_job_desks', 'asset_companies',
+                'master_pengguna', 'users', 'pcs', 'printers',
+                // Transaksi
+                'asset_loans', 'maintenance', 'tickets', 'walkarounds', 'asset_movements'
+            ];
+
+            $roles = ['admin', 'maintenance_admin', 'technician', 'corrective_maintenance', 'loan_officer'];
+            $ins = $pdo->prepare("INSERT IGNORE INTO role_regulations (role, menu_key, can_view, can_create, can_edit, can_delete) VALUES (?, ?, ?, ?, ?, ?)");
+
+            foreach ($roles as $r) {
+                foreach ($menus as $m) {
+                    if ($r === 'admin') {
+                        $ins->execute([$r, $m, 1, 1, 1, 1]);
+                    } elseif ($r === 'maintenance_admin') {
+                        $isMaintDomain = in_array($m, ['maintenance', 'jobs', 'asset_maintenance_templates', 'asset_items', 'asset_loans', 'asset_movements', 'pcs', 'printers'], true);
+                        $canDel = in_array($m, ['maintenance', 'jobs', 'asset_maintenance_templates'], true) ? 1 : 0;
+                        $ins->execute([$r, $m, 1, $isMaintDomain ? 1 : 0, $isMaintDomain ? 1 : 0, $canDel]);
+                    } elseif ($r === 'technician') {
+                        $canEdit = in_array($m, ['maintenance', 'tickets', 'walkarounds'], true) ? 1 : 0;
+                        $canAdd = in_array($m, ['tickets', 'walkarounds'], true) ? 1 : 0;
+                        $ins->execute([$r, $m, 1, $canAdd, $canEdit, 0]);
+                    } elseif ($r === 'corrective_maintenance') {
+                        $isCorrDomain = in_array($m, ['tickets', 'walkarounds', 'corrective_job_desks'], true);
+                        $ins->execute([$r, $m, 1, $isCorrDomain ? 1 : 0, $isCorrDomain ? 1 : 0, 0]);
+                    } elseif ($r === 'loan_officer') {
+                        $isLoanDomain = ($m === 'asset_loans');
+                        $ins->execute([$r, $m, 1, $isLoanDomain ? 1 : 0, $isLoanDomain ? 1 : 0, 0]);
+                    }
+                }
+            }
+        }
+    } catch (Throwable $ignored) {}
 }
 

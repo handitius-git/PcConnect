@@ -85,7 +85,7 @@ function get_user_linked_assets(PDO $pdo, string $nik, string $name): array
 
 function handle_route_master_pengguna(PDO $pdo): void
 {
-    $user = require_role(['admin']);
+    $user = require_regulation('master_pengguna', 'view');
 
     if (!db_table_exists($pdo, 'employee_directory')) {
         ensure_app_schema($pdo);
@@ -108,6 +108,7 @@ function handle_route_master_pengguna(PDO $pdo): void
         $action = (string)($_POST['action'] ?? '');
 
         if ($action === 'sync') {
+            require_regulation('master_pengguna', 'create');
             try {
                 if (function_exists('import_employee_directory')) {
                     $cnt = import_employee_directory($pdo);
@@ -122,6 +123,7 @@ function handle_route_master_pengguna(PDO $pdo): void
         }
 
         if ($action === 'add') {
+            require_regulation('master_pengguna', 'create');
             $nik = strtoupper(trim((string)($_POST['nik'] ?? '')));
             $name = trim((string)($_POST['name'] ?? ''));
             $dept = trim((string)($_POST['department'] ?? ''));
@@ -146,11 +148,12 @@ function handle_route_master_pengguna(PDO $pdo): void
                 }
 
                 if ($createLogin) {
+                    require_regulation('users', 'create');
                     $uName = $username !== '' ? $username : strtolower($nik);
                     if ($password === '' || strlen($password) < 6) {
                         flash('User disimpan, namun Akun Login butuh password minimal 6 karakter.', 'err');
                     } else {
-                        if (!in_array($role, ['admin', 'maintenance_admin', 'technician', 'corrective_maintenance'], true)) {
+                        if (!in_array($role, ['admin', 'maintenance_admin', 'technician', 'corrective_maintenance', 'loan_officer'], true)) {
                             $role = 'technician';
                         }
                         $stmtU = $pdo->prepare("INSERT INTO users (name, username, password_hash, role, is_active) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE name=VALUES(name), role=VALUES(role), password_hash=VALUES(password_hash), is_active=1");
@@ -166,6 +169,7 @@ function handle_route_master_pengguna(PDO $pdo): void
         }
 
         if ($action === 'edit') {
+            require_regulation('master_pengguna', 'edit');
             $nik = strtoupper(trim((string)($_POST['nik'] ?? '')));
             $name = trim((string)($_POST['name'] ?? ''));
             $dept = trim((string)($_POST['department'] ?? ''));
@@ -193,6 +197,7 @@ function handle_route_master_pengguna(PDO $pdo): void
         }
 
         if ($action === 'toggle') {
+            require_regulation('master_pengguna', 'edit');
             $nik = trim((string)($_POST['nik'] ?? ''));
             if ($nik !== '') {
                 try {
@@ -206,6 +211,7 @@ function handle_route_master_pengguna(PDO $pdo): void
         }
 
         if ($action === 'create_login_for') {
+            require_regulation('users', 'create');
             $nik = strtoupper(trim((string)($_POST['nik'] ?? '')));
             $name = trim((string)($_POST['name'] ?? ''));
             $username = trim((string)($_POST['username'] ?? '')) ?: strtolower($nik);
@@ -216,7 +222,7 @@ function handle_route_master_pengguna(PDO $pdo): void
                 flash('Password baru minimal 6 karakter.', 'err');
                 redirect_to('master_pengguna');
             }
-            if (!in_array($role, ['admin', 'maintenance_admin', 'technician', 'corrective_maintenance'], true)) {
+            if (!in_array($role, ['admin', 'maintenance_admin', 'technician', 'corrective_maintenance', 'loan_officer'], true)) {
                 $role = 'technician';
             }
 
@@ -231,6 +237,7 @@ function handle_route_master_pengguna(PDO $pdo): void
         }
 
         if ($action === 'delete') {
+            require_regulation('master_pengguna', 'delete');
             $nik = trim((string)($_POST['nik'] ?? ''));
             if ($nik !== '') {
                 try {
@@ -391,8 +398,10 @@ function handle_route_master_pengguna(PDO $pdo): void
     echo '<section class="panel">';
     echo '<div class="split"><div><h1 style="margin-bottom:4px;">Master Pengguna (Karyawan & Pemakai Aset)</h1><p class="muted">Master terpusat untuk semua pengguna dan pemakai aset pada seluruh form (PC, Printer, Unit Aset, Maintenance, Tiket Corrective).</p></div>';
     echo '<div class="actions">';
-    echo '<form method="post" style="display:inline;" onsubmit="return confirm(\'Sinkronisasi ulang seluruh data karyawan dari MariaDB portal?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="sync"><button class="btn" style="background:#0284c7;color:#fff;border-color:#0284c7;">🔄 Sinkronisasi dari Portal MariaDB</button></form>';
-    echo '<a class="btn primary" href="#formTambahPengguna">+ Tambah Pengguna Baru</a>';
+    if (has_regulation('master_pengguna', 'create')) {
+        echo '<form method="post" style="display:inline;" onsubmit="return confirm(\'Sinkronisasi ulang seluruh data karyawan dari MariaDB portal?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="sync"><button class="btn" style="background:#0284c7;color:#fff;border-color:#0284c7;">🔄 Sinkronisasi dari Portal MariaDB</button></form>';
+        echo '<a class="btn primary" href="#formTambahPengguna">+ Tambah Pengguna Baru</a>';
+    }
     echo '</div></div>';
 
     // Summary stats
@@ -526,15 +535,19 @@ function handle_route_master_pengguna(PDO $pdo): void
             echo '<td>' . $accountBadge . '</td>';
             echo '<td>' . $assetSummary . '</td>';
             echo '<td><div class="actions" style="display:flex;gap:4px;flex-wrap:nowrap;">';
-            echo '<a class="btn" style="padding:4px 8px;font-size:12px;" href="' . route_url('master_pengguna', ['edit_nik' => $nik, 'q' => $q, 'status' => $statusFilter]) . '">Edit</a>';
-            echo '<form method="post" style="display:inline;"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="toggle"><input type="hidden" name="nik" value="' . e($nik) . '"><button class="btn" style="padding:4px 8px;font-size:12px;">' . (!empty($r['is_active']) ? 'Nonaktifkan' : 'Aktifkan') . '</button></form>';
+            if (has_regulation('master_pengguna', 'edit')) {
+                echo '<a class="btn" style="padding:4px 8px;font-size:12px;" href="' . route_url('master_pengguna', ['edit_nik' => $nik, 'q' => $q, 'status' => $statusFilter]) . '">Edit</a>';
+                echo '<form method="post" style="display:inline;"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="toggle"><input type="hidden" name="nik" value="' . e($nik) . '"><button class="btn" style="padding:4px 8px;font-size:12px;">' . (!empty($r['is_active']) ? 'Nonaktifkan' : 'Aktifkan') . '</button></form>';
+            }
             
             // Tombol buat akun login jika belum punya akun
-            if (empty($r['user_account_id'])) {
+            if (empty($r['user_account_id']) && has_regulation('users', 'create')) {
                 echo '<button type="button" class="btn" style="padding:4px 8px;font-size:12px;background:#f1f5f9;" onclick="openCreateLoginModal(' . htmlspecialchars(json_encode(['nik' => $nik, 'name' => $name]), ENT_QUOTES) . ')">+ Akun</button>';
             }
             
-            echo '<form method="post" style="display:inline;" onsubmit="return confirm(\'Hapus pengguna ' . addslashes($name) . ' dari master lokal?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete"><input type="hidden" name="nik" value="' . e($nik) . '"><button class="btn danger" style="padding:4px 8px;font-size:12px;">Hapus</button></form>';
+            if (has_regulation('master_pengguna', 'delete')) {
+                echo '<form method="post" style="display:inline;" onsubmit="return confirm(\'Hapus pengguna ' . addslashes($name) . ' dari master lokal?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete"><input type="hidden" name="nik" value="' . e($nik) . '"><button class="btn danger" style="padding:4px 8px;font-size:12px;">Hapus</button></form>';
+            }
             echo '</div></td>';
             echo '</tr>';
         }
@@ -545,28 +558,30 @@ function handle_route_master_pengguna(PDO $pdo): void
     echo '</section>';
 
     // Panel Tambah Pengguna Baru
-    echo '<section class="panel" id="formTambahPengguna">';
-    echo '<h2>+ Tambah Pengguna Baru (Manual)</h2>';
-    echo '<p class="muted">Jika ada karyawan baru atau PIC yang belum tersinkronisasi dari portal MariaDB, tambahkan secara manual di bawah ini.</p>';
-    echo '<form method="post"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="add">';
-    echo '<div class="grid three">';
-    echo '<label>NIK (Nomor Induk Karyawan) *<input name="nik" required placeholder="Contoh: 2024001"></label>';
-    echo '<label>Nama Pengguna Lengkap *<input name="name" required placeholder="Nama Karyawan"></label>';
-    echo '<label>Departemen / Divisi<input name="department" placeholder="Contoh: Finance / Logistik"></label>';
-    echo '</div>';
-    
-    echo '<div style="margin:12px 0 16px 0;padding:12px;border:1px dashed #cbd5e1;border-radius:8px;background:#f8fafc;">';
-    echo '<label style="margin-top:0;cursor:pointer;"><input type="checkbox" name="create_login" value="1" id="chkCreateLogin" onchange="toggleLoginInputs()" style="width:auto;"> Sekaligus buatkan Akun Login Sistem (Aplikasi PcConnect)</label>';
-    echo '<div id="loginInputs" style="display:none;margin-top:10px;" class="grid three">';
-    echo '<label>Username Login<input name="username" placeholder="Default sama dengan NIK"></label>';
-    echo '<label>Role Akun<select name="role"><option value="technician">Teknisi</option><option value="corrective_maintenance">Corrective Maintenance</option><option value="maintenance_admin">Admin Maintenance</option><option value="admin">Administrator</option></select></label>';
-    echo '<label>Password Awal (Min 6 Karakter)<input type="password" name="password" placeholder="Password"></label>';
-    echo '</div>';
-    echo '</div>';
+    if (has_regulation('master_pengguna', 'create')) {
+        echo '<section class="panel" id="formTambahPengguna">';
+        echo '<h2>+ Tambah Pengguna Baru (Manual)</h2>';
+        echo '<p class="muted">Jika ada karyawan baru atau PIC yang belum tersinkronisasi dari portal MariaDB, tambahkan secara manual di bawah ini.</p>';
+        echo '<form method="post"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="add">';
+        echo '<div class="grid three">';
+        echo '<label>NIK (Nomor Induk Karyawan) *<input name="nik" required placeholder="Contoh: 2024001"></label>';
+        echo '<label>Nama Pengguna Lengkap *<input name="name" required placeholder="Nama Karyawan"></label>';
+        echo '<label>Departemen / Divisi<input name="department" placeholder="Contoh: Finance / Logistik"></label>';
+        echo '</div>';
+        
+        echo '<div style="margin:12px 0 16px 0;padding:12px;border:1px dashed #cbd5e1;border-radius:8px;background:#f8fafc;">';
+        echo '<label style="margin-top:0;cursor:pointer;"><input type="checkbox" name="create_login" value="1" id="chkCreateLogin" onchange="toggleLoginInputs()" style="width:auto;"> Sekaligus buatkan Akun Login Sistem (Aplikasi PcConnect)</label>';
+        echo '<div id="loginInputs" style="display:none;margin-top:10px;" class="grid three">';
+        echo '<label>Username Login<input name="username" placeholder="Default sama dengan NIK"></label>';
+        echo '<label>Role Akun<select name="role"><option value="technician">Teknisi</option><option value="corrective_maintenance">Corrective Maintenance</option><option value="maintenance_admin">Admin Maintenance</option><option value="admin">Administrator</option></select></label>';
+        echo '<label>Password Awal (Min 6 Karakter)<input type="password" name="password" placeholder="Password"></label>';
+        echo '</div>';
+        echo '</div>';
 
-    echo '<button class="btn primary">Simpan Pengguna Baru</button>';
-    echo '</form>';
-    echo '</section>';
+        echo '<button class="btn primary">Simpan Pengguna Baru</button>';
+        echo '</form>';
+        echo '</section>';
+    }
 
     // Quick Modal Script for Create Login
     echo '<div id="modalLogin" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:99999;align-items:center;justify-content:center;">';

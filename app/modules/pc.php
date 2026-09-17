@@ -322,11 +322,21 @@ function pc_table(array $rows, bool $actions = false): string
         return '<p>Belum ada data PC.</p>';
     }
     $pdo = Database::pdo();
+    $canEdit = has_regulation('pcs', 'edit');
+    $canDelete = has_regulation('pcs', 'delete');
     $html = '<table><tr><th>PcID</th><th>NIK</th><th>Pengguna</th><th>Computer Name</th><th>Manajemen Aset</th><th>Analisa Terakhir</th><th>Aksi</th></tr>';
     foreach ($rows as $row) {
         $rowActions = '<a class="btn" href="' . route_url('pc_detail', ['pc_id' => $row['pc_id']]) . '">Detail</a>';
-        if ($actions) {
+        if ($actions && $canEdit) {
             $rowActions .= ' <a class="btn" href="' . route_url('pc_form', ['pc_id' => $row['pc_id']]) . '">Edit</a>';
+        }
+        if ($actions && $canDelete) {
+            $rowActions .= ' <form method="post" action="' . route_url('pcs') . '" style="display:inline;" onsubmit="return confirm(\'Hapus PC ' . e($row['pc_id']) . '? Semua riwayat dan relasi PC ini akan dihapus.\');">'
+                . csrf_field()
+                . '<input type="hidden" name="action" value="delete_pc">'
+                . '<input type="hidden" name="pc_id" value="' . e($row['pc_id']) . '">'
+                . '<button type="submit" class="btn danger" style="padding:4px 8px;font-size:12px;">Hapus</button>'
+                . '</form>';
         }
         $html .= '<tr><td>' . e($row['pc_id']) . '</td><td>' . e($row['employee_nik'] ?? '-') . '</td><td>' . e($row['owner_name']) . '</td><td>' . e($row['computer_name'] ?? '-') . '</td><td>' . nl2br(e(pc_asset_link_summary($pdo, $row))) . '</td><td>' . e($row['last_analyzed_at'] ?? '-') . '</td><td>' . $rowActions . '</td></tr>';
     }
@@ -448,10 +458,16 @@ function pc_form_html(array $pc, bool $editing): string
         $html .= '<details' . $wide . $open . '><summary>' . e($label) . '</summary><label>' . e($label) . '<textarea name="' . e($name) . '" placeholder="Boleh isi manual atau nanti diisi otomatis dari PcNalisa JSON">' . e($pc[$name]) . '</textarea></label></details>';
     }
     $html .= '</div></section><section class="footer-actions"><div class="actions"><button class="btn primary">' . ($editing ? 'Simpan Perubahan' : 'Tambah PC') . '</button><a class="btn" href="' . route_url('pcs') . '">Batal</a>';
+    if ($editing && has_regulation('pcs', 'delete')) {
+        $html .= '<button type="submit" class="btn danger" form="deletePcForm" onclick="return confirm(\'Hapus PC ' . e($pc['pc_id']) . '? Semua data riwayat dan relasi PC ini akan dihapus.\');">Hapus PC</button>';
+    }
     if (!$editing) {
         $html .= '<a class="btn" href="' . route_url('upload_analysis') . '">Tambah Lewat JSON PcNalisa</a>';
     }
     $html .= '</div></section></form>';
+    if ($editing && has_regulation('pcs', 'delete')) {
+        $html .= '<form id="deletePcForm" method="post" action="' . route_url('pcs') . '" style="display:none;">' . csrf_field() . '<input type="hidden" name="action" value="delete_pc"><input type="hidden" name="pc_id" value="' . e($pc['pc_id']) . '"></form>';
+    }
     $html .= '<script>(function(){var btn=document.getElementById("useCurrentLocation"),lat=document.getElementById("pcLatitude"),lng=document.getElementById("pcLongitude"),status=document.getElementById("locationStatus");if(!btn)return;btn.addEventListener("click",function(){if(!navigator.geolocation){status.textContent="Browser tidak mendukung GPS.";return;}status.textContent="Mengambil lokasi...";navigator.geolocation.getCurrentPosition(function(p){lat.value=p.coords.latitude.toFixed(7);lng.value=p.coords.longitude.toFixed(7);status.textContent="Lokasi tersimpan di form. Akurasi perangkat sekitar "+Math.round(p.coords.accuracy)+" meter.";},function(e){status.textContent="Gagal mengambil lokasi. Pastikan izin Location aktif atau isi manual dari Google Maps.";},{enableHighAccuracy:true,timeout:15000,maximumAge:0});});})();</script>';
     return $html;
 }
@@ -647,7 +663,26 @@ function ingest_analysis_payload(PDO $pdo, array $payload): array
 
 function handle_route_pcs(PDO $pdo): void
 {
-    $user = require_role(['admin']);
+    $user = require_regulation('pcs', 'view');
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_pc') {
+        require_regulation('pcs', 'delete');
+        $delPcId = trim((string)($_POST['pc_id'] ?? ''));
+        if ($delPcId !== '') {
+            $pdo->prepare('UPDATE asset_items SET source_pc_id=NULL WHERE source_pc_id=?')->execute([$delPcId]);
+            $pdo->prepare('UPDATE maintenance_assets SET pc_id=NULL WHERE pc_id=?')->execute([$delPcId]);
+            if (db_table_exists($pdo, 'pc_analyses')) {
+                $pdo->prepare('DELETE FROM pc_analyses WHERE pc_id=?')->execute([$delPcId]);
+            }
+            if (db_table_exists($pdo, 'analysis_runs')) {
+                $pdo->prepare('DELETE FROM analysis_runs WHERE pc_id=?')->execute([$delPcId]);
+            }
+            $pdo->prepare('DELETE FROM pcs WHERE pc_id=?')->execute([$delPcId]);
+            flash('PC ' . $delPcId . ' berhasil dihapus.');
+        }
+        redirect_to('pcs');
+    }
+
     render_header('Data PC', $user);
     $q = trim((string)($_GET['q'] ?? ''));
     $baseSql = "SELECT p.*, 
@@ -662,7 +697,8 @@ function handle_route_pcs(PDO $pdo): void
     } else {
         $stmt = $pdo->query("$baseSql ORDER BY p.pc_id");
     }
-    echo '<section class="panel"><div class="split"><h1>Data PC</h1><div class="actions"><a class="btn primary" href="' . route_url('pc_form') . '">Tambah PC</a><a class="btn" href="' . route_url('pc_locations') . '">Kelola Lokasi GPS</a><a class="btn" href="' . route_url('upload_analysis') . '">Upload JSON Analisa</a><a class="btn" href="' . route_url('export_excel', ['type' => 'pcs']) . '">Export Excel</a></div></div>';
+    $addBtn = has_regulation('pcs', 'create') ? '<a class="btn primary" href="' . route_url('pc_form') . '">Tambah PC</a>' : '';
+    echo '<section class="panel"><div class="split"><h1>Data PC</h1><div class="actions">' . $addBtn . '<a class="btn" href="' . route_url('pc_locations') . '">Kelola Lokasi GPS</a><a class="btn" href="' . route_url('upload_analysis') . '">Upload JSON Analisa</a><a class="btn" href="' . route_url('export_excel', ['type' => 'pcs']) . '">Export Excel</a></div></div>';
     echo '<form method="get" style="margin-top:14px"><input type="hidden" name="route" value="pcs"><div class="grid two"><label>Cari PC<input name="q" value="' . e($q) . '" placeholder="Cari PcID, pengguna, atau computer name..."></label><div class="actions" style="align-items:flex-end"><button class="btn primary">Cari</button><a class="btn" href="' . route_url('pcs') . '">Reset</a></div></div></form></section>';
     echo '<section class="panel">' . pc_table($stmt->fetchAll(), true) . '</section>';
     render_footer();
@@ -670,9 +706,9 @@ function handle_route_pcs(PDO $pdo): void
 
 function handle_route_pc_form(PDO $pdo): void
 {
-    $user = require_role(['admin']);
     $pcId = strtoupper(trim((string)($_GET['pc_id'] ?? $_POST['pc_id'] ?? '')));
     $editing = $pcId !== '';
+    $user = $editing ? require_regulation('pcs', 'edit') : require_regulation('pcs', 'create');
     $pc = [
         'pc_id' => '',
         'security_code' => '',
@@ -824,7 +860,7 @@ function handle_route_pc_form(PDO $pdo): void
 
 function handle_route_pc_detail(PDO $pdo): void
 {
-    $user = require_role(['admin']);
+    $user = require_regulation('pcs', 'view');
     $pcId = (string)($_GET['pc_id'] ?? '');
     $stmt = $pdo->prepare('SELECT * FROM pcs WHERE pc_id = ?');
     $stmt->execute([$pcId]);
@@ -848,7 +884,19 @@ function handle_route_pc_detail(PDO $pdo): void
     } else {
         echo '<p><span class="badge danger">Belum Sinkron ke Asset Item</span> <span class="badge">NIK ' . e($pc['employee_nik'] ?? '-') . '</span></p>';
     }
-    echo '</div><div class="actions"><a class="btn primary" href="' . route_url('ticket_form', ['pc_id' => $pcId]) . '">+ Buat Tiket / Reparasi</a><a class="btn" href="' . route_url('pc_form', ['pc_id' => $pcId]) . '">Edit PC</a><a class="btn" href="' . route_url('pc_location', ['pc_id' => $pcId]) . '">Set Lokasi GPS</a><a class="btn good" href="' . route_url('download_agent', ['pc_id' => $pcId]) . '">Download PcNalisa PC ini</a><a class="btn" href="' . route_url('upload_analysis', ['pc_id' => $pcId]) . '">Upload JSON Analisa</a>';
+    echo '</div><div class="actions"><a class="btn primary" href="' . route_url('ticket_form', ['pc_id' => $pcId]) . '">+ Buat Tiket / Reparasi</a>';
+    if (has_regulation('pcs', 'edit')) {
+        echo '<a class="btn" href="' . route_url('pc_form', ['pc_id' => $pcId]) . '">Edit PC</a>';
+    }
+    if (has_regulation('pcs', 'delete')) {
+        echo '<form method="post" action="' . route_url('pcs') . '" style="display:inline;" onsubmit="return confirm(\'Hapus PC ' . e($pcId) . '? Semua relasi dan riwayat PC ini akan dihapus.\');">'
+            . csrf_field()
+            . '<input type="hidden" name="action" value="delete_pc">'
+            . '<input type="hidden" name="pc_id" value="' . e($pcId) . '">'
+            . '<button type="submit" class="btn danger">Hapus PC</button>'
+            . '</form>';
+    }
+    echo '<a class="btn" href="' . route_url('pc_location', ['pc_id' => $pcId]) . '">Set Lokasi GPS</a><a class="btn good" href="' . route_url('download_agent', ['pc_id' => $pcId]) . '">Download PcNalisa PC ini</a><a class="btn" href="' . route_url('upload_analysis', ['pc_id' => $pcId]) . '">Upload JSON Analisa</a>';
     if ($hasSync && $assetCode !== '') {
         echo '<a class="btn" href="' . mobile_asset_url($assetCode) . '">Mobile QR URL</a>';
     }

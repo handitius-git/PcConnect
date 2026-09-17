@@ -179,6 +179,11 @@ function require_technician(): array
     return require_role(['technician']);
 }
 
+function app_name(): string
+{
+    return (string)config_value('app_name', 'AsetConnect');
+}
+
 function is_full_admin(?array $user): bool
 {
     return ($user['role'] ?? '') === 'admin';
@@ -189,59 +194,473 @@ function can_manage_maintenance(?array $user): bool
     return in_array(($user['role'] ?? ''), ['admin', 'maintenance_admin'], true);
 }
 
+function get_regulated_menus(): array
+{
+    return [
+        'Master' => [
+            'asset_items' => 'Unit Aset',
+            'pcs' => 'Pendataan Khusus Computer',
+            'printers' => 'Printer & Scanner',
+            'master_pengguna' => 'Master Pengguna',
+            'asset_companies' => 'Company',
+            'asset_groups' => 'Master Komoditas',
+            'asset_types' => 'Master Kategori',
+            'asset_brands' => 'Master Brand / Merk',
+            'asset_master_items' => 'Master Barang (Katalog Model)',
+            'asset_locations' => 'Master Lokasi',
+            'asset_identifiers' => 'Identifier Aset',
+            'asset_specifications' => 'Spesifikasi Aset',
+            'jobs' => 'Job Desk Preventive Maintenance',
+            'asset_maintenance_templates' => 'Template Maintenance',
+            'corrective_job_desks' => 'Job Desk Corrective Maintenance',
+            'users' => 'Users',
+            'labels' => 'QR Label Unit Aset',
+        ],
+        'Transaksi' => [
+            'asset_loans' => 'Peminjaman Aset',
+            'maintenance' => 'Schedule Maintenance',
+            'tickets' => 'Tiket & Troubleshooting',
+            'walkarounds' => 'Patroli / Walkaround',
+            'asset_movements' => 'Mutasi / Tukar Pasang',
+        ]
+    ];
+}
+
+function get_user_regulations(?string $role): array
+{
+    static $cache = [];
+    if (!$role) {
+        return [];
+    }
+    if (isset($cache[$role])) {
+        return $cache[$role];
+    }
+    try {
+        $pdo = Database::pdo();
+        if (function_exists('db_table_exists') && db_table_exists($pdo, 'role_regulations')) {
+            $stmt = $pdo->prepare('SELECT menu_key, can_view, can_create, can_edit, can_delete FROM role_regulations WHERE role = ?');
+            $stmt->execute([$role]);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $regs = [];
+            foreach ($rows as $r) {
+                $regs[$r['menu_key']] = [
+                    'view' => (bool)$r['can_view'],
+                    'create' => (bool)$r['can_create'],
+                    'edit' => (bool)$r['can_edit'],
+                    'delete' => (bool)$r['can_delete'],
+                ];
+            }
+            $cache[$role] = $regs;
+            return $regs;
+        }
+    } catch (Throwable $e) {
+    }
+    return [];
+}
+
+function has_regulation(string $menuKey, string $action = 'view', ?array $user = null): bool
+{
+    if ($user === null) {
+        $user = current_user();
+    }
+    if (!$user) {
+        return false;
+    }
+    $role = (string)($user['role'] ?? '');
+    if ($role === 'admin') {
+        return true;
+    }
+    $regs = get_user_regulations($role);
+    if (!isset($regs[$menuKey])) {
+        if ($role === 'maintenance_admin') {
+            if (in_array($menuKey, ['maintenance', 'asset_items', 'tickets', 'walkarounds', 'asset_loans', 'asset_movements'], true)) {
+                return true;
+            }
+        } elseif ($role === 'technician') {
+            if (in_array($menuKey, ['maintenance', 'tickets'], true) && in_array($action, ['view', 'edit'], true)) {
+                return true;
+            }
+        } elseif ($role === 'corrective_maintenance') {
+            if (in_array($menuKey, ['tickets', 'walkarounds'], true)) {
+                return true;
+            }
+        } elseif ($role === 'loan_officer') {
+            if ($menuKey === 'asset_loans') {
+                return true;
+            }
+        }
+        return false;
+    }
+    return !empty($regs[$menuKey][$action]);
+}
+
+function require_regulation(string $menuKey, string $action = 'view'): array
+{
+    $user = require_login();
+    if (!has_regulation($menuKey, $action, $user)) {
+        http_response_code(403);
+        $actionName = match ($action) {
+            'create' => 'menambah data',
+            'edit' => 'mengubah data',
+            'delete' => 'menghapus data',
+            default => 'mengakses menu ini',
+        };
+        exit('Akses ditolak. Role Anda tidak memiliki izin untuk ' . e($actionName) . ' pada modul ini.');
+    }
+    return $user;
+}
+
 function render_header(string $title, ?array $user = null): void
 {
     $flash = flash();
-    echo '<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . e($title) . ' - PcConnect</title><style>';
-    echo 'body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:#f5f7fb;color:#172033}a{color:inherit}header{background:#182235;color:#fff;padding:14px 22px;display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap}.brand{font-weight:700}.nav{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.nav a,.nav summary{color:#eaf0ff;text-decoration:none;padding:8px 10px;border-radius:6px;cursor:pointer;list-style:none;user-select:none}.nav a:hover,.nav summary:hover{background:rgba(255,255,255,.12)}.nav details{position:relative}.nav details[open]{z-index:40}.nav details[open] summary{background:rgba(255,255,255,.14)}.nav .menu{position:absolute;left:0;top:calc(100% + 4px);min-width:240px;white-space:nowrap;max-height:calc(100vh - 80px);overflow-y:auto;background:#fff;border:1px solid #d9e1ee;border-radius:8px;box-shadow:0 16px 35px rgba(15,23,42,.18);padding:6px;z-index:50}.nav details:last-of-type .menu{left:auto;right:0}.nav .menu a{display:block;color:#172033;padding:9px 12px;border-radius:6px;text-decoration:none}.nav .menu a:hover{background:#f1f5f9}main{max-width:1180px;margin:0 auto;padding:22px}.auth{max-width:420px;margin:64px auto;background:#fff;padding:24px;border-radius:8px;box-shadow:0 10px 30px rgba(16,24,40,.08)}.panel,.stat{background:#fff;border:1px solid #dfe5ee;border-radius:8px;padding:18px;margin-bottom:16px}.hero{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(260px,.8fr);gap:16px;align-items:stretch}.grid{display:grid;gap:16px}.two{grid-template-columns:repeat(2,minmax(0,1fr))}.three{grid-template-columns:repeat(3,minmax(0,1fr))}.four{grid-template-columns:repeat(4,minmax(0,1fr))}.six{grid-template-columns:repeat(6,minmax(0,1fr))}.split{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}.actions{display:flex;gap:8px;flex-wrap:wrap}.btn{display:inline-block;border:1px solid #c7d0df;background:#fff;color:#172033;text-decoration:none;border-radius:6px;padding:9px 12px;cursor:pointer;font:inherit}.btn.primary{background:#1457d9;border-color:#1457d9;color:#fff}.btn.good{background:#0f8a5f;border-color:#0f8a5f;color:#fff}.btn.danger{background:#b91c1c;border-color:#b91c1c;color:#fff}label{display:block;font-weight:600;margin:12px 0 6px}input,select,textarea{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:6px;padding:9px;font:inherit}textarea{min-height:120px}table{width:100%;border-collapse:collapse;background:#fff}th,td{border-bottom:1px solid #e2e8f0;text-align:left;padding:10px;vertical-align:top}th{background:#f8fafc}.badge{display:inline-block;border-radius:999px;background:#e8eef7;padding:4px 8px;font-size:12px}.badge.ok{background:#dcfce7;color:#166534}.badge.danger{background:#fee2e2;color:#991b1b}.muted{color:#64748b}.flash{padding:12px 14px;border-radius:6px;margin-bottom:16px;background:#e7f7ef;color:#14532d}.flash.err{background:#fee2e2;color:#991b1b}.stat strong{display:block;font-size:36px}.stat span{font-size:13px}.label-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}.photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}.photo-grid img{width:100%;border-radius:6px;border:1px solid #d9e1ee}.qr-label{break-inside:avoid;background:#fff;border:1px solid #222;padding:12px;display:flex;flex-direction:column;gap:4px}.qr-box{display:grid;grid-template-columns:repeat(9,1fr);gap:2px;width:126px;height:126px;margin:8px 0}.qr-box i,.qr-box span{display:block}.qr-box i{background:#111}.qr-box span{background:#fff}@media(max-width:820px){.hero,.two,.three,.four,.six{grid-template-columns:1fr}.nav details{position:static}.nav .menu{position:static;box-shadow:none;margin-top:4px;white-space:normal}main{padding:14px}table{display:block;overflow-x:auto}}@media print{header,.no-print,.btn{display:none!important}body{background:#fff}main{max-width:none;padding:0}.qr-label{page-break-inside:avoid}}';
-    echo '.qr-img{width:126px;height:126px;object-fit:contain;margin:8px 0;display:block}.nav .menu summary{display:flex;align-items:center;justify-content:space-between;color:#172033;padding:9px 12px;cursor:pointer;user-select:none;font-weight:600;border-radius:6px}.nav .menu summary:hover{background:#f1f5f9}.nav .menu summary::after{content:"▾";font-size:11px;color:#64748b;margin-left:10px;transition:transform .2s}.nav .menu details[open]>summary::after{transform:rotate(180deg)}.nav .menu details{position:static}.nav .menu details .submenu{border-left:3px solid #dbe5f3;margin:0 6px 6px 12px;padding-left:6px}.nav .menu details .submenu a{padding:8px 10px}';
-    echo '</style></head><body><header><div class="brand">PcConnect</div>';
+    $appName = app_name();
+    echo '<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . e($title) . ' - ' . e($appName) . '</title><style>';
+    echo ':root{--sidebar-w:260px;--sidebar-collapsed-w:68px;--primary:#1457d9;--primary-hover:#0f46b3;--bg:#f5f7fb;--text:#1e293b;--sidebar-bg:#0f172a;--sidebar-hover:#1e293b;--sidebar-active:#1d4ed8;--sidebar-text:#94a3b8;--sidebar-text-active:#f8fafc;--border:#e2e8f0}';
+    echo '*{box-sizing:border-box}body{margin:0;font-family:Segoe UI,-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}a{color:inherit;text-decoration:none}';
+    echo '.app-layout{display:flex;min-height:100vh;width:100%}';
+    // Sidebar styles
+    echo '.sidebar{width:var(--sidebar-w);background:var(--sidebar-bg);color:var(--sidebar-text);flex-shrink:0;position:fixed;top:0;bottom:0;left:0;z-index:100;display:flex;flex-direction:column;transition:width .22s cubic-bezier(0.4,0,0.2,1);box-shadow:2px 0 10px rgba(0,0,0,.15);user-select:none;overflow-x:hidden}';
+    echo '.sidebar-header{height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid rgba(255,255,255,.08);flex-shrink:0}';
+    echo '.brand-link{display:flex;align-items:center;gap:12px;font-weight:700;font-size:17px;color:#fff;overflow:hidden;white-space:nowrap}';
+    echo '.brand-logo{width:36px;height:36px;background:linear-gradient(135deg,#2563eb,#38bdf8);border-radius:9px;display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;box-shadow:0 4px 12px rgba(37,99,235,.35)}';
+    echo '.brand-text{transition:opacity .2s,width .2s}';
+    echo '.collapse-btn{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#94a3b8;width:28px;height:28px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;transition:all .15s;padding:0}';
+    echo '.collapse-btn:hover{background:rgba(255,255,255,.15);color:#fff}';
+    echo '.sidebar-nav{flex:1;overflow-y:auto;overflow-x:hidden;padding:12px 10px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}';
+    echo '.sidebar-nav::-webkit-scrollbar{width:4px}.sidebar-nav::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:4px}';
+    echo '.nav-group-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#64748b;padding:10px 10px 4px 10px;margin-top:6px;white-space:nowrap}';
+    echo '.nav-item{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:8px;color:#cbd5e1;font-size:13px;font-weight:500;transition:all .15s;margin-bottom:2px;cursor:pointer;white-space:nowrap;position:relative}';
+    echo '.nav-item:hover{background:var(--sidebar-hover);color:#fff}';
+    echo '.nav-item.active{background:var(--sidebar-active);color:#fff;font-weight:600}';
+    echo '.nav-icon{width:20px;height:20px;flex-shrink:0;display:flex;align-items:center;justify-content:center}';
+    echo '.nav-icon svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}';
+    echo '.nav-label{flex:1;overflow:hidden;text-overflow:ellipsis}';
+    echo '.nav-chevron{width:16px;height:16px;transition:transform .2s;display:flex;align-items:center;justify-content:center;font-size:10px;color:#64748b}';
+    echo '.nav-accordion{margin-bottom:2px}';
+    echo '.nav-accordion[open]>.nav-item .nav-chevron{transform:rotate(90deg)}';
+    echo '.nav-submenu{padding:2px 0 2px 28px;display:flex;flex-direction:column;gap:1px}';
+    echo '.nav-submenu .nav-item{padding:7px 10px;font-size:12.5px;color:#94a3b8}';
+    echo '.nav-submenu .nav-item:hover{color:#fff}';
+    echo '.nav-badge{background:rgba(37,99,235,.2);color:#60a5fa;border:1px solid rgba(37,99,235,.4);padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700}';
+    // User profile footer in sidebar
+    echo '.sidebar-user{padding:12px 14px;border-top:1px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.2);flex-shrink:0;overflow:hidden}';
+    echo '.user-avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#475569,#334155);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;border:1px solid rgba(255,255,255,.15)}';
+    echo '.user-info{flex:1;min-width:0;overflow:hidden}';
+    echo '.user-name{font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}';
+    echo '.user-role{font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}';
+    echo '.logout-btn{background:transparent;border:none;color:#94a3b8;cursor:pointer;padding:6px;border-radius:6px;display:flex;align-items:center;justify-content:center;transition:all .15s}';
+    echo '.logout-btn:hover{background:rgba(239,68,68,.15);color:#ef4444}';
+    // Collapsed state behavior
+    echo '.app-layout.collapsed .sidebar{width:var(--sidebar-collapsed-w)}';
+    echo '.app-layout.collapsed .brand-text,.app-layout.collapsed .nav-label,.app-layout.collapsed .nav-chevron,.app-layout.collapsed .nav-group-label,.app-layout.collapsed .user-info,.app-layout.collapsed .nav-submenu{display:none!important}';
+    echo '.app-layout.collapsed .sidebar-header{padding:0;justify-content:center}';
+    echo '.app-layout.collapsed .collapse-btn{display:none}';
+    echo '.app-layout.collapsed .nav-item{justify-content:center;padding:10px 0}';
+    echo '.app-layout.collapsed .sidebar-user{padding:10px 0;justify-content:center}';
+    // Main wrapper styles
+    echo '.main-wrapper{flex:1;margin-left:var(--sidebar-w);transition:margin-left .22s cubic-bezier(0.4,0,0.2,1);min-width:0;display:flex;flex-direction:column;min-height:100vh}';
+    echo '.app-layout.collapsed .main-wrapper{margin-left:var(--sidebar-collapsed-w)}';
+    echo '.topbar{height:60px;background:#fff;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:90;box-shadow:0 1px 3px rgba(0,0,0,.02)}';
+    echo '.topbar-left{display:flex;align-items:center;gap:14px}';
+    echo '.topbar-toggle{background:#f1f5f9;border:1px solid #cbd5e1;color:#334155;border-radius:6px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}';
+    echo '.topbar-title{font-size:17px;font-weight:700;color:#0f172a;margin:0}';
+    echo '.topbar-right{display:flex;align-items:center;gap:10px}';
+    echo 'main{flex:1;max-width:1320px;width:100%;margin:0 auto;padding:24px}';
+    // Reusable components
+    echo '.panel,.stat{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:20px;margin-bottom:18px;box-shadow:0 1px 3px rgba(0,0,0,.04)}';
+    echo '.hero{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(260px,.8fr);gap:16px;align-items:stretch}';
+    echo '.grid{display:grid;gap:16px}';
+    echo '.two{grid-template-columns:repeat(2,minmax(0,1fr))}.three{grid-template-columns:repeat(3,minmax(0,1fr))}.four{grid-template-columns:repeat(4,minmax(0,1fr))}.six{grid-template-columns:repeat(6,minmax(0,1fr))}';
+    echo '.split{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}';
+    echo '.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}';
+    echo '.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #cbd5e1;background:#fff;color:#1e293b;text-decoration:none;border-radius:7px;padding:8px 14px;cursor:pointer;font:inherit;font-size:13px;font-weight:600;transition:all .15s}';
+    echo '.btn:hover{background:#f8fafc;border-color:#94a3b8}';
+    echo '.btn.primary{background:#1457d9;border-color:#1457d9;color:#fff}.btn.primary:hover{background:#0f46b3}';
+    echo '.btn.good{background:#0f8a5f;border-color:#0f8a5f;color:#fff}.btn.good:hover{background:#0b6b4a}';
+    echo '.btn.danger{background:#dc2626;border-color:#dc2626;color:#fff}.btn.danger:hover{background:#b91c1c}';
+    echo 'label{display:block;font-weight:600;margin:12px 0 6px;font-size:13px;color:#334155}';
+    echo 'input,select,textarea{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:7px;padding:9px 12px;font:inherit;font-size:13px;background:#fff;transition:border-color .15s,box-shadow .15s}';
+    echo 'input:focus,select:focus,textarea:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.15)}';
+    echo 'textarea{min-height:120px}';
+    echo 'table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden}';
+    echo 'th,td{border-bottom:1px solid #e2e8f0;text-align:left;padding:11px 14px;vertical-align:middle;font-size:13px}';
+    echo 'th{background:#f8fafc;font-weight:600;color:#475569;text-transform:uppercase;font-size:11.5px;letter-spacing:.04em}';
+    echo 'tr:hover td{background:#fbfcfe}';
+    echo '.badge{display:inline-flex;align-items:center;border-radius:999px;background:#e2e8f0;color:#475569;padding:3px 10px;font-size:11.5px;font-weight:600}';
+    echo '.badge.ok{background:#dcfce7;color:#15803d}';
+    echo '.badge.danger{background:#fee2e2;color:#b91c1c}';
+    echo '.muted{color:#64748b}';
+    echo '.flash{padding:12px 16px;border-radius:8px;margin-bottom:18px;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;font-weight:500;display:flex;align-items:center;gap:10px}';
+    echo '.flash.err{background:#fef2f2;color:#991b1b;border-color:#fecaca}';
+    echo '.stat strong{display:block;font-size:32px;font-weight:800;color:#0f172a;line-height:1.2}';
+    echo '.stat span{font-size:12.5px;color:#64748b;font-weight:600}';
+    echo '.label-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}';
+    echo '.photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}';
+    echo '.photo-grid img{width:100%;border-radius:8px;border:1px solid #e2e8f0}';
+    echo '.qr-label{break-inside:avoid;background:#fff;border:1px solid #222;padding:12px;display:flex;flex-direction:column;gap:4px}';
+    echo '.qr-box{display:grid;grid-template-columns:repeat(9,1fr);gap:2px;width:126px;height:126px;margin:8px 0}.qr-box i{background:#111}.qr-box span{background:#fff}';
+    echo '.qr-img{width:126px;height:126px;object-fit:contain;margin:8px 0;display:block}';
+    // Mobile responsive
+    echo '@media(max-width:900px){.sidebar{transform:translateX(-100%);transition:transform .25s ease}.sidebar.mobile-open{transform:translateX(0)}.sidebar-overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:99}.sidebar-overlay.active{display:block}.main-wrapper,.app-layout.collapsed .main-wrapper{margin-left:0;width:100%}.hero,.two,.three,.four,.six{grid-template-columns:1fr}main{padding:14px}table{display:block;overflow-x:auto}}';
+    echo '@media print{.sidebar,.topbar,.no-print,.btn{display:none!important}body{background:#fff}.main-wrapper{margin-left:0!important}main{max-width:none;padding:0}.qr-label{page-break-inside:avoid}}';
+    echo '</style></head><body>';
+
     if ($user) {
-        echo '<nav class="nav">';
-        if (is_full_admin($user)) {
-            echo '<a href="' . route_url('dashboard') . '">Dashboard</a>';
-            echo '<details name="nav_top"><summary>Maintenance</summary><div class="menu"><details><summary>Preventive Maintenance</summary><div class="submenu"><a href="' . route_url('maintenance') . '">Schedule Maintenance</a></div></details><details><summary>Corrective & Service</summary><div class="submenu"><a href="' . route_url('tickets') . '">Tiket & Troubleshooting</a><a href="' . route_url('mobile_service') . '" target="_blank">📱 Mobile Field Service (Teknisi)</a><a href="' . route_url('walkarounds') . '">Patroli / Walkaround</a></div></details></div></details>';
-            echo '<details name="nav_top"><summary>Reports</summary><div class="menu"><a href="' . route_url('reports') . '">Report Preventive Maintenance</a><a href="' . route_url('maintenance_status_report') . '">Report Status PC/Printer</a><a href="' . route_url('corrective_repairs') . '">Report Corrective Maintenance</a><a href="' . route_url('asset_movements') . '">Report Mutasi Aset</a><a href="' . route_url('report_asset_loans') . '">Report Peminjaman Aset</a></div></details>';
-            echo '<details name="nav_top"><summary>Manajemen Aset</summary><div class="menu"><a href="' . route_url('asset_items') . '">Unit Aset</a><a href="' . route_url('asset_loans') . '">Peminjaman Aset</a><a href="' . route_url('mobile_asset_loans') . '" target="_blank">📱 Peminjaman Aset (Mobile)</a><a href="' . route_url('pcs') . '">Pendataan Khusus Computer</a><a href="' . route_url('asset_movements') . '">Mutasi / Tukar Pasang</a></div></details>';
-            echo '<details name="nav_top"><summary>Setup</summary><div class="menu"><details><summary>Master</summary><div class="submenu"><details><summary>Aset</summary><div class="submenu"><a href="' . route_url('asset_groups') . '">Master Komoditas</a><a href="' . route_url('asset_types') . '">Master Kategori</a><a href="' . route_url('asset_brands') . '">Master Brand / Merk</a><a href="' . route_url('asset_master_items') . '">Master Barang (Katalog Model)</a><a href="' . route_url('asset_locations') . '">Master Lokasi</a><a href="' . route_url('asset_identifiers') . '">Identifier Aset</a><a href="' . route_url('asset_specifications') . '">Spesifikasi Aset</a></div></details><details><summary>Preventive Maintenance</summary><div class="submenu"><a href="' . route_url('jobs') . '">Job Desk Preventive Maintenance</a><a href="' . route_url('asset_maintenance_templates') . '">Template Maintenance</a></div></details><details><summary>Corrective Maintenance</summary><div class="submenu"><a href="' . route_url('corrective_job_desks') . '">Job Desk Corrective Maintenance</a></div></details><a href="' . route_url('asset_companies') . '">Company</a><a href="' . route_url('master_pengguna') . '">Master Pengguna</a><a href="' . route_url('users') . '">Users</a></div></details><a href="' . route_url('employee_source') . '">Employee & Company Source</a><a href="' . route_url('labels') . '">QR Label Unit Aset</a></div></details>';
-        } elseif (can_manage_maintenance($user)) {
-            echo '<a href="' . route_url('dashboard') . '">Dashboard</a>';
-            echo '<details name="nav_top"><summary>Maintenance</summary><div class="menu"><details><summary>Preventive Maintenance</summary><div class="submenu"><a href="' . route_url('maintenance') . '">Schedule Maintenance</a></div></details><details><summary>Corrective & Service</summary><div class="submenu"><a href="' . route_url('tickets') . '">Tiket & Troubleshooting</a><a href="' . route_url('mobile_service') . '" target="_blank">📱 Mobile Field Service (Teknisi)</a><a href="' . route_url('walkarounds') . '">Patroli / Walkaround</a></div></details></div></details>';
-            echo '<details name="nav_top"><summary>Manajemen Aset</summary><div class="menu"><a href="' . route_url('asset_items') . '">Unit Aset</a><a href="' . route_url('asset_loans') . '">Peminjaman Aset</a><a href="' . route_url('mobile_asset_loans') . '" target="_blank">📱 Peminjaman Aset (Mobile)</a></div></details>';
-            echo '<details name="nav_top"><summary>Reports</summary><div class="menu"><a href="' . route_url('reports') . '">Report Preventive Maintenance</a><a href="' . route_url('maintenance_status_report') . '">Report Status PC/Printer</a><a href="' . route_url('corrective_repairs') . '">Report Corrective Maintenance</a><a href="' . route_url('asset_movements') . '">Report Mutasi Aset</a><a href="' . route_url('report_asset_loans') . '">Report Peminjaman Aset</a></div></details>';
-        } elseif (($user['role'] ?? '') === 'loan_officer') {
-            echo '<a href="' . route_url('mobile_asset_loans') . '">📱 Mobile Peminjaman</a>';
-            echo '<details name="nav_top"><summary>Manajemen Aset</summary><div class="menu"><a href="' . route_url('asset_loans') . '">Peminjaman Aset</a><a href="' . route_url('mobile_asset_loans') . '" target="_blank">📱 Peminjaman Aset (Mobile)</a></div></details>';
-            echo '<details name="nav_top"><summary>Reports</summary><div class="menu"><a href="' . route_url('report_asset_loans') . '">Report Peminjaman Aset</a></div></details>';
-        } else {
-            echo '<details name="nav_top"><summary>Maintenance</summary><div class="menu"><details><summary>Preventive Maintenance</summary><div class="submenu"><a href="' . route_url('maintenance') . '">Schedule Maintenance</a></div></details><details><summary>Corrective & Service</summary><div class="submenu"><a href="' . route_url('tickets') . '">Tiket & Troubleshooting</a><a href="' . route_url('mobile_service') . '" target="_blank">📱 Mobile Field Service (Teknisi)</a><a href="' . route_url('walkarounds') . '">Patroli / Walkaround</a></div></details></div></details>';
-            echo '<details name="nav_top"><summary>Manajemen Aset</summary><div class="menu"><a href="' . route_url('asset_loans') . '">Peminjaman Aset</a><a href="' . route_url('mobile_asset_loans') . '" target="_blank">📱 Peminjaman Aset (Mobile)</a></div></details>';
-            echo '<details name="nav_top"><summary>Reports</summary><div class="menu"><a href="' . route_url('reports') . '">Report Preventive Maintenance</a><a href="' . route_url('maintenance_status_report') . '">Report Status PC/Printer</a><a href="' . route_url('corrective_repairs') . '">Report Corrective Maintenance</a><a href="' . route_url('asset_movements') . '">Report Mutasi Aset</a><a href="' . route_url('report_asset_loans') . '">Report Peminjaman Aset</a></div></details>';
+        $curRoute = (string)($_GET['route'] ?? 'dashboard');
+        $isAdmin = is_full_admin($user);
+        $role = (string)($user['role'] ?? '');
+
+        // SVG Icon Helpers
+        $svgBox = '<svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>';
+        $svgDash = '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>';
+        $svgLayers = '<svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>';
+        $svgPc = '<svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>';
+        $svgPrn = '<svg viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>';
+        $svgLoan = '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>';
+        $svgTool = '<svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>';
+        $svgTicket = '<svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>';
+        $svgPatrol = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>';
+        $svgMove = '<svg viewBox="0 0 24 24"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>';
+        $svgChart = '<svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>';
+        $svgUsers = '<svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>';
+        $svgShield = '<svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><polyline points="9 12 11 14 15 10"></polyline></svg>';
+        $svgCog = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>';
+        $svgQr = '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect><line x1="14" y1="14" x2="14" y2="14.01"></line><line x1="18" y1="14" x2="18" y2="18"></line><line x1="14" y1="18" x2="18" y2="18"></line></svg>';
+        $svgMobile = '<svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>';
+        $svgLogout = '<svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>';
+
+        echo '<div class="app-layout" id="appLayout">';
+        echo '<div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleMobileSidebar()"></div>';
+        echo '<aside class="sidebar" id="appSidebar">';
+        echo '<div class="sidebar-header">';
+        echo '  <a class="brand-link" href="' . route_url('dashboard') . '">';
+        echo '    <div class="brand-logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg></div>';
+        echo '    <span class="brand-text">' . e($appName) . '</span>';
+        echo '  </a>';
+        echo '  <button class="collapse-btn" id="sidebarCollapseBtn" onclick="toggleSidebarCollapse()" title="Collapse / Expand Sidebar">«</button>';
+        echo '</div>';
+
+        echo '<nav class="sidebar-nav">';
+
+        // Dashboard
+        if ($isAdmin || can_manage_maintenance($user)) {
+            $act = $curRoute === 'dashboard' ? ' active' : '';
+            echo '<a class="nav-item' . $act . '" href="' . route_url('dashboard') . '" title="Dashboard"><span class="nav-icon">' . $svgDash . '</span><span class="nav-label">Dashboard</span></a>';
         }
-        echo '<a href="' . route_url('logout') . '">Logout</a></nav>';
-        echo '<script>'
-            . 'var navDetails = document.querySelectorAll(".nav>details");'
-            . 'document.addEventListener("click",function(e){if(!e.target.closest(".nav details")){navDetails.forEach(function(d){d.removeAttribute("open")})}});'
-            . 'navDetails.forEach(function(d){'
-            . 'd.addEventListener("toggle",function(){if(d.open){navDetails.forEach(function(other){if(other!==d)other.removeAttribute("open")})}});'
-            . 'd.addEventListener("mouseenter",function(){var anyOpen=Array.from(navDetails).some(function(x){return x.open});if(anyOpen&&!d.open){navDetails.forEach(function(x){x.removeAttribute("open")});d.setAttribute("open","")}});'
-            . '});'
-            . 'document.querySelectorAll(".nav .menu a").forEach(function(a){a.addEventListener("click",function(){var top=a.closest(".nav>details");if(top)top.removeAttribute("open")})});'
-            . 'document.addEventListener("keydown",function(e){if(e.key==="Escape"){navDetails.forEach(function(d){d.removeAttribute("open")})}});'
-            . '</script>';
+
+        // Master Accordion
+        $masterRoutes = ['asset_items', 'pcs', 'printers', 'master_pengguna', 'asset_companies', 'asset_groups', 'asset_types', 'asset_brands', 'asset_master_items', 'asset_locations', 'asset_identifiers', 'asset_specifications', 'jobs', 'asset_maintenance_templates', 'corrective_job_desks', 'users', 'labels'];
+        $isMasterOpen = in_array($curRoute, $masterRoutes, true);
+        echo '<details class="nav-accordion"' . ($isMasterOpen ? ' open' : '') . '>';
+        echo '  <summary class="nav-item" title="Data Master"><span class="nav-icon">' . $svgLayers . '</span><span class="nav-label">Data Master</span><span class="nav-chevron">▶</span></summary>';
+        echo '  <div class="nav-submenu">';
+        if ($isAdmin || has_regulation('asset_items', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_items' ? ' active' : '') . '" href="' . route_url('asset_items') . '"><span class="nav-icon">' . $svgBox . '</span><span class="nav-label">Unit Aset</span></a>';
+        }
+        if ($isAdmin || has_regulation('pcs', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'pcs' ? ' active' : '') . '" href="' . route_url('pcs') . '"><span class="nav-icon">' . $svgPc . '</span><span class="nav-label">Pendataan PC</span></a>';
+        }
+        if ($isAdmin || has_regulation('printers', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'printers' ? ' active' : '') . '" href="' . route_url('printers') . '"><span class="nav-icon">' . $svgPrn . '</span><span class="nav-label">Printer & Scanner</span></a>';
+        }
+        if ($isAdmin || has_regulation('master_pengguna', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'master_pengguna' ? ' active' : '') . '" href="' . route_url('master_pengguna') . '"><span class="nav-icon">' . $svgUsers . '</span><span class="nav-label">Master Pengguna</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_companies', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_companies' ? ' active' : '') . '" href="' . route_url('asset_companies') . '"><span class="nav-icon">' . $svgShield . '</span><span class="nav-label">Company</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_groups', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_groups' ? ' active' : '') . '" href="' . route_url('asset_groups') . '"><span class="nav-icon">' . $svgLayers . '</span><span class="nav-label">Master Komoditas</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_types', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_types' ? ' active' : '') . '" href="' . route_url('asset_types') . '"><span class="nav-icon">' . $svgLayers . '</span><span class="nav-label">Master Kategori</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_brands', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_brands' ? ' active' : '') . '" href="' . route_url('asset_brands') . '"><span class="nav-icon">' . $svgBox . '</span><span class="nav-label">Master Brand</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_master_items', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_master_items' ? ' active' : '') . '" href="' . route_url('asset_master_items') . '"><span class="nav-icon">' . $svgBox . '</span><span class="nav-label">Master Barang</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_locations', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_locations' ? ' active' : '') . '" href="' . route_url('asset_locations') . '"><span class="nav-icon">' . $svgPatrol . '</span><span class="nav-label">Master Lokasi</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_identifiers', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_identifiers' ? ' active' : '') . '" href="' . route_url('asset_identifiers') . '"><span class="nav-icon">' . $svgQr . '</span><span class="nav-label">Identifier Aset</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_specifications', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_specifications' ? ' active' : '') . '" href="' . route_url('asset_specifications') . '"><span class="nav-icon">' . $svgTool . '</span><span class="nav-label">Spesifikasi Aset</span></a>';
+        }
+        if ($isAdmin || has_regulation('jobs', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'jobs' ? ' active' : '') . '" href="' . route_url('jobs') . '"><span class="nav-icon">' . $svgTool . '</span><span class="nav-label">Job Desk PM</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_maintenance_templates', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_maintenance_templates' ? ' active' : '') . '" href="' . route_url('asset_maintenance_templates') . '"><span class="nav-icon">' . $svgLayers . '</span><span class="nav-label">Template Maintenance</span></a>';
+        }
+        if ($isAdmin || has_regulation('corrective_job_desks', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'corrective_job_desks' ? ' active' : '') . '" href="' . route_url('corrective_job_desks') . '"><span class="nav-icon">' . $svgTicket . '</span><span class="nav-label">Job Desk Corrective</span></a>';
+        }
+        if ($isAdmin || has_regulation('users', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'users' ? ' active' : '') . '" href="' . route_url('users') . '"><span class="nav-icon">' . $svgUsers . '</span><span class="nav-label">Users</span></a>';
+        }
+        if ($isAdmin || has_regulation('labels', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'labels' ? ' active' : '') . '" href="' . route_url('labels') . '"><span class="nav-icon">' . $svgQr . '</span><span class="nav-label">QR Label Unit</span></a>';
+        }
+        echo '  </div>';
+        echo '</details>';
+
+        // Transaksi Accordion
+        $transRoutes = ['asset_loans', 'mobile_asset_loans', 'maintenance', 'tickets', 'walkarounds', 'asset_movements', 'mobile_service'];
+        $isTransOpen = in_array($curRoute, $transRoutes, true);
+        echo '<details class="nav-accordion"' . ($isTransOpen ? ' open' : '') . '>';
+        echo '  <summary class="nav-item" title="Transaksi Aset"><span class="nav-icon">' . $svgTool . '</span><span class="nav-label">Transaksi Aset</span><span class="nav-chevron">▶</span></summary>';
+        echo '  <div class="nav-submenu">';
+        if ($isAdmin || has_regulation('asset_loans', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_loans' ? ' active' : '') . '" href="' . route_url('asset_loans') . '"><span class="nav-icon">' . $svgLoan . '</span><span class="nav-label">Peminjaman Aset</span></a>';
+            echo '<a class="nav-item" href="' . route_url('mobile_asset_loans') . '" target="_blank"><span class="nav-icon">' . $svgMobile . '</span><span class="nav-label">📱 Mobile Pinjam</span><span class="nav-badge">PWA</span></a>';
+        }
+        if ($isAdmin || has_regulation('maintenance', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'maintenance' ? ' active' : '') . '" href="' . route_url('maintenance') . '"><span class="nav-icon">' . $svgTool . '</span><span class="nav-label">Schedule PM</span></a>';
+        }
+        if ($isAdmin || has_regulation('tickets', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'tickets' ? ' active' : '') . '" href="' . route_url('tickets') . '"><span class="nav-icon">' . $svgTicket . '</span><span class="nav-label">Tiket Corrective</span></a>';
+            echo '<a class="nav-item" href="' . route_url('mobile_service') . '" target="_blank"><span class="nav-icon">' . $svgMobile . '</span><span class="nav-label">📱 Mobile Service</span><span class="nav-badge">PWA</span></a>';
+        }
+        if ($isAdmin || has_regulation('walkarounds', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'walkarounds' ? ' active' : '') . '" href="' . route_url('walkarounds') . '"><span class="nav-icon">' . $svgPatrol . '</span><span class="nav-label">Patroli Walkaround</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_movements', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_movements' ? ' active' : '') . '" href="' . route_url('asset_movements') . '"><span class="nav-icon">' . $svgMove . '</span><span class="nav-label">Mutasi / Tukar Pasang</span></a>';
+        }
+        echo '  </div>';
+        echo '</details>';
+
+        // Reports Accordion
+        $reportRoutes = ['reports', 'maintenance_status_report', 'corrective_repairs', 'report_asset_loans'];
+        $isReportOpen = in_array($curRoute, $reportRoutes, true);
+        echo '<details class="nav-accordion"' . ($isReportOpen ? ' open' : '') . '>';
+        echo '  <summary class="nav-item" title="Laporan & Report"><span class="nav-icon">' . $svgChart . '</span><span class="nav-label">Laporan & Report</span><span class="nav-chevron">▶</span></summary>';
+        echo '  <div class="nav-submenu">';
+        echo '<a class="nav-item' . ($curRoute === 'reports' ? ' active' : '') . '" href="' . route_url('reports') . '"><span class="nav-icon">' . $svgChart . '</span><span class="nav-label">Report PM</span></a>';
+        echo '<a class="nav-item' . ($curRoute === 'maintenance_status_report' ? ' active' : '') . '" href="' . route_url('maintenance_status_report') . '"><span class="nav-icon">' . $svgChart . '</span><span class="nav-label">Report Status PC/PRN</span></a>';
+        echo '<a class="nav-item' . ($curRoute === 'corrective_repairs' ? ' active' : '') . '" href="' . route_url('corrective_repairs') . '"><span class="nav-icon">' . $svgChart . '</span><span class="nav-label">Report Corrective</span></a>';
+        echo '<a class="nav-item' . ($curRoute === 'report_asset_loans' ? ' active' : '') . '" href="' . route_url('report_asset_loans') . '"><span class="nav-icon">' . $svgChart . '</span><span class="nav-label">Report Peminjaman</span></a>';
+        echo '  </div>';
+        echo '</details>';
+
+        // Setup Accordion (Admin only)
+        if ($isAdmin) {
+            $setupRoutes = ['setup_regulations', 'employee_source'];
+            $isSetupOpen = in_array($curRoute, $setupRoutes, true);
+            echo '<details class="nav-accordion"' . ($isSetupOpen ? ' open' : '') . '>';
+            echo '  <summary class="nav-item" title="Pengaturan Sistem"><span class="nav-icon">' . $svgCog . '</span><span class="nav-label">Pengaturan & Setup</span><span class="nav-chevron">▶</span></summary>';
+            echo '  <div class="nav-submenu">';
+            echo '<a class="nav-item' . ($curRoute === 'setup_regulations' ? ' active' : '') . '" href="' . route_url('setup_regulations') . '"><span class="nav-icon">' . $svgShield . '</span><span class="nav-label">Regulasi Hak Akses</span></a>';
+            echo '<a class="nav-item' . ($curRoute === 'employee_source' ? ' active' : '') . '" href="' . route_url('employee_source') . '"><span class="nav-icon">' . $svgCog . '</span><span class="nav-label">Employee Source</span></a>';
+            echo '  </div>';
+            echo '</details>';
+        }
+
+        echo '</nav>'; // End sidebar-nav
+
+        // Sidebar user profile footer
+        $initial = strtoupper(substr((string)($user['name'] ?? 'U'), 0, 1));
+        $roleLabel = match ($role) {
+            'admin' => 'Administrator',
+            'maintenance_admin' => 'Admin Maintenance',
+            'technician' => 'Teknisi PM',
+            'corrective_maintenance' => 'Corrective Maint.',
+            'loan_officer' => 'Petugas Peminjaman',
+            default => $role,
+        };
+        echo '<div class="sidebar-user">';
+        echo '  <div class="user-avatar">' . e($initial) . '</div>';
+        echo '  <div class="user-info">';
+        echo '    <div class="user-name">' . e($user['name'] ?? 'User') . '</div>';
+        echo '    <div class="user-role">' . e($roleLabel) . '</div>';
+        echo '  </div>';
+        echo '  <a class="logout-btn" href="' . route_url('logout') . '" title="Logout"><span style="width:18px;height:18px;">' . $svgLogout . '</span></a>';
+        echo '</div>';
+
+        echo '</aside>'; // End sidebar
+
+        // Main content wrapper
+        echo '<div class="main-wrapper">';
+        echo '<header class="topbar">';
+        echo '  <div class="topbar-left">';
+        echo '    <button class="topbar-toggle" onclick="toggleMobileSidebar()" title="Buka Menu" style="display:none;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg></button>';
+        echo '    <h1 class="topbar-title">' . e($title) . '</h1>';
+        echo '  </div>';
+        echo '  <div class="topbar-right">';
+        echo '    <span class="badge ok">' . e($roleLabel) . '</span>';
+        echo '    <span style="font-size:13px;font-weight:600;color:#334155;">' . e($user['name'] ?? '') . '</span>';
+        echo '  </div>';
+        echo '</header>';
+        echo '<main>';
+    } else {
+        echo '<main style="max-width:100%;padding:0;">';
     }
-    echo '</header><main>';
+
     if ($flash) {
         echo '<div class="flash ' . e($flash['type']) . '">' . e($flash['message']) . '</div>';
     }
 }
 
+function render_footer(): void
+{
+    echo '</main>';
+    $user = current_user();
+    if ($user) {
+        echo '</div></div>'; // End main-wrapper and app-layout
+        echo '<script>
+        function applySidebarState() {
+            var isCollapsed = localStorage.getItem("asetconnect_sidebar_collapsed") === "1";
+            var layout = document.getElementById("appLayout");
+            var btn = document.getElementById("sidebarCollapseBtn");
+            if (layout) {
+                if (isCollapsed) {
+                    layout.classList.add("collapsed");
+                    if (btn) btn.innerHTML = "»";
+                } else {
+                    layout.classList.remove("collapsed");
+                    if (btn) btn.innerHTML = "«";
+                }
+            }
+        }
+        function toggleSidebarCollapse() {
+            var layout = document.getElementById("appLayout");
+            var btn = document.getElementById("sidebarCollapseBtn");
+            if (!layout) return;
+            var isCollapsed = layout.classList.toggle("collapsed");
+            localStorage.setItem("asetconnect_sidebar_collapsed", isCollapsed ? "1" : "0");
+            if (btn) btn.innerHTML = isCollapsed ? "»" : "«";
+        }
+        function toggleMobileSidebar() {
+            var sidebar = document.getElementById("appSidebar");
+            var overlay = document.getElementById("sidebarOverlay");
+            if (sidebar) sidebar.classList.toggle("mobile-open");
+            if (overlay) overlay.classList.toggle("active");
+        }
+        applySidebarState();
+        if (window.innerWidth <= 900) {
+            var toggleBtn = document.querySelector(".topbar-toggle");
+            if (toggleBtn) toggleBtn.style.display = "flex";
+        }
+        window.addEventListener("resize", function() {
+            var toggleBtn = document.querySelector(".topbar-toggle");
+            if (toggleBtn) toggleBtn.style.display = window.innerWidth <= 900 ? "flex" : "none";
+        });
+        </script>';
+    }
+    echo '</body></html>';
+}
+
 function render_mobile_header(string $title, ?array $user = null): void
 {
     $flash = flash();
-    echo '<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . e($title) . ' - PcConnect Mobile</title><style>';
+    $appName = app_name();
+    echo '<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . e($title) . ' - ' . e($appName) . ' Mobile</title><style>';
     echo 'body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:#f3f6fb;color:#172033}main{max-width:560px;margin:0 auto;padding:14px 14px 82px}.mobile-top{position:sticky;top:0;z-index:2;background:#172033;color:#fff;padding:14px 16px;font-weight:700}.mobile-nav{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid #d9e1ee;display:grid;grid-template-columns:repeat(4,1fr);z-index:3}.mobile-nav a{text-align:center;text-decoration:none;color:#334155;padding:10px 4px;font-size:13px}.panel,.stat{background:#fff;border:1px solid #dde5f0;border-radius:8px;padding:16px;margin-bottom:12px}.grid{display:grid;gap:12px}.two{grid-template-columns:repeat(2,minmax(0,1fr))}.split{display:flex;justify-content:space-between;gap:10px;align-items:center}.btn{display:inline-block;border:1px solid #c7d0df;background:#fff;color:#172033;text-decoration:none;border-radius:6px;padding:10px 12px;cursor:pointer;font:inherit}.btn.primary{background:#1457d9;border-color:#1457d9;color:#fff}.btn.good{background:#0f8a5f;border-color:#0f8a5f;color:#fff}.btn.danger{background:#b91c1c;border-color:#b91c1c;color:#fff}label{display:block;font-weight:600;margin:10px 0 6px}input,select,textarea{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:6px;padding:10px;font:inherit}textarea{min-height:110px}.badge{display:inline-block;border-radius:999px;background:#e8eef7;padding:4px 8px;font-size:12px}.ok{background:#dcfce7;color:#166534}.danger-text{color:#991b1b}.muted{color:#64748b}.flash{padding:12px;border-radius:6px;margin-bottom:12px;background:#e7f7ef;color:#14532d}.flash.err{background:#fee2e2;color:#991b1b}.readonly{opacity:.72}.check-row{display:grid;grid-template-columns:28px minmax(0,1fr);gap:10px;align-items:start;border-bottom:1px solid #e2e8f0;padding:12px 0}.check-row input[type=checkbox]{width:22px;height:22px;margin:2px 0 0}.check-title{display:block;font-weight:700;line-height:1.35}.check-note-label{font-size:13px;color:#64748b;margin-top:8px}.check-note-label input{margin-top:4px}.scan-video{display:none;width:100%;border-radius:8px;background:#111;margin-bottom:10px}.camera-note{font-size:13px;color:#64748b;margin:8px 0}.photo-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.photo-grid img{width:100%;border-radius:6px;border:1px solid #d9e1ee}.signature-pad{width:100%;height:160px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;touch-action:none}@media(max-width:420px){.two,.photo-grid{grid-template-columns:1fr}}';
-    echo '</style></head><body><div class="mobile-top">PcConnect Mobile</div><main>';
+    echo '</style></head><body><div class="mobile-top">' . e($appName) . ' Mobile</div><main>';
     if ($flash) {
         echo '<div class="flash ' . e($flash['type']) . '">' . e($flash['message']) . '</div>';
     }
@@ -254,11 +673,6 @@ function render_mobile_header(string $title, ?array $user = null): void
             echo '<nav class="mobile-nav"><a href="' . route_url('mobile_dashboard') . '">Dashboard</a><a href="' . route_url('mobile_schedule') . '">Schedule</a><a href="' . route_url('mobile_scan') . '">Scan</a><a href="' . route_url('mobile_history') . '">History</a></nav>';
         }
     }
-}
-
-function render_footer(): void
-{
-    echo '</main></body></html>';
 }
 
 function render_mobile_footer(): void

@@ -938,7 +938,18 @@ function maintenance_status_rows(PDO $pdo, bool $printerReady, string $assetType
 
 function handle_route_maintenance(PDO $pdo): void
 {
-    $user = require_login();
+    $user = require_regulation('maintenance', 'view');
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_schedule') {
+        require_regulation('maintenance', 'delete');
+        $delId = (int)($_POST['id'] ?? 0);
+        if ($delId > 0) {
+            delete_maintenance_schedule($pdo, $delId);
+            flash('Jadwal maintenance berhasil dihapus.');
+        }
+        redirect_to('maintenance');
+    }
+
     render_header('History Preventive Maintenance', $user);
     $printerReady = printer_schema_ready($pdo);
     if (!$printerReady) {
@@ -966,11 +977,9 @@ function handle_route_maintenance(PDO $pdo): void
     } catch (Throwable $e) {
         $rows = $pdo->query("SELECT s.*, s.pc_id asset_id, 'pc' asset_type, p.owner_name, p.computer_name, u.name technician, 'IT Asset' asset_group_name, 'IT' asset_group_code, NULL asset_mode FROM maintenance_schedules s JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = s.pc_id COLLATE utf8mb4_unicode_ci LEFT JOIN users u ON u.id=s.technician_id $where ORDER BY s.scheduled_date DESC, s.id DESC")->fetchAll();
     }
-    echo '<section class="panel"><div class="split"><h1>History Preventive Maintenance</h1><div class="actions"><a class="btn" href="' . route_url('export_excel', ['type' => 'maintenance']) . '">Export Excel</a>';
-    if (can_manage_maintenance($user)) {
-        echo '<a class="btn danger" href="' . route_url('maintenance_cleanup') . '">Hapus Data</a><a class="btn primary" href="' . route_url('schedule_form') . '">Tambah Schedule</a>';
-    }
-    echo '</div></div></section><section class="panel"><table><tr><th>Tanggal</th><th>Asset / ID</th><th>Pengguna / Lokasi</th><th>Asset Group</th><th>Teknisi</th><th>Status</th><th>Foto</th><th>Aksi</th></tr>';
+    $addBtn = has_regulation('maintenance', 'create') ? '<a class="btn primary" href="' . route_url('schedule_form') . '">Tambah Schedule</a>' : '';
+    $cleanupBtn = has_regulation('maintenance', 'delete') ? '<a class="btn danger" href="' . route_url('maintenance_cleanup') . '">Hapus Data</a>' : '';
+    echo '<section class="panel"><div class="split"><h1>History Preventive Maintenance</h1><div class="actions"><a class="btn" href="' . route_url('export_excel', ['type' => 'maintenance']) . '">Export Excel</a>' . $cleanupBtn . $addBtn . '</div></div></section><section class="panel"><table><tr><th>Tanggal</th><th>Asset / ID</th><th>Pengguna / Lokasi</th><th>Asset Group</th><th>Teknisi</th><th>Status</th><th>Foto</th><th>Aksi</th></tr>';
     $scheduleIds = array_filter(array_map('intval', array_column($rows, 'id')));
     $reportsBySchedule = [];
     if ($scheduleIds) {
@@ -993,6 +1002,14 @@ function handle_route_maintenance(PDO $pdo): void
         if (can_manage_maintenance($user) && $row['status'] === 'completed') {
             $actions .= ' <a class="btn" href="' . route_url('report_print', ['id' => $row['id']]) . '">Report</a>';
         }
+        if (has_regulation('maintenance', 'delete')) {
+            $actions .= ' <form method="post" action="' . route_url('maintenance') . '" style="display:inline;" onsubmit="return confirm(\'Hapus jadwal maintenance ini?\');">'
+                . csrf_field()
+                . '<input type="hidden" name="action" value="delete_schedule">'
+                . '<input type="hidden" name="id" value="' . (int)$row['id'] . '">'
+                . '<button type="submit" class="btn danger" style="padding:4px 8px;font-size:12px;">Hapus</button>'
+                . '</form>';
+        }
         $groupBadge = $row['asset_group_code'] ? ($row['asset_group_code'] . ' - ' . $row['asset_group_name']) : ($row['asset_group_name'] ?: 'IT Asset');
         $bundleBadge = ($row['asset_mode'] ?? '') === 'group' ? '<br><span class="badge" style="background:#1e3a8a;color:#fff;font-size:11px;">📦 Induk Bundle</span>' : '';
         echo '<tr><td>' . e($row['scheduled_date']) . '</td><td><strong>' . e($row['asset_id']) . '</strong>' . $bundleBadge . '<br><span class="badge">' . e($row['asset_type'] ?? 'pc') . '</span></td><td>' . e($row['owner_name'] ?: '-') . '<br><span class="muted">' . e($row['computer_name'] ?: '-') . '</span></td><td><span class="badge">' . e($groupBadge) . '</span></td><td>' . e($row['technician'] ?: '-') . '</td><td><span class="badge">' . e($row['status']) . '</span></td><td>Before: ' . e($beforeCount) . '<br>Process: ' . e($processCount) . '<br>After: ' . e($afterCount) . '</td><td>' . $actions . '</td></tr>';
@@ -1003,7 +1020,7 @@ function handle_route_maintenance(PDO $pdo): void
 
 function handle_route_maintenance_cleanup(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin']);
+    $user = require_regulation('maintenance', 'delete');
     $pcFilter = trim((string)($_GET['pc_id'] ?? ''));
     $techFilter = (int)($_GET['technician_id'] ?? 0);
     $statusFilter = trim((string)($_GET['status'] ?? ''));
@@ -1118,7 +1135,7 @@ function handle_route_maintenance_cleanup(PDO $pdo): void
 
 function handle_route_schedule_form(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin']);
+    $user = require_regulation('maintenance', 'create');
     $selectedGroupId = (int)(($_POST['asset_group_id'] ?? $_GET['asset_group_id'] ?? 0));
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $technicianId = (int)($_POST['technician_id'] ?? 0);
@@ -2089,7 +2106,7 @@ function get_standard_preventive_tasks_catalog(PDO $pdo, ?int $groupId, ?int $ty
 
 function handle_route_jobs(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin']);
+    $user = require_regulation('jobs', 'view');
     ensure_preventive_job_desk_schema($pdo);
 
     $editDeskId = (int)($_GET['edit_id'] ?? 0);
@@ -2123,6 +2140,7 @@ function handle_route_jobs(PDO $pdo): void
 
         // --- TAMBAH JOB DESK PREVENTIVE MAINTENANCE ---
         if ($action === 'add_desk') {
+            require_regulation('jobs', 'create');
             $groupId = (int)($_POST['asset_group_id'] ?? 0);
             $typeId = (int)($_POST['asset_type_id'] ?? 0);
 
@@ -2173,6 +2191,7 @@ function handle_route_jobs(PDO $pdo): void
 
         // --- EDIT JOB DESK PREVENTIVE MAINTENANCE ---
         if ($action === 'edit_desk') {
+            require_regulation('jobs', 'edit');
             $deskId = (int)($_POST['desk_id'] ?? 0);
             $origDesk = trim((string)($_POST['original_desk_name'] ?? ''));
             $newDesk = trim((string)($_POST['job_desk_name'] ?? ''));
@@ -2215,6 +2234,7 @@ function handle_route_jobs(PDO $pdo): void
 
         // --- HAPUS JOB DESK PREVENTIVE MAINTENANCE ---
         if ($action === 'delete_desk') {
+            require_regulation('jobs', 'delete');
             $deskId = (int)($_POST['desk_id'] ?? 0);
             $deskName = trim((string)($_POST['job_desk_name'] ?? ''));
 
@@ -2252,6 +2272,7 @@ function handle_route_jobs(PDO $pdo): void
 
         // --- TAMBAH JOB TASK KE JOB DESK ---
         if ($action === 'add_task') {
+            require_regulation('jobs', 'create');
             $manageDeskId = (int)($_POST['manage_desk_id'] ?? 0);
             $stmtDesk = $pdo->prepare('SELECT * FROM preventive_job_desks WHERE id=?');
             $stmtDesk->execute([$manageDeskId]);
@@ -2282,6 +2303,7 @@ function handle_route_jobs(PDO $pdo): void
 
         // --- UPDATE ESTIMASI / NAMA TASK ---
         if ($action === 'update_task') {
+            require_regulation('jobs', 'edit');
             $taskId = (int)($_POST['task_id'] ?? 0);
             $manageDeskId = (int)($_POST['manage_desk_id'] ?? 0);
             $title = trim((string)($_POST['title'] ?? ''));
@@ -2298,6 +2320,7 @@ function handle_route_jobs(PDO $pdo): void
 
         // --- TOGGLE AKTIF / NON-AKTIF TASK ---
         if ($action === 'toggle_task') {
+            require_regulation('jobs', 'edit');
             $taskId = (int)($_POST['id'] ?? 0);
             $manageDeskId = (int)($_POST['manage_desk_id'] ?? 0);
             if ($taskId > 0) {
@@ -2309,6 +2332,7 @@ function handle_route_jobs(PDO $pdo): void
 
         // --- HAPUS JOB TASK ---
         if ($action === 'delete_task') {
+            require_regulation('jobs', 'delete');
             $taskId = (int)($_POST['id'] ?? 0);
             $manageDeskId = (int)($_POST['manage_desk_id'] ?? 0);
             if ($taskId > 0) {
@@ -2327,6 +2351,7 @@ function handle_route_jobs(PDO $pdo): void
 
         // --- SALIN TUGAS STANDAR SESUAI KOMODITAS & KATEGORI ---
         if ($action === 'copy_default_tasks') {
+            require_regulation('jobs', 'create');
             $manageDeskId = (int)($_POST['manage_desk_id'] ?? 0);
             $stmtDesk = $pdo->prepare('SELECT * FROM preventive_job_desks WHERE id=?');
             $stmtDesk->execute([$manageDeskId]);
@@ -2457,51 +2482,59 @@ function handle_route_jobs(PDO $pdo): void
     }
 
     // FORM TAMBAH / EDIT JOB DESK PREVENTIVE MAINTENANCE
+    $canCreateJobs = has_regulation('jobs', 'create');
+    $canEditJobs = has_regulation('jobs', 'edit');
+    $canDeleteJobs = has_regulation('jobs', 'delete');
+    $showDeskForm = ($isEditing && $canEditJobs) || (!$isEditing && $canCreateJobs);
+
     $formTitle = $isEditing ? ('Edit Job Desk Preventive Maintenance #' . $editDeskId) : 'Tambah Job Desk Preventive Maintenance';
     $formAction = $isEditing ? 'edit_desk' : 'add_desk';
 
-    echo '<section class="grid two"><div class="panel">';
-    echo '<div class="split" style="align-items:center;margin-bottom:12px;">'
-        . '<h1 style="margin:0;font-size:18px;">' . e($formTitle) . '</h1>'
-        . ($isEditing ? '<a class="btn" href="' . route_url('jobs', array_filter(['group_id' => $filterGroupId, 'type_id' => $filterTypeId])) . '">+ Tambah Job Desk Baru</a>' : '')
-        . '</div>';
+    echo '<section class="' . ($showDeskForm ? 'grid two' : '') . '">';
+    if ($showDeskForm) {
+        echo '<div class="panel">';
+        echo '<div class="split" style="align-items:center;margin-bottom:12px;">'
+            . '<h1 style="margin:0;font-size:18px;">' . e($formTitle) . '</h1>'
+            . ($isEditing ? '<a class="btn" href="' . route_url('jobs', array_filter(['group_id' => $filterGroupId, 'type_id' => $filterTypeId])) . '">+ Tambah Job Desk Baru</a>' : '')
+            . '</div>';
 
-    echo '<form method="post">'
-        . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
-        . '<input type="hidden" name="action" value="' . $formAction . '">'
-        . ($isEditing ? '<input type="hidden" name="desk_id" value="' . $editDeskId . '">' : '')
-        . ($isEditing ? '<input type="hidden" name="original_desk_name" value="' . e($editDeskName) . '">' : '')
-        . '<div class="grid two">'
-        . '<label>ID Job Desk'
-        . '<input type="text" readonly value="' . ($isEditing ? ('#' . $editDeskId) : '(Otomatis setelah disimpan)') . '" style="background:#f8fafc;color:#64748b;font-weight:700;">'
-        . '</label>'
-        . '<label>Komoditas (Asset Group) *'
-        . '<select id="jobAssetGroup" name="asset_group_id" required>'
-        . '<option value="">- Pilih Komoditas -</option>'
-        . asset_group_options($pdo, $editGroupId, false)
-        . '</select>'
-        . '</label>'
-        . '</div>'
-        . '<div class="grid two">'
-        . '<label>Kategori (Asset Type) *'
-        . '<select id="jobAssetType" name="asset_type_id" required>'
-        . '<option value="">- Pilih Kategori -</option>'
-        . ($editGroupId > 0 ? asset_type_options($pdo, $editTypeId, $editGroupId) : '')
-        . '</select>'
-        . '</label>'
-        . '<label>Deskripsi / Catatan'
-        . '<input name="description" value="' . e($editDesc) . '" placeholder="Keterangan kategori preventive...">'
-        . '</label>'
-        . '</div>'
-        . '<label>Nama Job Desk Preventive Maintenance *'
-        . '<input id="jobDeskName" name="job_desk_name" value="' . e($editDeskName) . '" required style="font-weight:700;color:#0f172a;" placeholder="Job Desk [Komoditas] [Kategori]">'
-        . '</label>'
-        . '<div class="actions" style="margin-top:14px;">'
-        . '<button class="btn primary">' . ($isEditing ? 'Perbarui Job Desk' : 'Simpan Job Desk') . '</button>'
-        . ($isEditing ? '<a class="btn" href="' . route_url('jobs', array_filter(['group_id' => $filterGroupId, 'type_id' => $filterTypeId])) . '">Batal Edit</a>' : '')
-        . '</div>'
-        . '</form>'
-        . '</div>';
+        echo '<form method="post">'
+            . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
+            . '<input type="hidden" name="action" value="' . $formAction . '">'
+            . ($isEditing ? '<input type="hidden" name="desk_id" value="' . $editDeskId . '">' : '')
+            . ($isEditing ? '<input type="hidden" name="original_desk_name" value="' . e($editDeskName) . '">' : '')
+            . '<div class="grid two">'
+            . '<label>ID Job Desk'
+            . '<input type="text" readonly value="' . ($isEditing ? ('#' . $editDeskId) : '(Otomatis setelah disimpan)') . '" style="background:#f8fafc;color:#64748b;font-weight:700;">'
+            . '</label>'
+            . '<label>Komoditas (Asset Group) *'
+            . '<select id="jobAssetGroup" name="asset_group_id" required>'
+            . '<option value="">- Pilih Komoditas -</option>'
+            . asset_group_options($pdo, $editGroupId, false)
+            . '</select>'
+            . '</label>'
+            . '</div>'
+            . '<div class="grid two">'
+            . '<label>Kategori (Asset Type) *'
+            . '<select id="jobAssetType" name="asset_type_id" required>'
+            . '<option value="">- Pilih Kategori -</option>'
+            . ($editGroupId > 0 ? asset_type_options($pdo, $editTypeId, $editGroupId) : '')
+            . '</select>'
+            . '</label>'
+            . '<label>Deskripsi / Catatan'
+            . '<input name="description" value="' . e($editDesc) . '" placeholder="Keterangan kategori preventive...">'
+            . '</label>'
+            . '</div>'
+            . '<label>Nama Job Desk Preventive Maintenance *'
+            . '<input id="jobDeskName" name="job_desk_name" value="' . e($editDeskName) . '" required style="font-weight:700;color:#0f172a;" placeholder="Job Desk [Komoditas] [Kategori]">'
+            . '</label>'
+            . '<div class="actions" style="margin-top:14px;">'
+            . '<button class="btn primary">' . ($isEditing ? 'Perbarui Job Desk' : 'Simpan Job Desk') . '</button>'
+            . ($isEditing ? '<a class="btn" href="' . route_url('jobs', array_filter(['group_id' => $filterGroupId, 'type_id' => $filterTypeId])) . '">Batal Edit</a>' : '')
+            . '</div>'
+            . '</form>'
+            . '</div>';
+    }
 
     // TABEL DAFTAR JOB DESK PREVENTIVE MAINTENANCE
     $filterBadges = [];
@@ -2539,10 +2572,10 @@ function handle_route_jobs(PDO $pdo): void
         if (!empty($filterBadges)) {
             echo '<div style="padding:20px;text-align:center;background:#fff;border:1px dashed #cbd5e1;border-radius:8px;">'
                 . '<p class="muted" style="margin:0 0 6px 0;">Belum ada Job Desk untuk kategori ini.</p>'
-                . '<p style="font-size:13px;color:#64748b;margin:0;">Silakan isi formulir di sebelah kiri dan klik <strong>Simpan Job Desk</strong> untuk membuat Job Desk baru bagi kategori ini.</p>'
+                . '<p style="font-size:13px;color:#64748b;margin:0;">' . ($canCreateJobs ? 'Silakan isi formulir di sebelah kiri dan klik <strong>Simpan Job Desk</strong> untuk membuat Job Desk baru bagi kategori ini.' : '') . '</p>'
                 . '</div>';
         } else {
-            echo '<p class="muted">Belum ada Job Desk tersimpan. Silakan tambahkan pada form di samping.</p>';
+            echo '<p class="muted">Belum ada Job Desk tersimpan.' . ($canCreateJobs ? ' Silakan tambahkan pada form di samping.' : '') . '</p>';
         }
     } else {
         echo '<div style="overflow-x:auto;"><table><tr><th>ID</th><th>Nama Job Desk</th><th>Asset Group / Type</th><th>Tasks</th><th>Dipakai</th><th>Aksi</th></tr>';
@@ -2572,15 +2605,21 @@ function handle_route_jobs(PDO $pdo): void
                 ? ('Job Desk &quot;' . e($dName) . '&quot; ini pernah digunakan pada data maintenance (' . implode(', ', $lockReason) . '). Menghapusnya akan menghapus Job Desk ini dari daftar dan mengarsipkan tugasnya secara aman tanpa merusak riwayat report. Lanjutkan hapus?')
                 : ('Yakin hapus Job Desk &quot;' . e($dName) . '&quot; beserta seluruh tugasnya?');
 
-            $deleteBtn = '<form method="post" style="display:inline" onsubmit="return confirm(\'' . $confirmMsg . '\')">'
-                . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
-                . '<input type="hidden" name="action" value="delete_desk">'
-                . '<input type="hidden" name="desk_id" value="' . $dId . '">'
-                . '<input type="hidden" name="job_desk_name" value="' . e($dName) . '">'
-                . '<input type="hidden" name="asset_group_id" value="' . $filterGroupId . '">'
-                . '<input type="hidden" name="asset_type_id" value="' . $filterTypeId . '">'
-                . '<button class="btn danger">Hapus</button>'
-                . '</form>';
+            $deleteBtn = $canDeleteJobs
+                ? ('<form method="post" style="display:inline" onsubmit="return confirm(\'' . $confirmMsg . '\')">'
+                    . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
+                    . '<input type="hidden" name="action" value="delete_desk">'
+                    . '<input type="hidden" name="desk_id" value="' . $dId . '">'
+                    . '<input type="hidden" name="job_desk_name" value="' . e($dName) . '">'
+                    . '<input type="hidden" name="asset_group_id" value="' . $filterGroupId . '">'
+                    . '<input type="hidden" name="asset_type_id" value="' . $filterTypeId . '">'
+                    . '<button class="btn danger">Hapus</button>'
+                    . '</form>')
+                : '';
+
+            $editBtn = $canEditJobs
+                ? ('<a class="btn" href="' . route_url('jobs', array_filter(['group_id' => $filterGroupId, 'type_id' => $filterTypeId, 'edit_id' => $dId, 'manage_desk_id' => $dId])) . '">Edit</a>')
+                : '';
 
             $trBg = $isActive ? ' style="background:#eff6ff;"' : '';
             echo '<tr' . $trBg . '>'
@@ -2591,7 +2630,7 @@ function handle_route_jobs(PDO $pdo): void
                 . '<td>' . $usageBadge . '</td>'
                 . '<td><div class="actions" style="display:flex;gap:4px;align-items:center;">'
                 . '<a class="btn ' . ($isActive ? 'primary' : '') . '" href="' . route_url('jobs', array_filter(['group_id' => $filterGroupId, 'type_id' => $filterTypeId, 'manage_desk_id' => $dId])) . '" title="Isi & Kelola Pekerjaan">📋 Isi Tasks</a>'
-                . '<a class="btn" href="' . route_url('jobs', array_filter(['group_id' => $filterGroupId, 'type_id' => $filterTypeId, 'edit_id' => $dId, 'manage_desk_id' => $dId])) . '">Edit</a>'
+                . $editBtn
                 . $deleteBtn
                 . '</div></td>'
                 . '</tr>';
@@ -2620,7 +2659,9 @@ function handle_route_jobs(PDO $pdo): void
         }
 
         echo '<div class="panel" style="margin-top:20px;border-top:3px solid #2563eb;">';
-        $copyHeaderBtn = '<form method="post" style="display:inline;"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="copy_default_tasks"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><input type="hidden" name="asset_group_id" value="' . $filterGroupId . '"><input type="hidden" name="asset_type_id" value="' . $filterTypeId . '"><button class="btn" style="padding:5px 10px;font-size:12px;background:#f0fdf4;border:1px solid #86efac;color:#166534;font-weight:600;" title="Salin ' . $catTaskCount . ' tugas standar pemeliharaan preventif ' . e($catLabel) . ' ke Job Desk ini">+ Salin ' . $catTaskCount . ' Tugas Standar (' . e($catLabel) . ')</button></form>';
+        $copyHeaderBtn = $canCreateJobs
+            ? ('<form method="post" style="display:inline;"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="copy_default_tasks"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><input type="hidden" name="asset_group_id" value="' . $filterGroupId . '"><input type="hidden" name="asset_type_id" value="' . $filterTypeId . '"><button class="btn" style="padding:5px 10px;font-size:12px;background:#f0fdf4;border:1px solid #86efac;color:#166534;font-weight:600;" title="Salin ' . $catTaskCount . ' tugas standar pemeliharaan preventif ' . e($catLabel) . ' ke Job Desk ini">+ Salin ' . $catTaskCount . ' Tugas Standar (' . e($catLabel) . ')</button></form>')
+            : '';
 
         echo '<div class="split" style="align-items:center;margin-bottom:14px;">'
             . '<div>'
@@ -2633,45 +2674,49 @@ function handle_route_jobs(PDO $pdo): void
             . '</div>'
             . '</div>';
 
-        echo '<section class="grid two" style="margin-bottom:0;">';
+        echo '<section class="' . ($canCreateJobs ? 'grid two' : '') . '" style="margin-bottom:0;">';
 
         // Form Tambah Job Task Baru
-        echo '<div style="background:#f8fafc;padding:16px;border-radius:8px;border:1px solid #e2e8f0;">'
-            . '<h3 style="margin-top:0;font-size:15px;color:#0f172a;">+ Tambah Job Task Baru ke ' . e($actName) . '</h3>'
-            . '<form method="post">'
-            . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
-            . '<input type="hidden" name="action" value="add_task">'
-            . '<input type="hidden" name="manage_desk_id" value="' . $actId . '">'
-            . '<input type="hidden" name="asset_group_id" value="' . $filterGroupId . '">'
-            . '<input type="hidden" name="asset_type_id" value="' . $filterTypeId . '">'
-            . '<label>Nama Pekerjaan / Job Task *'
-            . '<input name="title" required placeholder="Contoh: Pembersihan Fan & Casing Unit" style="font-weight:600;">'
-            . '</label>'
-            . '<div class="grid two">'
-            . '<label>Estimasi Waktu (Menit) *'
-            . '<input type="number" min="1" name="estimated_minutes" value="5" required>'
-            . '</label>'
-            . '<label>Keterangan / SOP (Opsional)'
-            . '<input name="description" placeholder="Instruksi tambahan...">'
-            . '</label>'
-            . '</div>'
-            . '<div class="actions" style="margin-top:12px;">'
-            . '<button class="btn primary">+ Tambah Task ke Job Desk</button>'
-            . '</div>'
-            . '</form>'
-            . '</div>';
+        if ($canCreateJobs) {
+            echo '<div style="background:#f8fafc;padding:16px;border-radius:8px;border:1px solid #e2e8f0;">'
+                . '<h3 style="margin-top:0;font-size:15px;color:#0f172a;">+ Tambah Job Task Baru ke ' . e($actName) . '</h3>'
+                . '<form method="post">'
+                . '<input type="hidden" name="csrf" value="' . csrf_token() . '">'
+                . '<input type="hidden" name="action" value="add_task">'
+                . '<input type="hidden" name="manage_desk_id" value="' . $actId . '">'
+                . '<input type="hidden" name="asset_group_id" value="' . $filterGroupId . '">'
+                . '<input type="hidden" name="asset_type_id" value="' . $filterTypeId . '">'
+                . '<label>Nama Pekerjaan / Job Task *'
+                . '<input name="title" required placeholder="Contoh: Pembersihan Fan & Casing Unit" style="font-weight:600;">'
+                . '</label>'
+                . '<div class="grid two">'
+                . '<label>Estimasi Waktu (Menit) *'
+                . '<input type="number" min="1" name="estimated_minutes" value="5" required>'
+                . '</label>'
+                . '<label>Keterangan / SOP (Opsional)'
+                . '<input name="description" placeholder="Instruksi tambahan...">'
+                . '</label>'
+                . '</div>'
+                . '<div class="actions" style="margin-top:12px;">'
+                . '<button class="btn primary">+ Tambah Task ke Job Desk</button>'
+                . '</div>'
+                . '</form>'
+                . '</div>';
+        }
 
         // Tabel Daftar Job Tasks Terdaftar
         echo '<div>';
         if (!$activeDeskTasks) {
-            $copyEmptyBtn = '<form method="post" style="margin-top:14px;"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="copy_default_tasks"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><input type="hidden" name="asset_group_id" value="' . $filterGroupId . '"><input type="hidden" name="asset_type_id" value="' . $filterTypeId . '"><button class="btn primary" style="font-size:13px;padding:8px 16px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">📥 Salin ' . $catTaskCount . ' Tugas Standar Preventive (' . e($catLabel) . ')</button></form>';
+            $copyEmptyBtn = $canCreateJobs
+                ? ('<form method="post" style="margin-top:14px;"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="copy_default_tasks"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><input type="hidden" name="asset_group_id" value="' . $filterGroupId . '"><input type="hidden" name="asset_type_id" value="' . $filterTypeId . '"><button class="btn primary" style="font-size:13px;padding:8px 16px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">📥 Salin ' . $catTaskCount . ' Tugas Standar Preventive (' . e($catLabel) . ')</button></form>')
+                : '';
             echo '<div style="padding:28px;text-align:center;background:#fff;border:1px dashed #cbd5e1;border-radius:8px;">'
                 . '<p class="muted" style="margin:0 0 8px 0;">Belum ada item pekerjaan untuk Job Desk <strong>' . e($actName) . '</strong>.</p>'
-                . '<p style="font-size:13px;color:#64748b;margin:0;">Klik tombol di bawah untuk otomatis menyalin <strong>' . $catTaskCount . ' tugas standar pemeliharaan preventif</strong> yang dirancang khusus untuk kategori <strong>' . e($catLabel) . '</strong>, atau tambahkan pekerjaan manual melalui formulir di sebelah kiri.</p>'
+                . '<p style="font-size:13px;color:#64748b;margin:0;">' . ($canCreateJobs ? ('Klik tombol di bawah untuk otomatis menyalin <strong>' . $catTaskCount . ' tugas standar pemeliharaan preventif</strong> yang dirancang khusus untuk kategori <strong>' . e($catLabel) . '</strong>, atau tambahkan pekerjaan manual melalui formulir di sebelah kiri.') : 'Belum ada item pekerjaan.') . '</p>'
                 . $copyEmptyBtn
                 . '</div>';
         } else {
-            echo '<div style="overflow-x:auto;"><table style="margin:0;"><tr><th>No</th><th>Nama Pekerjaan / Task</th><th>Estimasi</th><th>Status</th><th>Aksi</th></tr>';
+            echo '<div style="overflow-x:auto;"><table style="margin:0;"><tr><th>No</th><th>Nama Pekerjaan / Task</th><th>Estimasi</th><th>Status</th>' . ($canEditJobs || $canDeleteJobs ? '<th>Aksi</th>' : '') . '</tr>';
             $tNo = 1;
             foreach ($activeDeskTasks as $task) {
                 $tId = (int)$task['id'];
@@ -2680,16 +2725,24 @@ function handle_route_jobs(PDO $pdo): void
                 $tDesc = (string)($task['description'] ?? '');
                 $tActive = !empty($task['is_active']);
 
-                $toggleBtn = '<form method="post" style="display:inline"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="toggle_task"><input type="hidden" name="id" value="' . $tId . '"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><input type="hidden" name="asset_group_id" value="' . $filterGroupId . '"><input type="hidden" name="asset_type_id" value="' . $filterTypeId . '"><button class="btn" style="padding:4px 8px;font-size:11px;">' . ($tActive ? 'Nonaktifkan' : 'Aktifkan') . '</button></form>';
+                $toggleBtn = $canEditJobs
+                    ? ('<form method="post" style="display:inline"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="toggle_task"><input type="hidden" name="id" value="' . $tId . '"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><input type="hidden" name="asset_group_id" value="' . $filterGroupId . '"><input type="hidden" name="asset_type_id" value="' . $filterTypeId . '"><button class="btn" style="padding:4px 8px;font-size:11px;">' . ($tActive ? 'Nonaktifkan' : 'Aktifkan') . '</button></form>')
+                    : '';
 
-                $delTaskBtn = '<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus pekerjaan &quot;' . e($tTitle) . '&quot;?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete_task"><input type="hidden" name="id" value="' . $tId . '"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><input type="hidden" name="asset_group_id" value="' . $filterGroupId . '"><input type="hidden" name="asset_type_id" value="' . $filterTypeId . '"><button class="btn danger" style="padding:4px 8px;font-size:11px;">Hapus</button></form>';
+                $delTaskBtn = $canDeleteJobs
+                    ? ('<form method="post" style="display:inline" onsubmit="return confirm(\'Hapus pekerjaan &quot;' . e($tTitle) . '&quot;?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete_task"><input type="hidden" name="id" value="' . $tId . '"><input type="hidden" name="manage_desk_id" value="' . $actId . '"><input type="hidden" name="asset_group_id" value="' . $filterGroupId . '"><input type="hidden" name="asset_type_id" value="' . $filterTypeId . '"><button class="btn danger" style="padding:4px 8px;font-size:11px;">Hapus</button></form>')
+                    : '';
+
+                $actionTd = ($canEditJobs || $canDeleteJobs)
+                    ? ('<td><div class="actions" style="display:flex;gap:4px;align-items:center;">' . $toggleBtn . $delTaskBtn . '</div></td>')
+                    : '';
 
                 echo '<tr>'
                     . '<td style="width:36px;text-align:center;">' . $tNo++ . '</td>'
                     . '<td><strong>' . e($tTitle) . '</strong>' . ($tDesc !== '' ? ('<br><span class="muted" style="font-size:11px;">' . e($tDesc) . '</span>') : '') . '</td>'
                     . '<td><span class="badge" style="font-weight:700;">' . $tMinutes . ' mnt</span></td>'
                     . '<td>' . ($tActive ? '<span class="badge ok">Aktif</span>' : '<span class="badge danger">Nonaktif</span>') . '</td>'
-                    . '<td><div class="actions" style="display:flex;gap:4px;align-items:center;">' . $toggleBtn . $delTaskBtn . '</div></td>'
+                    . $actionTd
                     . '</tr>';
             }
             echo '</table></div>';

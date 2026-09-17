@@ -103,7 +103,41 @@ function find_asset_item_for_loan(PDO $pdo, string $raw): ?array
 
 function handle_route_asset_loans(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance', 'loan_officer']);
+    $user = require_regulation('asset_loans', 'view');
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_loan') {
+        require_regulation('asset_loans', 'delete');
+        $delId = (int)($_POST['loan_id'] ?? 0);
+        if ($delId > 0) {
+            try {
+                $pdo->beginTransaction();
+                // Kembalikan status unit aset yang masih dipinjam
+                $activeStatusId = (int)$pdo->query("SELECT id FROM asset_statuses WHERE status_code = 'ACTIVE' LIMIT 1")->fetchColumn();
+                $borrowedItemStmt = $pdo->prepare("SELECT asset_item_id FROM asset_loan_items WHERE loan_id = ? AND status = 'borrowed'");
+                $borrowedItemStmt->execute([$delId]);
+                $borrowedAssetIds = $borrowedItemStmt->fetchAll(PDO::FETCH_COLUMN);
+
+                if (!empty($borrowedAssetIds)) {
+                    $rst = $pdo->prepare("UPDATE asset_items SET status = 'active', asset_status_id = ?, custodian_name = NULL, custodian_nik = NULL WHERE id = ?");
+                    foreach ($borrowedAssetIds as $aid) {
+                        $rst->execute([$activeStatusId ?: null, $aid]);
+                    }
+                }
+
+                $pdo->prepare("DELETE FROM asset_loan_items WHERE loan_id = ?")->execute([$delId]);
+                $pdo->prepare("DELETE FROM asset_loans WHERE id = ?")->execute([$delId]);
+                $pdo->commit();
+                flash('Data peminjaman aset berhasil dihapus.');
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                flash('Gagal menghapus peminjaman aset: ' . $e->getMessage(), 'err');
+            }
+        }
+        redirect_to('asset_loans');
+    }
+
     $tab = trim((string)($_GET['tab'] ?? 'active'));
     if (!in_array($tab, ['active', 'overdue', 'returned', 'all'], true)) {
         $tab = 'active';
@@ -191,9 +225,7 @@ function handle_route_asset_loans(PDO $pdo): void
         . '    <a class="btn" href="' . route_url('mobile_asset_loans') . '" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:#f0fdf4;border-color:#86efac;color:#166534;font-weight:600;">'
         . '      <span>📱</span> Versi Mobile'
         . '    </a>'
-        . '    <a class="btn primary" href="' . route_url('asset_loan_form') . '" style="display:inline-flex;align-items:center;gap:6px;font-weight:bold;">'
-        . '      <span>➕</span> Catat Peminjaman Aset'
-        . '    </a>'
+        . (has_regulation('asset_loans', 'create') ? '    <a class="btn primary" href="' . route_url('asset_loan_form') . '" style="display:inline-flex;align-items:center;gap:6px;font-weight:bold;"><span>➕</span> Catat Peminjaman Aset</a>' : '')
         . '  </div>'
         . '</div>'
 
@@ -317,8 +349,9 @@ function handle_route_asset_loans(PDO $pdo): void
                 . '  <td style="padding:10px 12px;vertical-align:top;text-align:center;white-space:nowrap;">'
                 . '    <div style="display:inline-flex;gap:4px;flex-wrap:wrap;justify-content:center;">'
                 . '      <a class="btn" href="' . route_url('asset_loan_detail', ['id' => $l['id']]) . '" style="padding:4px 8px;font-size:12px;" title="Lihat Detail & Bukti Pinjam">📄 Detail</a>'
-                . ($l['status'] === 'active' ? '      <a class="btn" href="' . route_url('asset_loan_form', ['id' => $l['id']]) . '" style="padding:4px 8px;font-size:12px;background:#f59e0b;border-color:#f59e0b;color:#fff;" title="Edit Data Peminjaman">✏️ Edit</a>' : '')
+                . ($l['status'] === 'active' && has_regulation('asset_loans', 'edit') ? '      <a class="btn" href="' . route_url('asset_loan_form', ['id' => $l['id']]) . '" style="padding:4px 8px;font-size:12px;background:#f59e0b;border-color:#f59e0b;color:#fff;" title="Edit Data Peminjaman">✏️ Edit</a>' : '')
                 . ($l['status'] === 'active' ? '      <a class="btn primary" href="' . route_url('asset_loan_return', ['id' => $l['id']]) . '" style="padding:4px 8px;font-size:12px;background:#16a34a;border-color:#16a34a;" title="Proses Pengembalian">📥 Kembalikan</a>' : '')
+                . (has_regulation('asset_loans', 'delete') ? '      <form method="post" action="' . route_url('asset_loans') . '" style="display:inline;" onsubmit="return confirm(\'Hapus transaksi peminjaman ' . e($l['loan_code']) . '? Status unit aset terkait akan dikembalikan ke Aktif.\');">' . csrf_field() . '<input type="hidden" name="action" value="delete_loan"><input type="hidden" name="loan_id" value="' . $l['id'] . '"><button type="submit" class="btn danger" style="padding:4px 8px;font-size:12px;">🗑️ Hapus</button></form>' : '')
                 . '    </div>'
                 . '  </td>'
                 . '</tr>';
@@ -339,8 +372,8 @@ function handle_route_asset_loans(PDO $pdo): void
  */
 function handle_route_asset_loan_form(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance', 'loan_officer']);
     $id = (int)($_GET['id'] ?? $_POST['loan_id'] ?? 0);
+    $user = $id > 0 ? require_regulation('asset_loans', 'edit') : require_regulation('asset_loans', 'create');
     $loan = null;
     $existingItems = [];
 
@@ -978,7 +1011,7 @@ function handle_route_asset_loan_form(PDO $pdo): void
  */
 function handle_route_asset_loan_detail(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance', 'loan_officer']);
+    $user = require_regulation('asset_loans', 'view');
     $id = (int)($_GET['id'] ?? 0);
 
     $stmt = $pdo->prepare("SELECT al.*, u1.name AS officer_name, u2.name AS return_officer_name
@@ -1025,9 +1058,11 @@ function handle_route_asset_loan_detail(PDO $pdo): void
         . '  <div>'
         . '    <a class="btn" href="' . route_url('asset_loans') . '">⬅️ Kembali ke Daftar</a>'
         . '  </div>'
-        . '  <div style="display:flex;gap:8px;">'
+        . '  <div style="display:flex;gap:8px;flex-wrap:wrap;">'
         . '    <button type="button" class="btn" onclick="window.print()" style="display:inline-flex;align-items:center;gap:6px;">🖨️ Cetak Bukti Pinjam</button>'
+        . ($loan['status'] === 'active' && has_regulation('asset_loans', 'edit') ? '    <a class="btn" href="' . route_url('asset_loan_form', ['id' => $loan['id']]) . '" style="background:#f59e0b;border-color:#f59e0b;color:#fff;">✏️ Edit</a>' : '')
         . ($loan['status'] === 'active' ? '    <a class="btn primary" href="' . route_url('asset_loan_return', ['id' => $loan['id']]) . '" style="background:#16a34a;border-color:#16a34a;font-weight:bold;">📥 Proses Pengembalian</a>' : '')
+        . (has_regulation('asset_loans', 'delete') ? '    <form method="post" action="' . route_url('asset_loans') . '" style="display:inline;" onsubmit="return confirm(\'Hapus transaksi peminjaman ' . e($loan['loan_code']) . '? Status unit aset terkait akan dikembalikan ke Aktif.\');">' . csrf_field() . '<input type="hidden" name="action" value="delete_loan"><input type="hidden" name="loan_id" value="' . $loan['id'] . '"><button type="submit" class="btn danger">🗑️ Hapus Transaksi</button></form>' : '')
         . '  </div>'
         . '</div>'
 

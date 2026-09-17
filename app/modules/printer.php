@@ -88,11 +88,21 @@ function printer_table(array $rows, bool $actions = false): string
         return '<p>Belum ada data printer.</p>';
     }
     $pdo = Database::pdo();
+    $canEdit = has_regulation('printers', 'edit');
+    $canDelete = has_regulation('printers', 'delete');
     $html = '<table><tr><th>PrnID</th><th>Printer Name</th><th>Location</th><th>Manajemen Aset</th><th>Serial Number</th><th>IP Printer</th><th>Model</th><th>Aksi</th></tr>';
     foreach ($rows as $row) {
         $rowActions = '<a class="btn" href="' . route_url('printer_detail', ['prn_id' => $row['prn_id']]) . '">Detail</a>';
-        if ($actions) {
+        if ($actions && $canEdit) {
             $rowActions .= ' <a class="btn" href="' . route_url('printer_form', ['prn_id' => $row['prn_id']]) . '">Edit</a>';
+        }
+        if ($actions && $canDelete) {
+            $rowActions .= ' <form method="post" action="' . route_url('printers') . '" style="display:inline;" onsubmit="return confirm(\'Hapus Printer ' . e($row['prn_id']) . '? Semua riwayat dan relasi printer ini akan dihapus.\');">'
+                . csrf_field()
+                . '<input type="hidden" name="action" value="delete_printer">'
+                . '<input type="hidden" name="prn_id" value="' . e($row['prn_id']) . '">'
+                . '<button type="submit" class="btn danger" style="padding:4px 8px;font-size:12px;">Hapus</button>'
+                . '</form>';
         }
         $html .= '<tr><td>' . e($row['prn_id']) . '</td><td>' . e($row['printer_name']) . '</td><td>' . e($row['location'] ?? '-') . '</td><td>' . nl2br(e(printer_asset_link_summary($pdo, $row))) . '</td><td>' . e($row['serial_number'] ?? '-') . '</td><td>' . e($row['ip_printer'] ?? '-') . '</td><td>' . e($row['model_printer'] ?? '-') . '</td><td>' . $rowActions . '</td></tr>';
     }
@@ -311,14 +321,33 @@ function printer_form_html(array $printer, bool $editing): string
     $html .= '<section class="form-section"><h2>Kondisi Fisik</h2><textarea name="physical_condition" placeholder="Catatan kondisi awal printer">' . e($printer['physical_condition']) . '</textarea></section></div><div>';
     $html .= saved_location_datalist_html();
     $html .= '<section class="form-section"><div class="split"><div><h2>Titik Lokasi Printer</h2><p class="muted">Koordinat ini menjadi patokan scan QR teknisi. Jika latitude dan longitude diisi, scan hanya valid dalam radius yang diset, default 5 meter.</p></div><div class="actions">' . ($editing ? '<a class="btn" href="' . route_url('printer_location', ['prn_id' => $printer['prn_id']]) . '">Set dari HP</a>' : '') . '<a class="btn" target="_blank" rel="noopener" href="' . e($mapHref) . '">Google Maps</a></div></div><div class="location-grid"><label>Group / Nama Titik Lokasi<input name="location" list="savedLocationGroups" value="' . e($printer['location']) . '" placeholder="Contoh: Lantai 2 - Ruang Finance"></label><label>Radius Meter<input name="location_radius_m" type="number" min="1" max="100" value="' . e($printer['location_radius_m'] ?? 5) . '"></label><label>Latitude<input id="printerLatitude" name="latitude" value="' . e($lat) . '" placeholder="-6.2000000"></label><label>Longitude<input id="printerLongitude" name="longitude" value="' . e($lng) . '" placeholder="106.8166660"></label></div><div class="gps-status"><div class="actions"><button class="btn primary" type="button" id="usePrinterLocation">Ambil GPS Perangkat Ini</button></div><p class="coord-help">Untuk akurasi terbaik, buka dari ponsel saat berdiri di titik printer lalu tekan tombol GPS.</p><p id="printerLocationStatus" class="muted"></p></div></section></div></div>';
-    $html .= '<section class="footer-actions"><div class="actions"><button class="btn primary">' . ($editing ? 'Simpan Perubahan' : 'Tambah Printer') . '</button><a class="btn" href="' . route_url('printers') . '">Batal</a></div></section></form>';
+    $html .= '<section class="footer-actions"><div class="actions"><button class="btn primary">' . ($editing ? 'Simpan Perubahan' : 'Tambah Printer') . '</button><a class="btn" href="' . route_url('printers') . '">Batal</a>';
+    if ($editing && has_regulation('printers', 'delete')) {
+        $html .= '<button type="submit" class="btn danger" form="deletePrinterForm" onclick="return confirm(\'Hapus Printer ' . e($printer['prn_id']) . '? Semua data riwayat dan relasi printer ini akan dihapus.\');">Hapus Printer</button>';
+    }
+    $html .= '</div></section></form>';
+    if ($editing && has_regulation('printers', 'delete')) {
+        $html .= '<form id="deletePrinterForm" method="post" action="' . route_url('printers') . '" style="display:none;">' . csrf_field() . '<input type="hidden" name="action" value="delete_printer"><input type="hidden" name="prn_id" value="' . e($printer['prn_id']) . '"></form>';
+    }
     $html .= '<script>(function(){var btn=document.getElementById("usePrinterLocation"),lat=document.getElementById("printerLatitude"),lng=document.getElementById("printerLongitude"),status=document.getElementById("printerLocationStatus");if(!btn)return;btn.addEventListener("click",function(){if(!navigator.geolocation){status.textContent="Browser tidak mendukung GPS.";return;}status.textContent="Mengambil lokasi...";navigator.geolocation.getCurrentPosition(function(p){lat.value=p.coords.latitude.toFixed(7);lng.value=p.coords.longitude.toFixed(7);status.textContent="Lokasi tersimpan di form. Akurasi perangkat sekitar "+Math.round(p.coords.accuracy)+" meter.";},function(){status.textContent="Gagal mengambil lokasi.";},{enableHighAccuracy:true,timeout:15000,maximumAge:0});});})();</script>';
     return $html;
 }
 
 function handle_route_printers(PDO $pdo): void
 {
-    $user = require_role(['admin']);
+    $user = require_regulation('printers', 'view');
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_printer') {
+        require_regulation('printers', 'delete');
+        $delPrnId = trim((string)($_POST['prn_id'] ?? ''));
+        if ($delPrnId !== '') {
+            $pdo->prepare('UPDATE maintenance_assets SET printer_id=NULL WHERE printer_id=?')->execute([$delPrnId]);
+            $pdo->prepare('DELETE FROM printers WHERE prn_id=?')->execute([$delPrnId]);
+            flash('Printer ' . $delPrnId . ' berhasil dihapus.');
+        }
+        redirect_to('printers');
+    }
+
     render_header('Data Printer', $user);
     if (!printer_schema_ready($pdo)) {
         echo printer_schema_warning();
@@ -334,21 +363,22 @@ function handle_route_printers(PDO $pdo): void
         LEFT JOIN maintenance_assets ma ON ma.id = pr.maintenance_asset_id
         ORDER BY pr.updated_at DESC
     ')->fetchAll();
-    echo '<section class="panel"><div class="split"><h1>Data Printer</h1><div class="actions"><a class="btn primary" href="' . route_url('printer_form') . '">Tambah Printer</a><a class="btn" href="' . route_url('labels', ['type' => 'printer']) . '">QR Label Printer</a></div></div>' . printer_table($rows, true) . '</section>';
+    $addBtn = has_regulation('printers', 'create') ? '<a class="btn primary" href="' . route_url('printer_form') . '">Tambah Printer</a>' : '';
+    echo '<section class="panel"><div class="split"><h1>Data Printer</h1><div class="actions">' . $addBtn . '<a class="btn" href="' . route_url('labels', ['type' => 'printer']) . '">QR Label Printer</a></div></div>' . printer_table($rows, true) . '</section>';
     render_footer();
 }
 
 function handle_route_printer_form(PDO $pdo): void
 {
-    $user = require_role(['admin']);
+    $prnId = strtoupper(trim((string)($_GET['prn_id'] ?? '')));
+    $editing = $prnId !== '';
+    $user = $editing ? require_regulation('printers', 'edit') : require_regulation('printers', 'create');
     if (!printer_schema_ready($pdo)) {
         render_header('Printer Schema', $user);
         echo printer_schema_warning();
         render_footer();
         return;
     }
-    $prnId = strtoupper(trim((string)($_GET['prn_id'] ?? '')));
-    $editing = $prnId !== '';
     $printer = [
         'prn_id' => '',
         'security_code' => '',
@@ -457,7 +487,7 @@ function handle_route_printer_form(PDO $pdo): void
 
 function handle_route_printer_detail(PDO $pdo): void
 {
-    $user = require_role(['admin']);
+    $user = require_regulation('printers', 'view');
     if (!printer_schema_ready($pdo)) {
         render_header('Printer Schema', $user);
         echo printer_schema_warning();
@@ -479,7 +509,24 @@ function handle_route_printer_detail(PDO $pdo): void
     }
     $assetCode = printer_asset_code($printer);
     render_header('Detail Printer', $user);
-    echo '<section class="panel"><div class="split"><div><h1>' . e($printer['prn_id']) . '</h1><p>' . e($printer['printer_name']) . ' - ' . e($printer['location'] ?: 'Lokasi belum diisi') . '</p><p><span class="badge">Maintenance Asset ID ' . e($assetCode) . '</span></p></div><div class="actions"><a class="btn primary" href="' . route_url('printer_form', ['prn_id' => $prnId]) . '">Edit Printer</a><a class="btn" href="' . route_url('printer_location', ['prn_id' => $prnId]) . '">Set Lokasi GPS</a><a class="btn" href="' . route_url('schedule_form', ['asset' => $assetCode]) . '">Tambah Schedule</a><a class="btn" download="PcConnect-Label-' . e($assetCode) . '.png" href="' . route_url('qr_png', ['code' => $assetCode]) . '">Download Label PNG</a><a class="btn" href="' . mobile_asset_url($assetCode) . '">Mobile QR URL</a></div></div></section>';
+    $actionsHtml = '';
+    if (has_regulation('printers', 'edit')) {
+        $actionsHtml .= '<a class="btn primary" href="' . route_url('printer_form', ['prn_id' => $prnId]) . '">Edit Printer</a>';
+    }
+    if (has_regulation('printers', 'delete')) {
+        $actionsHtml .= '<form method="post" action="' . route_url('printers') . '" style="display:inline;" onsubmit="return confirm(\'Hapus Printer ' . e($prnId) . '? Semua relasi dan riwayat printer ini akan dihapus.\');">'
+            . csrf_field()
+            . '<input type="hidden" name="action" value="delete_printer">'
+            . '<input type="hidden" name="prn_id" value="' . e($prnId) . '">'
+            . '<button type="submit" class="btn danger">Hapus Printer</button>'
+            . '</form>';
+    }
+    $actionsHtml .= '<a class="btn" href="' . route_url('printer_location', ['prn_id' => $prnId]) . '">Set Lokasi GPS</a>';
+    $actionsHtml .= '<a class="btn" href="' . route_url('schedule_form', ['asset' => $assetCode]) . '">Tambah Schedule</a>';
+    $actionsHtml .= '<a class="btn" download="PcConnect-Label-' . e($assetCode) . '.png" href="' . route_url('qr_png', ['code' => $assetCode]) . '">Download Label PNG</a>';
+    $actionsHtml .= '<a class="btn" href="' . mobile_asset_url($assetCode) . '">Mobile QR URL</a>';
+
+    echo '<section class="panel"><div class="split"><div><h1>' . e($printer['prn_id']) . '</h1><p>' . e($printer['printer_name']) . ' - ' . e($printer['location'] ?: 'Lokasi belum diisi') . '</p><p><span class="badge">Maintenance Asset ID ' . e($assetCode) . '</span></p></div><div class="actions">' . $actionsHtml . '</div></div></section>';
     if (!empty($printer['latitude']) && !empty($printer['longitude'])) {
         $mapUrl = 'https://www.google.com/maps?q=' . rawurlencode((string)$printer['latitude'] . ',' . (string)$printer['longitude']);
         echo '<section class="panel"><h2>Lokasi Printer</h2><table><tr><th>Nama Lokasi</th><td>' . e($printer['location'] ?: '-') . '</td></tr><tr><th>GPS</th><td>' . e($printer['latitude'] . ', ' . $printer['longitude']) . '</td></tr><tr><th>Radius Scan</th><td>' . e($printer['location_radius_m'] ?: 5) . ' meter</td></tr></table><p><a class="btn" target="_blank" rel="noopener" href="' . e($mapUrl) . '">Buka di Google Maps</a></p></section>';

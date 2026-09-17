@@ -10,7 +10,9 @@ return [
     'base_url' => 'https://192.168.1.197:8081/PcConnect/public/index.php',
     'mobile_base_url' => 'https://192.168.1.197:8081/PcConnect/public/index.php?route=mobile_scan&code=',
     'company_name' => 'SOA Group',
+    'app_name' => 'AsetConnect',
     'agent_token' => 'change_this_agent_token',
     'gemini_api_key' => '',
 ];
+
 
