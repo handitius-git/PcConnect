@@ -1061,7 +1061,7 @@ function ensure_performance_indexes(PDO $pdo): void
 function ensure_app_schema(PDO $pdo, bool $force = false): void
 {
     if (!$force && empty($_GET['force_schema'])) {
-        $lockFile = sys_get_temp_dir() . '/pcconnect_schema_v17.lock';
+        $lockFile = sys_get_temp_dir() . '/pcconnect_schema_v18.lock';
         if (file_exists($lockFile) && (time() - filemtime($lockFile) < 1800) && db_table_exists($pdo, 'pcs')) {
             return;
         }
@@ -1088,7 +1088,7 @@ function ensure_app_schema(PDO $pdo, bool $force = false): void
     ensure_unified_asset_schema($pdo);
     ensure_performance_indexes($pdo);
 
-    @touch(sys_get_temp_dir() . '/pcconnect_schema_v17.lock');
+    @touch(sys_get_temp_dir() . '/pcconnect_schema_v18.lock');
 }
 
 function ensure_user_roles_schema(PDO $pdo): void
@@ -2224,14 +2224,36 @@ function ensure_asset_loan_schema(PDO $pdo): void
             asset_item_id BIGINT NOT NULL,
             condition_out VARCHAR(100) NOT NULL DEFAULT 'Normal / Baik',
             notes_out TEXT NULL,
+            photo_out VARCHAR(255) NULL,
             condition_in VARCHAR(100) NULL,
             notes_in TEXT NULL,
+            photo_in VARCHAR(255) NULL,
             returned_at DATETIME NULL,
             status ENUM('borrowed','returned','damaged','lost') NOT NULL DEFAULT 'borrowed',
             INDEX idx_loan_item_loan (loan_id),
             INDEX idx_loan_item_asset (asset_item_id),
             INDEX idx_loan_item_status (status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        if (db_table_exists($pdo, 'asset_loan_items')) {
+            if (!db_column_exists($pdo, 'asset_loan_items', 'photo_out')) {
+                $pdo->exec("ALTER TABLE asset_loan_items ADD COLUMN photo_out VARCHAR(255) NULL AFTER notes_out");
+            }
+            if (!db_column_exists($pdo, 'asset_loan_items', 'photo_in')) {
+                $pdo->exec("ALTER TABLE asset_loan_items ADD COLUMN photo_in VARCHAR(255) NULL AFTER notes_in");
+            }
+            if (!db_column_exists($pdo, 'asset_loan_items', 'created_at')) {
+                $pdo->exec("ALTER TABLE asset_loan_items ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP");
+            }
+        }
+        if (db_table_exists($pdo, 'asset_loans')) {
+            if (!db_column_exists($pdo, 'asset_loans', 'photo_out')) {
+                $pdo->exec("ALTER TABLE asset_loans ADD COLUMN photo_out VARCHAR(255) NULL AFTER purpose");
+            }
+            if (!db_column_exists($pdo, 'asset_loans', 'photo_in')) {
+                $pdo->exec("ALTER TABLE asset_loans ADD COLUMN photo_in VARCHAR(255) NULL AFTER actual_return_date");
+            }
+        }
     } catch (Throwable $ignored) {
     }
 }

@@ -577,4 +577,47 @@ CREATE TABLE IF NOT EXISTS corrective_action_types (
     INDEX idx_cat_type(asset_type_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS asset_loans (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    loan_code VARCHAR(40) NOT NULL UNIQUE,
+    borrower_nik VARCHAR(80) NULL,
+    borrower_name VARCHAR(180) NOT NULL,
+    borrower_department VARCHAR(180) NULL,
+    borrower_phone VARCHAR(40) NULL,
+    loan_date DATETIME NOT NULL,
+    expected_return_date DATE NULL,
+    actual_return_date DATETIME NULL,
+    purpose TEXT NULL,
+    photo_out VARCHAR(255) NULL,
+    photo_in VARCHAR(255) NULL,
+    location_id INT NULL,
+    location_note VARCHAR(180) NULL,
+    status ENUM('active','returned','overdue','cancelled') NOT NULL DEFAULT 'active',
+    officer_user_id INT NULL,
+    return_officer_user_id INT NULL,
+    officer_notes TEXT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_loan_borrower (borrower_nik),
+    INDEX idx_loan_status (status),
+    INDEX idx_loan_date (loan_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS asset_loan_items (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    loan_id BIGINT NOT NULL,
+    asset_item_id BIGINT NOT NULL,
+    condition_out VARCHAR(100) NOT NULL DEFAULT 'Normal / Baik',
+    notes_out TEXT NULL,
+    photo_out VARCHAR(255) NULL,
+    condition_in VARCHAR(100) NULL,
+    notes_in TEXT NULL,
+    photo_in VARCHAR(255) NULL,
+    returned_at DATETIME NULL,
+    status ENUM('borrowed','returned','damaged','lost') NOT NULL DEFAULT 'borrowed',
+    INDEX idx_loan_item_loan (loan_id),
+    INDEX idx_loan_item_asset (asset_item_id),
+    INDEX idx_loan_item_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 

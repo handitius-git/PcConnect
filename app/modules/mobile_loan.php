@@ -17,6 +17,33 @@ function require_mobile_loan_user(): array
     return require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance', 'loan_officer']);
 }
 
+function save_mobile_loan_photo(array $fileEntry, string $prefix = 'loan'): ?string
+{
+    if (empty($fileEntry['tmp_name']) || !is_uploaded_file($fileEntry['tmp_name'])) {
+        return null;
+    }
+    if (($fileEntry['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
+        return null;
+    }
+    $uploadDir = __DIR__ . '/../../public/uploads/loans';
+    if (!is_dir($uploadDir)) {
+        @mkdir($uploadDir, 0777, true);
+    }
+    $ext = strtolower(pathinfo((string)($fileEntry['name'] ?? ''), PATHINFO_EXTENSION));
+    if (!in_array($ext, ['jpg', 'jpeg', 'png', 'webp'], true)) {
+        $ext = 'jpg';
+    }
+    $filename = $prefix . '_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+    $targetPath = $uploadDir . '/' . $filename;
+    if (move_uploaded_file($fileEntry['tmp_name'], $targetPath)) {
+        if (function_exists('compress_image_to_limit')) {
+            compress_image_to_limit($targetPath);
+        }
+        return 'uploads/loans/' . $filename;
+    }
+    return null;
+}
+
 function render_mobile_loan_header(string $title, ?array $user): void
 {
     $flash = flash();
@@ -370,13 +397,14 @@ function handle_route_mobile_asset_loan_create(PDO $pdo): void
 
             // Insert Items & Update Asset Status
             $insItem = $pdo->prepare("INSERT INTO asset_loan_items 
-                (loan_id, asset_item_id, condition_out, notes_out, status, created_at)
-                VALUES (?, ?, ?, ?, 'borrowed', NOW())");
+                (loan_id, asset_item_id, condition_out, notes_out, photo_out, status, created_at)
+                VALUES (?, ?, ?, ?, ?, 'borrowed', NOW())");
 
             $updAsset = $pdo->prepare("UPDATE asset_items 
                 SET status = 'borrowed', asset_status_id = ?, custodian_name = ?, custodian_nik = ?, updated_at = NOW() 
                 WHERE id = ?");
 
+            $firstPhotoOut = null;
             foreach ($assetItemIds as $aid) {
                 $aid = (int)$aid;
                 if ($aid <= 0) continue;
@@ -384,8 +412,22 @@ function handle_route_mobile_asset_loan_create(PDO $pdo): void
                 $cond = trim((string)($conditionOut[$aid] ?? 'Normal / Baik'));
                 $note = trim((string)($notesOut[$aid] ?? ''));
 
-                $insItem->execute([$loanId, $aid, $cond ?: 'Normal / Baik', $note ?: null]);
+                $photoOut = null;
+                $fileKey = 'photo_out_' . $aid;
+                if (!empty($_FILES[$fileKey]['tmp_name']) && is_uploaded_file($_FILES[$fileKey]['tmp_name'])) {
+                    $photoOut = save_mobile_loan_photo($_FILES[$fileKey], 'loan_out_' . $aid);
+                    if ($firstPhotoOut === null && $photoOut) {
+                        $firstPhotoOut = $photoOut;
+                    }
+                }
+
+                $insItem->execute([$loanId, $aid, $cond ?: 'Normal / Baik', $note ?: null, $photoOut]);
                 $updAsset->execute([$borrowedStatusId ?: null, $borrowerName, $borrowerNik ?: null, $aid]);
+            }
+
+            if ($firstPhotoOut !== null) {
+                $updLoanPhoto = $pdo->prepare("UPDATE asset_loans SET photo_out = ? WHERE id = ?");
+                $updLoanPhoto->execute([$firstPhotoOut, $loanId]);
             }
 
             $pdo->commit();
@@ -406,7 +448,7 @@ function handle_route_mobile_asset_loan_create(PDO $pdo): void
         <h2 style="display:flex;align-items:center;gap:6px;">
             <span>➕</span> Catat Peminjaman Aset
         </h2>
-        <form method="post" action="<?= route_url('mobile_asset_loan_create') ?>" onsubmit="return validateMobileLoanForm()">
+        <form method="post" action="<?= route_url('mobile_asset_loan_create') ?>" enctype="multipart/form-data" onsubmit="return validateMobileLoanForm()">
             <input type="hidden" name="csrf" value="<?= csrf_token() ?>">
 
             <!-- 1. Peminjam (Autocomplete Master Pengguna) -->
@@ -516,13 +558,39 @@ function handle_route_mobile_asset_loan_create(PDO $pdo): void
     var html5QrCode = null;
     var isCameraOpen = false;
 
+    function previewItemPhoto(input, targetId) {
+        var target = document.getElementById(targetId);
+        if (!target) return;
+        target.innerHTML = "";
+        if (input.files && input.files[0]) {
+            var file = input.files[0];
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                target.innerHTML = 
+                    "<div style='position:relative;display:inline-block;'>"
+                    + "  <img src='" + e.target.result + "' style='width:48px;height:48px;object-fit:cover;border-radius:6px;border:2px solid #38bdf8;display:block;'>"
+                    + "  <button type='button' onclick='clearItemPhoto(\"" + input.id + "\", \"" + targetId + "\")' style='position:absolute;top:-6px;right:-6px;background:#ef4444;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:11px;font-weight:bold;line-height:18px;padding:0;cursor:pointer;'>✕</button>"
+                    + "</div>"
+                    + "<span style='font-size:10px;color:#38bdf8;font-weight:600;'>Foto Siap</span>";
+            };
+            reader.readAsDataURL(file);
+        }
+    }
+
+    function clearItemPhoto(inputId, targetId) {
+        var input = document.getElementById(inputId);
+        if (input) input.value = "";
+        var target = document.getElementById(targetId);
+        if (target) target.innerHTML = "";
+    }
+
     function renderScannedContainer() {
         var container = document.getElementById("loanItemsContainer");
         var emptyMsg = document.getElementById("emptyLoanItemsMsg");
         var badge = document.getElementById("selectedCountBadge");
-        container.innerHTML = "";
 
         if (scannedItems.length === 0) {
+            container.innerHTML = "";
             emptyMsg.style.display = "block";
             badge.textContent = "0 unit";
             badge.className = "badge";
@@ -535,8 +603,24 @@ function handle_route_mobile_asset_loan_create(PDO $pdo): void
         badge.className = "badge badge-active";
         badge.style.background = "#0284c7";
 
-        scannedItems.forEach(function(item, idx) {
+        // Hapus card yang sudah tidak ada di scannedItems
+        var existingCards = container.querySelectorAll("[data-item-id]");
+        existingCards.forEach(function(card) {
+            var cid = parseInt(card.getAttribute("data-item-id"), 10);
+            if (!scannedItems.some(function(it) { return it.id === cid; })) {
+                card.remove();
+            }
+        });
+
+        // Tambahkan card untuk item baru tanpa me-reset isi input yang sudah ada
+        scannedItems.forEach(function(item) {
+            if (container.querySelector("[data-item-id='" + item.id + "']")) {
+                return;
+            }
+
             var card = document.createElement("div");
+            card.setAttribute("data-item-id", item.id);
+            card.id = "card_item_" + item.id;
             card.style.background = "#0f172a";
             card.style.border = "1px solid #334155";
             card.style.borderRadius = "8px";
@@ -563,6 +647,19 @@ function handle_route_mobile_asset_loan_create(PDO $pdo): void
                 + "  <div>"
                 + "    <div style='font-size:10px;color:#94a3b8;margin-bottom:2px;'>Catatan Fisik</div>"
                 + "    <input name='item_notes_out[" + item.id + "]' value='' placeholder='Kelengkapan...' style='padding:6px;font-size:12px;'>"
+                + "  </div>"
+                + "</div>"
+                + "<div style='margin-top:8px;padding-top:8px;border-top:1px dashed #334155;'>"
+                + "  <div style='font-size:10px;color:#94a3b8;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;'>"
+                + "    <span>📷 Foto Unit Saat Dipinjam</span>"
+                + "    <span style='font-size:10px;color:#64748b;'>(Kamera HP)</span>"
+                + "  </div>"
+                + "  <div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;'>"
+                + "    <label for='photo_out_" + item.id + "' class='btn btn-secondary' style='margin:0;padding:6px 10px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;'>"
+                + "      <span>📸 Ambil / Pilih Foto</span>"
+                + "    </label>"
+                + "    <input type='file' id='photo_out_" + item.id + "' name='photo_out_" + item.id + "' accept='image/*' capture='environment' style='display:none;' onchange='previewItemPhoto(this, \"preview_out_" + item.id + "\")'>"
+                + "    <div id='preview_out_" + item.id + "' style='display:flex;align-items:center;gap:6px;'></div>"
                 + "  </div>"
                 + "</div>";
 
@@ -644,8 +741,12 @@ function handle_route_mobile_asset_loan_create(PDO $pdo): void
                 });
 
                 renderScannedContainer();
-                showFeedback("✓ Unit " + item.asset_code + " berhasil ditambahkan!", "success");
+                showFeedback("✓ Unit " + item.asset_code + " berhasil ditambahkan! Silakan foto kondisi aset di bawah.", "success");
                 document.getElementById("barcodeAssetInput").value = "";
+                setTimeout(function() {
+                    var el = document.getElementById("card_item_" + item.id);
+                    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+                }, 150);
             })
             .catch(function(err) {
                 showFeedback("Gagal menghubungi server: " + err.message, "error");
@@ -831,7 +932,7 @@ function handle_route_mobile_asset_loan_return(PDO $pdo): void
                 $pdo->beginTransaction();
 
                 $updItem = $pdo->prepare("UPDATE asset_loan_items 
-                    SET condition_in = ?, notes_in = ?, returned_at = ?, status = ? 
+                    SET condition_in = ?, notes_in = ?, photo_in = COALESCE(?, photo_in), returned_at = ?, status = ? 
                     WHERE id = ? AND loan_id = ?");
 
                 $updAsset = $pdo->prepare("UPDATE asset_items 
@@ -842,6 +943,7 @@ function handle_route_mobile_asset_loan_return(PDO $pdo): void
                 $itemQuery->execute([$id]);
                 $existingItems = $itemQuery->fetchAll(PDO::FETCH_ASSOC);
 
+                $firstPhotoIn = null;
                 foreach ($existingItems as $it) {
                     $itemId = (int)$it['id'];
                     $assetId = (int)$it['asset_item_id'];
@@ -850,7 +952,16 @@ function handle_route_mobile_asset_loan_return(PDO $pdo): void
                     $cond = trim((string)($conditionsIn[$itemId] ?? 'Normal / Baik'));
                     $note = trim((string)($notesIn[$itemId] ?? ''));
 
-                    $updItem->execute([$cond ?: 'Normal / Baik', $note ?: null, $actualReturnDate, $st, $itemId, $id]);
+                    $photoIn = null;
+                    $fileKey = 'photo_in_' . $itemId;
+                    if (!empty($_FILES[$fileKey]['tmp_name']) && is_uploaded_file($_FILES[$fileKey]['tmp_name'])) {
+                        $photoIn = save_mobile_loan_photo($_FILES[$fileKey], 'loan_in_' . $itemId);
+                        if ($firstPhotoIn === null && $photoIn) {
+                            $firstPhotoIn = $photoIn;
+                        }
+                    }
+
+                    $updItem->execute([$cond ?: 'Normal / Baik', $note ?: null, $photoIn, $actualReturnDate, $st, $itemId, $id]);
 
                     if ($st === 'damaged') {
                         $updAsset->execute(['repair', $repairStatusId ?: null, $assetId]);
@@ -862,9 +973,9 @@ function handle_route_mobile_asset_loan_return(PDO $pdo): void
                 }
 
                 $updHeader = $pdo->prepare("UPDATE asset_loans 
-                    SET status = 'returned', actual_return_date = ?, return_officer_user_id = ?, officer_notes = CONCAT(COALESCE(officer_notes,''), '\n[Pengembalian Mobile]: ', ?) 
+                    SET status = 'returned', actual_return_date = ?, photo_in = COALESCE(?, photo_in), return_officer_user_id = ?, officer_notes = CONCAT(COALESCE(officer_notes,''), '\n[Pengembalian Mobile]: ', ?) 
                     WHERE id = ?");
-                $updHeader->execute([$actualReturnDate, $user['id'] ?? null, $officerNotes ?: 'Semua unit dikembalikan via mobile', $id]);
+                $updHeader->execute([$actualReturnDate, $firstPhotoIn, $user['id'] ?? null, $officerNotes ?: 'Semua unit dikembalikan via mobile', $id]);
 
                 $pdo->commit();
                 flash("Pengembalian unit untuk transaksi <strong>{$loan['loan_code']}</strong> berhasil dicatat!", 'ok');
@@ -912,7 +1023,7 @@ function handle_route_mobile_asset_loan_return(PDO $pdo): void
                 </div>
             </div>
 
-            <form method="post" action="<?= route_url('mobile_asset_loan_return', ['id' => $id]) ?>" style="margin-top:14px;">
+            <form method="post" action="<?= route_url('mobile_asset_loan_return', ['id' => $id]) ?>" enctype="multipart/form-data" style="margin-top:14px;">
                 <input type="hidden" name="csrf" value="<?= csrf_token() ?>">
                 <input type="hidden" name="loan_id" value="<?= $id ?>">
 
@@ -943,6 +1054,18 @@ function handle_route_mobile_asset_loan_return(PDO $pdo): void
                                 </div>
                             </div>
 
+                            <?php if (!empty($it['photo_out'])): ?>
+                                <div style="margin-top:8px;padding:6px 8px;background:#1e293b;border-radius:6px;display:flex;align-items:center;gap:8px;">
+                                    <a href="<?= e($it['photo_out']) ?>" target="_blank" style="flex-shrink:0;">
+                                        <img src="<?= e($it['photo_out']) ?>" style="width:44px;height:44px;object-fit:cover;border-radius:4px;border:1px solid #475569;" alt="Foto Pinjam">
+                                    </a>
+                                    <div style="font-size:11px;">
+                                        <div style="color:#cbd5e1;font-weight:600;">Foto Saat Dipinjam</div>
+                                        <a href="<?= e($it['photo_out']) ?>" target="_blank" style="color:#38bdf8;">Lihat ukuran penuh ↗</a>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+
                             <div style="margin-top:8px;">
                                 <label style="font-size:11px;margin:4px 0 2px;">Status Pengembalian</label>
                                 <select name="item_status[<?= (int)$it['id'] ?>]" style="padding:8px;font-size:13px;">
@@ -962,6 +1085,20 @@ function handle_route_mobile_asset_loan_return(PDO $pdo): void
                                     <input name="notes_in[<?= (int)$it['id'] ?>]" value="" placeholder="Keterangan..." style="padding:6px;font-size:12px;">
                                 </div>
                             </div>
+
+                            <div style="margin-top:8px;padding-top:8px;border-top:1px dashed #334155;">
+                                <div style="font-size:10px;color:#94a3b8;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;">
+                                    <span>📷 Foto Unit Saat Dikembalikan</span>
+                                    <span style="font-size:10px;color:#64748b;">(Kamera HP)</span>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                                    <label for="photo_in_<?= (int)$it['id'] ?>" class="btn btn-secondary" style="margin:0;padding:6px 10px;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">
+                                        <span>📸 Ambil / Pilih Foto</span>
+                                    </label>
+                                    <input type="file" id="photo_in_<?= (int)$it['id'] ?>" name="photo_in_<?= (int)$it['id'] ?>" accept="image/*" capture="environment" style="display:none;" onchange="previewItemPhoto(this, 'preview_in_<?= (int)$it['id'] ?>')">
+                                    <div id="preview_in_<?= (int)$it['id'] ?>" style="display:flex;align-items:center;gap:6px;"></div>
+                                </div>
+                            </div>
                         </div>
                     <?php endforeach; ?>
                 </div>
@@ -979,6 +1116,34 @@ function handle_route_mobile_asset_loan_return(PDO $pdo): void
                 </a>
             </form>
         </div>
+
+        <script>
+        function previewItemPhoto(input, targetId) {
+            var target = document.getElementById(targetId);
+            if (!target) return;
+            target.innerHTML = "";
+            if (input.files && input.files[0]) {
+                var file = input.files[0];
+                var reader = new FileReader();
+                reader.onload = function(e) {
+                    target.innerHTML = 
+                        "<div style='position:relative;display:inline-block;'>"
+                        + "  <img src='" + e.target.result + "' style='width:48px;height:48px;object-fit:cover;border-radius:6px;border:2px solid #38bdf8;display:block;'>"
+                        + "  <button type='button' onclick='clearItemPhoto(\"" + input.id + "\", \"" + targetId + "\")' style='position:absolute;top:-6px;right:-6px;background:#ef4444;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:11px;font-weight:bold;line-height:18px;padding:0;cursor:pointer;'>✕</button>"
+                        + "</div>"
+                        + "<span style='font-size:10px;color:#38bdf8;font-weight:600;'>Foto Siap</span>";
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function clearItemPhoto(inputId, targetId) {
+            var input = document.getElementById(inputId);
+            if (input) input.value = "";
+            var target = document.getElementById(targetId);
+            if (target) target.innerHTML = "";
+        }
+        </script>
         <?php
         render_mobile_loan_footer('return');
         return;
@@ -1252,6 +1417,32 @@ function handle_route_mobile_asset_loan_detail(PDO $pdo): void
                             &bull; Kembali: <em style="color:#f8fafc;"><?= e($it['condition_in']) ?></em>
                         <?php endif; ?>
                     </div>
+                    <?php if (!empty($it['photo_out']) || !empty($it['photo_in'])): ?>
+                        <div style="margin-top:8px;padding-top:8px;border-top:1px dashed #334155;display:flex;gap:12px;flex-wrap:wrap;">
+                            <?php if (!empty($it['photo_out'])): ?>
+                                <div style="display:flex;align-items:center;gap:6px;">
+                                    <a href="<?= e($it['photo_out']) ?>" target="_blank">
+                                        <img src="<?= e($it['photo_out']) ?>" alt="Foto Pinjam" style="width:50px;height:50px;object-fit:cover;border-radius:6px;border:1px solid #475569;">
+                                    </a>
+                                    <div style="font-size:10px;line-height:1.3;">
+                                        <span style="color:#38bdf8;font-weight:600;">Foto Pinjam</span><br>
+                                        <a href="<?= e($it['photo_out']) ?>" target="_blank" style="color:#94a3b8;">Lihat ↗</a>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+                            <?php if (!empty($it['photo_in'])): ?>
+                                <div style="display:flex;align-items:center;gap:6px;">
+                                    <a href="<?= e($it['photo_in']) ?>" target="_blank">
+                                        <img src="<?= e($it['photo_in']) ?>" alt="Foto Kembali" style="width:50px;height:50px;object-fit:cover;border-radius:6px;border:1px solid #475569;">
+                                    </a>
+                                    <div style="font-size:10px;line-height:1.3;">
+                                        <span style="color:#4ade80;font-weight:600;">Foto Kembali</span><br>
+                                        <a href="<?= e($it['photo_in']) ?>" target="_blank" style="color:#94a3b8;">Lihat ↗</a>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    <?php endif; ?>
                 </div>
             <?php endforeach; ?>
         </div>

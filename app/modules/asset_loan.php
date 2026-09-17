@@ -1089,6 +1089,13 @@ function handle_route_asset_loan_detail(PDO $pdo): void
     foreach ($items as $it) {
         $nameInfo = e($it['asset_name'] ?: ($it['brand'] . ' ' . $it['model']));
         $catInfo = e(($it['group_name'] ?? '') . ' - ' . ($it['type_name'] ?? ''));
+        $photoOutHtml = !empty($it['photo_out'])
+            ? '<div style="margin-top:5px;"><a href="' . e($it['photo_out']) . '" target="_blank"><img src="' . e($it['photo_out']) . '" style="max-height:55px;max-width:85px;border-radius:4px;border:1px solid #cbd5e1;display:block;" alt="Foto Pinjam"></a></div>'
+            : '';
+        $photoInHtml = !empty($it['photo_in'])
+            ? '<div style="margin-top:5px;"><a href="' . e($it['photo_in']) . '" target="_blank"><img src="' . e($it['photo_in']) . '" style="max-height:55px;max-width:85px;border-radius:4px;border:1px solid #cbd5e1;display:block;" alt="Foto Kembali"></a></div>'
+            : '';
+
         echo '<tr style="border-bottom:1px solid #e2e8f0;">'
             . '  <td style="padding:8px 10px;text-align:center;border-right:1px solid #cbd5e1;">' . $no++ . '</td>'
             . '  <td style="padding:8px 10px;font-family:monospace;font-weight:bold;color:#0369a1;border-right:1px solid #cbd5e1;">' . e($it['asset_code']) . '</td>'
@@ -1099,6 +1106,7 @@ function handle_route_asset_loan_detail(PDO $pdo): void
             . '  <td style="padding:8px 10px;border-right:1px solid #cbd5e1;">'
             . '    <div>' . e($it['condition_out']) . '</div>'
             . (!empty($it['notes_out']) ? '<div style="font-size:11px;color:#64748b;">' . e($it['notes_out']) . '</div>' : '')
+            . $photoOutHtml
             . '  </td>'
             . '  <td style="padding:8px 10px;">'
             . ($it['status'] === 'returned'
@@ -1106,6 +1114,7 @@ function handle_route_asset_loan_detail(PDO $pdo): void
                 : ($it['status'] === 'damaged'
                     ? '<div style="color:#991b1b;font-weight:600;">⚠️ Rusak: ' . e($it['condition_in']) . '</div>'
                     : '<span style="color:#b45309;">Sedang Dipinjam</span>'))
+            . $photoInHtml
             . '  </td>'
             . '</tr>';
     }
@@ -1293,6 +1302,7 @@ function handle_route_asset_loan_return(PDO $pdo): void
             . '  <td style="padding:10px 12px;color:#475569;">'
             . '    <div>' . e($it['condition_out']) . '</div>'
             . (!empty($it['notes_out']) ? '<div style="font-size:11px;color:#64748b;">' . e($it['notes_out']) . '</div>' : '')
+            . (!empty($it['photo_out']) ? '<div style="margin-top:4px;"><a href="' . e($it['photo_out']) . '" target="_blank"><img src="' . e($it['photo_out']) . '" style="max-height:48px;max-width:75px;border-radius:4px;border:1px solid #cbd5e1;vertical-align:middle;" alt="Foto Pinjam"> <span style="font-size:11px;color:#0284c7;">Foto Pinjam ↗</span></a></div>' : '')
             . '  </td>'
             . '  <td style="padding:10px 12px;">'
             . '    <select name="item_status[' . $iid . ']" style="width:100%;padding:6px;font-size:13px;border-radius:4px;border:1px solid #cbd5e1;">'
