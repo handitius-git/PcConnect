@@ -125,15 +125,15 @@ function mobile_schedule(PDO $pdo): void
     sync_completed_mobile_schedules($pdo, (int)$user['id']);
     render_mobile_header('Schedule', $user);
     $stmt = $pdo->prepare("SELECT s.*, 
-        COALESCE(ai.asset_code, ma.maintenance_asset_code, s.pc_id, s.printer_id, CONCAT('ASET #', s.id)) AS asset_id, 
+        COALESCE(ai.asset_code, s.pc_id, s.printer_id, CONCAT('Unit #', s.id)) AS asset_id, 
         COALESCE(ai.custodian_name, ma.owner_name, p.owner_name, pr.printer_name, '-') AS owner_name, 
         COALESCE(ai.asset_name, ma.name, p.computer_name, pr.printer_name, pr.location, '-') AS computer_name, 
-        COALESCE(ai.location_label, ai.location_name, ma.location_label, p.location_label, pr.location, '') AS location_label,
+        COALESCE(ai.location_label, ma.location_label, p.location_label, pr.location, '') AS location_label,
         ai.asset_mode,
         EXISTS (SELECT 1 FROM maintenance_reports r WHERE r.schedule_id=s.id) AS has_report 
         FROM maintenance_schedules s 
-        LEFT JOIN asset_items ai ON ai.id = COALESCE(s.asset_item_id, ma.asset_item_id)
         LEFT JOIN maintenance_assets ma ON ma.id = s.maintenance_asset_id
+        LEFT JOIN asset_items ai ON ai.id = COALESCE(s.asset_item_id, ma.asset_item_id)
         LEFT JOIN pcs p ON (p.pc_id = s.pc_id OR (s.pc_id IS NULL AND p.asset_item_id = s.asset_item_id))
         LEFT JOIN printers pr ON (pr.prn_id = s.printer_id OR (s.printer_id IS NULL AND pr.asset_item_id = s.asset_item_id))
         WHERE s.technician_id=? AND s.status<>'completed' 
@@ -424,8 +424,8 @@ function mobile_scan(PDO $pdo): void
     }
     $scanTitle = $phase === 'end' ? 'Scan QR Selesai' : 'Scan QR Mulai';
     $codeReadonly = ($user['role'] ?? '') === 'technician' ? ' readonly' : '';
-    $manualNote = ($user['role'] ?? '') === 'technician' ? '<p class="muted">Untuk teknisi, Maintenance Asset ID hanya bisa terisi dari live scan kamera.</p>' : '<p class="muted">Admin masih dapat mengetik Maintenance Asset ID untuk troubleshooting.</p>';
-    echo '<section class="panel"><h1>' . e($scanTitle) . '</h1><p class="muted">QR terenkripsi otomatis divalidasi oleh sistem.</p><div id="reader" style="display:none;width:100%;max-width:420px"></div><video id="video" class="scan-video" autoplay muted playsinline></video><p id="cameraStatus" class="camera-note">Tekan Mulai Live Scan. Kamera dan GPS wajib aktif untuk teknisi.</p><p><button type="button" id="startCamera" class="btn primary">Mulai Live Scan</button></p>' . $manualNote . '<form method="post" id="scanForm"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="id" value="' . e($scheduleId) . '"><input type="hidden" name="phase" value="' . e($phase) . '"><input type="hidden" id="lat" name="lat"><input type="hidden" id="lng" name="lng"><input type="hidden" id="eqr" name="eqr" value="' . e($eqr) . '"><label>Maintenance Asset ID<input id="code" name="code" value="' . e($code) . '" placeholder="Terisi otomatis dari live scan QR" required' . $codeReadonly . '></label><button class="btn primary">Validasi QR</button></form></section>';
+    $manualNote = ($user['role'] ?? '') === 'technician' ? '<p class="muted">Untuk teknisi, Kode Unit Aset hanya bisa terisi dari live scan kamera.</p>' : '<p class="muted">Admin masih dapat mengetik Kode Unit Aset untuk troubleshooting.</p>';
+    echo '<section class="panel"><h1>' . e($scanTitle) . '</h1><p class="muted">QR terenkripsi otomatis divalidasi oleh sistem.</p><div id="reader" style="display:none;width:100%;max-width:420px"></div><video id="video" class="scan-video" autoplay muted playsinline></video><p id="cameraStatus" class="camera-note">Tekan Mulai Live Scan. Kamera dan GPS wajib aktif untuk teknisi.</p><p><button type="button" id="startCamera" class="btn primary">Mulai Live Scan</button></p>' . $manualNote . '<form method="post" id="scanForm"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="id" value="' . e($scheduleId) . '"><input type="hidden" name="phase" value="' . e($phase) . '"><input type="hidden" id="lat" name="lat"><input type="hidden" id="lng" name="lng"><input type="hidden" id="eqr" name="eqr" value="' . e($eqr) . '"><label>Kode Unit Aset<input id="code" name="code" value="' . e($code) . '" placeholder="Terisi otomatis dari live scan QR" required' . $codeReadonly . '></label><button class="btn primary">Validasi QR</button></form></section>';
     echo '<script src="https://unpkg.com/html5-qrcode" onerror="window.__qrLibFailed=true"></script><script>(function(){var code=document.getElementById("code"),eqrInput=document.getElementById("eqr"),status=document.getElementById("cameraStatus"),video=document.getElementById("video"),reader=document.getElementById("reader"),detector=null,timer=null,html5=null,submitted=false,gpsReady=false;function extractData(raw){var v=String(raw||"").trim();try{var u=new URL(v,window.location.href);if(u.searchParams.get("eqr")){return {eqr:u.searchParams.get("eqr")};}if(u.searchParams.get("code")){v=u.searchParams.get("code");}}catch(e){if(v.indexOf("eqr=")>=0){return {eqr:v.split("eqr=").pop().split("&")[0]};}if(v.indexOf("code=")>=0){v=v.split("code=").pop().split("&")[0];}}v=decodeURIComponent(v).trim().toUpperCase();var m=v.match(/[A-Z0-9_-]+-[A-Z0-9]{2,12}/);return {code:m?m[0]:v};}function handleScan(raw){if(submitted){return;}var res=extractData(raw);if(res.eqr){eqrInput.value=res.eqr;code.value="[ENCRYPTED_QR]";status.textContent="QR terenkripsi terbaca. Memvalidasi...";submitted=true;setTimeout(function(){document.getElementById("scanForm").submit();},400);return;}if(res.code){code.value=res.code;status.textContent="QR terbaca: "+res.code+". Memvalidasi...";submitted=true;setTimeout(function(){document.getElementById("scanForm").submit();},400);}}if(navigator.geolocation){navigator.geolocation.getCurrentPosition(function(p){document.getElementById("lat").value=p.coords.latitude.toFixed(7);document.getElementById("lng").value=p.coords.longitude.toFixed(7);gpsReady=true;status.textContent="GPS siap. Akurasi sekitar "+Math.round(p.coords.accuracy)+" meter.";},function(){},{enableHighAccuracy:true,timeout:15000,maximumAge:0});}if("BarcodeDetector" in window){detector=new BarcodeDetector({formats:["qr_code"]});}document.getElementById("startCamera").onclick=async function(){if(window.Html5Qrcode){try{video.style.display="none";reader.style.display="block";html5=new Html5Qrcode("reader");await html5.start({facingMode:"environment"},{fps:10,qrbox:{width:240,height:240}},function(decoded){handleScan(decoded);});return;}catch(e){}}if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia){try{var s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}}});video.srcObject=s;video.style.display="block";clearInterval(timer);timer=setInterval(async function(){try{if(detector){var r=await detector.detect(video);if(r&&r[0]){handleScan(r[0].rawValue);}}}catch(e){}},800);}catch(e){status.textContent="Kamera tidak dapat diakses.";}}};})();</script>';
     render_mobile_footer();
 }
@@ -439,17 +439,17 @@ function mobile_job(PDO $pdo): void
     ensure_maintenance_work_schema($pdo);
     expire_stale_mobile_work_or_logout($pdo, $user, $id > 0 ? $id : null);
     $jobSql = 'SELECT s.*, 
-        COALESCE(ai.asset_code, ma.maintenance_asset_code, s.pc_id, s.printer_id, CONCAT("ASET #", s.maintenance_asset_id)) AS asset_id, 
-        COALESCE(ma.owner_name, ai.custodian_name, p.owner_name, pr.printer_name, "-") AS owner_name, 
-        COALESCE(ma.name, ai.asset_name, p.computer_name, pr.printer_name, pr.location, "-") AS computer_name, 
+        COALESCE(ai.asset_code, s.pc_id, s.printer_id, CONCAT("Unit #", s.id)) AS asset_id, 
+        COALESCE(ai.custodian_name, ma.owner_name, p.owner_name, pr.printer_name, "-") AS owner_name, 
+        COALESCE(ai.asset_name, ma.name, p.computer_name, pr.printer_name, pr.location, "-") AS computer_name, 
         COALESCE(p.physical_condition, pr.physical_condition) AS physical_condition, 
         p.general_specs, p.benchmark, p.ai_recommendation,
-        ma.maintenance_asset_code, ma.location_label AS ma_location_label
+        ai.location_label AS ma_location_label
         FROM maintenance_schedules s 
         LEFT JOIN maintenance_assets ma ON ma.id = s.maintenance_asset_id 
-        LEFT JOIN asset_items ai ON ai.id = ma.asset_item_id 
-        LEFT JOIN pcs p ON (p.pc_id = s.pc_id OR (s.pc_id IS NULL AND ma.pc_id IS NOT NULL AND p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci)) 
-        LEFT JOIN printers pr ON (pr.prn_id = s.printer_id OR (s.printer_id IS NULL AND ma.printer_id IS NOT NULL AND pr.prn_id COLLATE utf8mb4_unicode_ci = ma.printer_id COLLATE utf8mb4_unicode_ci)) 
+        LEFT JOIN asset_items ai ON ai.id = COALESCE(s.asset_item_id, ma.asset_item_id) 
+        LEFT JOIN pcs p ON (p.pc_id = s.pc_id OR (s.pc_id IS NULL AND (ma.pc_id IS NOT NULL AND p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci OR p.asset_item_id = s.asset_item_id))) 
+        LEFT JOIN printers pr ON (pr.prn_id = s.printer_id OR (s.printer_id IS NULL AND (ma.printer_id IS NOT NULL AND pr.prn_id COLLATE utf8mb4_unicode_ci = ma.printer_id COLLATE utf8mb4_unicode_ci OR pr.asset_item_id = s.asset_item_id))) 
         WHERE s.id=?';
     if ($user['role'] === 'admin') {
         $stmt = $pdo->prepare($jobSql);
@@ -643,9 +643,6 @@ function mobile_job(PDO $pdo): void
     $jobsList = $jobsStmt->fetchAll();
 
     $assetDisplayTitle = (string)$schedule['asset_id'];
-    if (!empty($schedule['maintenance_asset_code']) && $schedule['maintenance_asset_code'] !== $assetDisplayTitle) {
-        $assetDisplayTitle .= ' (' . $schedule['maintenance_asset_code'] . ')';
-    }
     echo '<section class="panel"><h1>' . e($assetDisplayTitle) . '</h1><p><strong>' . e($schedule['owner_name']) . '</strong> - ' . e($schedule['computer_name'] ?: '-') . '</p>';
     if (!empty($schedule['ma_location_label'])) {
         echo '<p class="muted" style="margin-top:-6px;font-size:13px;">📍 ' . e($schedule['ma_location_label']) . '</p>';
@@ -870,13 +867,12 @@ function mobile_history(PDO $pdo): void
     expire_stale_mobile_work_or_logout($pdo, $user);
     render_mobile_header('History', $user);
     $stmt = $pdo->prepare("SELECT s.*, 
-        COALESCE(ai.asset_code, ma.maintenance_asset_code, s.pc_id, s.printer_id, CONCAT('ASET #', s.maintenance_asset_id)) AS asset_id, 
-        COALESCE(ma.owner_name, ai.custodian_name, p.owner_name, pr.printer_name, '-') AS owner_name,
-        COALESCE(ma.name, ai.asset_name, p.computer_name, pr.printer_name, pr.location, '-') AS computer_name,
-        ma.maintenance_asset_code
+        COALESCE(ai.asset_code, s.pc_id, s.printer_id, CONCAT('Unit #', s.id)) AS asset_id, 
+        COALESCE(ai.custodian_name, ma.owner_name, p.owner_name, pr.printer_name, '-') AS owner_name,
+        COALESCE(ai.asset_name, ma.name, p.computer_name, pr.printer_name, pr.location, '-') AS computer_name
         FROM maintenance_schedules s 
         LEFT JOIN maintenance_assets ma ON ma.id = s.maintenance_asset_id 
-        LEFT JOIN asset_items ai ON ai.id = ma.asset_item_id 
+        LEFT JOIN asset_items ai ON ai.id = COALESCE(s.asset_item_id, ma.asset_item_id) 
         LEFT JOIN pcs p ON (p.pc_id = s.pc_id OR (s.pc_id IS NULL AND ma.pc_id IS NOT NULL AND p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci)) 
         LEFT JOIN printers pr ON (pr.prn_id = s.printer_id OR (s.printer_id IS NULL AND ma.printer_id IS NOT NULL AND pr.prn_id COLLATE utf8mb4_unicode_ci = ma.printer_id COLLATE utf8mb4_unicode_ci)) 
         WHERE s.technician_id=? 
@@ -885,11 +881,7 @@ function mobile_history(PDO $pdo): void
     echo '<section class="panel"><h1>History</h1></section>';
     foreach ($stmt as $row) {
         $displayCode = (string)$row['asset_id'];
-        if (!empty($row['maintenance_asset_code']) && $row['maintenance_asset_code'] !== $displayCode) {
-            $codeHtml = e($displayCode) . ' <small class="muted" style="font-weight:normal;">(' . e($row['maintenance_asset_code']) . ')</small>';
-        } else {
-            $codeHtml = e($displayCode);
-        }
+        $codeHtml = e($displayCode);
         echo '<section class="panel"><div class="split"><div><strong>' . $codeHtml . '</strong><br><span class="muted">' . e($row['scheduled_date']) . ' - ' . e($row['owner_name']) . ' (' . e($row['computer_name'] ?: '-') . ')</span><br><span class="badge">' . e($row['status']) . '</span></div><a class="btn" href="' . route_url('mobile_job', ['id' => $row['id']]) . '">Buka</a></div></section>';
     }
     render_mobile_footer();

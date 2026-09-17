@@ -247,8 +247,11 @@ function handle_route_mobile_service(PDO $pdo): void
     FROM corrective_tickets")->fetch(PDO::FETCH_ASSOC);
 
     // Ambil 4 tiket tugas terbaru
-    $recentTickets = $pdo->query("SELECT t.*, ma.maintenance_asset_code, ma.name AS asset_name
+    $recentTickets = $pdo->query("SELECT t.*, 
+                                  COALESCE(ai.asset_code, t.pc_id, t.prn_id, 'Unit') AS display_asset_code,
+                                  COALESCE(ai.asset_name, ma.name, 'Unit') AS asset_name
                                   FROM corrective_tickets t
+                                  LEFT JOIN asset_items ai ON ai.id = t.asset_item_id
                                   LEFT JOIN maintenance_assets ma ON ma.id = t.maintenance_asset_id
                                   WHERE t.status IN ('open', 'assigned', 'in_progress', 'pending_part')
                                   ORDER BY t.priority = 'critical' DESC, t.created_at DESC
@@ -259,7 +262,7 @@ function handle_route_mobile_service(PDO $pdo): void
     <!-- Action Cards -->
     <div class="card" style="background:linear-gradient(135deg, #0369a1, #0f172a);border-color:#0284c7;">
         <h2 style="font-size:18px;color:#fff;margin-bottom:6px;">⚡ Perbaikan Cepat di Tempat</h2>
-        <p style="font-size:13px;color:#e0f2fe;margin:0 0 14px;">Scan QR Maintenance Asset di unit untuk buka case baru atau langsung selesaikan di lokasi.</p>
+        <p style="font-size:13px;color:#e0f2fe;margin:0 0 14px;">Scan QR Unit Aset untuk buka case baru atau langsung selesaikan di lokasi.</p>
         <a href="<?= route_url('mobile_service_scan') ?>" class="btn btn-primary" style="font-size:16px;padding:14px;background:#38bdf8;color:#0f172a;font-weight:700;">
             📷 SCAN QR CODE UNIT
         </a>
@@ -293,7 +296,7 @@ function handle_route_mobile_service(PDO $pdo): void
                         <div>
                             <span style="font-weight:700;color:#38bdf8;font-size:14px;"><?= e($t['ticket_code']) ?></span>
                             <div style="font-size:12px;color:#cbd5e1;font-weight:600;margin-top:2px;">
-                                <?= e($t['maintenance_asset_code'] ?: ($t['pc_id'] ? 'PC ' . $t['pc_id'] : 'Unit')) ?>
+                                <?= e($t['display_asset_code']) ?>
                             </div>
                         </div>
                         <div>
@@ -325,7 +328,7 @@ function handle_route_mobile_service_scan(PDO $pdo): void
         $maintId = resolve_maintenance_asset_id_from_raw_input($pdo, $rawInput);
 
         if (!$maintId || $maintId <= 0) {
-            flash("Maintenance Asset dengan kode/QR tersebut tidak ditemukan. Pastikan unit telah terdaftar.", 'err');
+            flash("Unit Aset dengan kode/QR tersebut tidak ditemukan. Pastikan unit telah terdaftar.", 'err');
             redirect_to('mobile_service_scan');
         }
 
@@ -346,7 +349,7 @@ function handle_route_mobile_service_scan(PDO $pdo): void
     render_mobile_service_header('Scan QR Unit Lapangan', $user);
     ?>
     <div class="card" style="text-align:center;">
-        <h2>📷 Scan QR Maintenance Asset</h2>
+        <h2>📷 Scan QR Unit Aset</h2>
         <p style="font-size:13px;color:#94a3b8;margin:0 0 12px;">Arahkan kamera ke stiker QR Code pada unit fisik.</p>
 
         <div id="reader" style="width:100%;max-width:320px;margin:0 auto;border-radius:12px;overflow:hidden;background:#000;"></div>
@@ -354,8 +357,8 @@ function handle_route_mobile_service_scan(PDO $pdo): void
 
         <form method="post" id="scanForm" style="margin-top:16px;">
             <input type="hidden" name="csrf" value="<?= csrf_token() ?>">
-            <label style="text-align:left;">Atau Ketik Kode Maintenance Asset:
-                <input name="code" id="codeManual" placeholder="Contoh: MNT-PC000003" required>
+            <label style="text-align:left;">Atau Ketik Kode Unit Aset:
+                <input name="code" id="codeManual" placeholder="Contoh: IT-CMP-000001" required>
             </label>
             <button class="btn btn-primary" style="margin-top:8px;">Lanjut Eksekusi</button>
         </form>
@@ -399,7 +402,7 @@ function handle_route_mobile_service_direct(PDO $pdo): void
     $unit = get_maintenance_asset_unit($pdo, $maintId);
 
     if (!$unit) {
-        flash('Unit Maintenance Asset tidak ditemukan.', 'err');
+        flash('Unit Aset tidak ditemukan.', 'err');
         redirect_to('mobile_service_scan');
     }
 
@@ -500,10 +503,7 @@ function handle_route_mobile_service_direct(PDO $pdo): void
                 </span>
             <?php endif; ?>
         </div>
-        <h2 style="margin:4px 0 2px;color:#38bdf8;"><?= e($unit['maintenance_asset_code']) ?></h2>
-        <?php if (!empty($unit['item_asset_code']) && $unit['item_asset_code'] !== $unit['maintenance_asset_code']): ?>
-            <div style="font-size:12px;color:#38bdf8;font-weight:600;">🏷️ Kode Asset: <?= e($unit['item_asset_code']) ?></div>
-        <?php endif; ?>
+        <h2 style="margin:4px 0 2px;color:#38bdf8;"><?= e($unit['item_asset_code'] ?: ($unit['asset_code'] ?? 'Unit Aset')) ?></h2>
         <div style="font-size:14px;font-weight:600;color:#f8fafc;margin-top:2px;"><?= e($unit['name']) ?></div>
         <?php if (!empty($unit['job_desk_name'])): ?>
             <div style="font-size:12px;color:#a5f3fc;margin-top:4px;background:#0369a1;padding:3px 8px;border-radius:6px;display:inline-block;">
@@ -591,8 +591,11 @@ function handle_route_mobile_service_tasks(PDO $pdo): void
     $user = require_corrective_technician();
     ensure_corrective_maintenance_schema($pdo);
 
-    $sql = "SELECT t.*, ma.maintenance_asset_code, ma.name AS asset_name
+    $sql = "SELECT t.*, 
+            COALESCE(ai.asset_code, t.pc_id, t.prn_id, 'Unit') AS display_asset_code,
+            COALESCE(ai.asset_name, ma.name, 'Unit') AS asset_name
             FROM corrective_tickets t
+            LEFT JOIN asset_items ai ON ai.id = t.asset_item_id
             LEFT JOIN maintenance_assets ma ON ma.id = t.maintenance_asset_id
             WHERE t.status IN ('open', 'assigned', 'in_progress', 'pending_part')
             ORDER BY t.priority = 'critical' DESC, t.created_at DESC";
@@ -613,7 +616,7 @@ function handle_route_mobile_service_tasks(PDO $pdo): void
                         <div>
                             <span style="font-weight:700;color:#38bdf8;font-size:15px;"><?= e($t['ticket_code']) ?></span>
                             <div style="font-size:13px;font-weight:600;color:#f8fafc;margin-top:2px;">
-                                📍 <?= e($t['maintenance_asset_code'] ?: ($t['pc_id'] ? 'PC ' . $t['pc_id'] : 'Unit')) ?> - <?= e($t['asset_name'] ?: '-') ?>
+                                📍 <?= e($t['display_asset_code']) ?> - <?= e($t['asset_name'] ?: '-') ?>
                             </div>
                         </div>
                         <div>
@@ -645,7 +648,9 @@ function handle_route_mobile_service_ticket(PDO $pdo): void
     ensure_corrective_maintenance_schema($pdo);
 
     $id = (int)($_GET['id'] ?? 0);
-    $stmt = $pdo->prepare("SELECT t.*, ma.maintenance_asset_code, ma.name AS asset_name, 
+    $stmt = $pdo->prepare("SELECT t.*, 
+                                  COALESCE(ai.asset_code, t.pc_id, t.prn_id, 'Unit') AS display_asset_code,
+                                  COALESCE(ai.asset_name, ma.name, 'Unit') AS asset_name, 
                                   ma.asset_group_id AS ma_group_id, ma.asset_type_id AS ma_type_id,
                                   ai.asset_group_id AS ai_group_id, ai.asset_type_id AS ai_type_id,
                                   c.company_name
@@ -683,10 +688,7 @@ function handle_route_mobile_service_ticket(PDO $pdo): void
         </div>
 
         <div style="margin-top:10px;font-size:13px;line-height:1.6;">
-            <div><strong>Unit:</strong> <?= e($ticket['maintenance_asset_code'] ?: '-') ?> (<?= e($ticket['asset_name'] ?: '-') ?>)</div>
-            <?php if (!empty($unit['item_asset_code']) && $unit['item_asset_code'] !== $ticket['maintenance_asset_code']): ?>
-                <div><strong>Kode Asset:</strong> <span style="color:#38bdf8;font-weight:600;"><?= e($unit['item_asset_code']) ?></span></div>
-            <?php endif; ?>
+            <div><strong>Unit Aset:</strong> <span style="color:#38bdf8;font-weight:700;"><?= e($unit['item_asset_code'] ?: ($ticket['display_asset_code'] ?: '-')) ?></span> (<?= e($ticket['asset_name'] ?: '-') ?>)</div>
             <?php if (!empty($unit['group_name']) || !empty($unit['type_name'])): ?>
                 <div><strong>Kategori:</strong> <span style="color:#38bdf8;font-weight:600;"><?= e($unit['group_name'] ?: 'IT') ?> &bull; <?= e($unit['type_name'] ?: ($unit['asset_category'] ?? 'Comp')) ?></span></div>
             <?php endif; ?>
