@@ -320,6 +320,11 @@ function render_header(string $title, ?array $user = null): void
     echo '.app-layout{display:flex;min-height:100vh;width:100%}';
     // Sidebar styles
     echo '.sidebar{width:var(--sidebar-w);background:var(--sidebar-bg);color:var(--sidebar-text);flex-shrink:0;position:fixed;top:0;bottom:0;left:0;z-index:100;display:flex;flex-direction:column;transition:width .22s cubic-bezier(0.4,0,0.2,1);box-shadow:2px 0 10px rgba(0,0,0,.15);user-select:none;overflow-x:hidden}';
+    echo '.sidebar-resizer{position:absolute;top:0;right:0;width:7px;height:100%;cursor:ew-resize;z-index:120;background:transparent;transition:background .15s}';
+    echo '.sidebar-resizer:hover,.app-layout.resizing .sidebar-resizer{background:rgba(56,189,248,.35)}';
+    echo '.sidebar-resizer::after{content:"";position:absolute;top:50%;right:2px;transform:translateY(-50%);width:3px;height:36px;border-radius:2px;background:rgba(255,255,255,.2);transition:background .15s}';
+    echo '.sidebar-resizer:hover::after,.app-layout.resizing .sidebar-resizer::after{background:#38bdf8}';
+    echo '.app-layout.resizing .sidebar,.app-layout.resizing .main-wrapper{transition:none!important}';
     echo '.sidebar-header{height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid rgba(255,255,255,.08);flex-shrink:0}';
     echo '.brand-link{display:flex;align-items:center;gap:12px;font-weight:700;font-size:17px;color:#fff;overflow:hidden;white-space:nowrap}';
     echo '.brand-logo{width:36px;height:36px;background:linear-gradient(135deg,#2563eb,#38bdf8);border-radius:9px;display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0;box-shadow:0 4px 12px rgba(37,99,235,.35)}';
@@ -351,18 +356,20 @@ function render_header(string $title, ?array $user = null): void
     echo '.logout-btn{background:transparent;border:none;color:#94a3b8;cursor:pointer;padding:6px;border-radius:6px;display:flex;align-items:center;justify-content:center;transition:all .15s}';
     echo '.logout-btn:hover{background:rgba(239,68,68,.15);color:#ef4444}';
     // Collapsed state behavior
-    echo '.app-layout.collapsed .sidebar{width:var(--sidebar-collapsed-w)}';
+    echo '.app-layout.collapsed .sidebar{width:var(--sidebar-collapsed-w)!important}';
     echo '.app-layout.collapsed .brand-text,.app-layout.collapsed .nav-label,.app-layout.collapsed .nav-chevron,.app-layout.collapsed .nav-group-label,.app-layout.collapsed .user-info,.app-layout.collapsed .nav-submenu{display:none!important}';
-    echo '.app-layout.collapsed .sidebar-header{padding:0;justify-content:center}';
-    echo '.app-layout.collapsed .collapse-btn{display:none}';
+    echo '.app-layout.collapsed .sidebar-header{padding:0 10px;justify-content:center;position:relative}';
+    echo '.app-layout.collapsed .collapse-btn{display:flex!important;position:absolute;right:-10px;top:20px;background:#1d4ed8;color:#fff;border-radius:50%;width:20px;height:20px;font-size:10px;box-shadow:0 2px 6px rgba(0,0,0,.3);z-index:125;border:1px solid rgba(255,255,255,.4)}';
+    echo '.app-layout.collapsed .collapse-btn:hover{background:#2563eb;transform:scale(1.1)}';
     echo '.app-layout.collapsed .nav-item{justify-content:center;padding:10px 0}';
     echo '.app-layout.collapsed .sidebar-user{padding:10px 0;justify-content:center}';
     // Main wrapper styles
     echo '.main-wrapper{flex:1;margin-left:var(--sidebar-w);transition:margin-left .22s cubic-bezier(0.4,0,0.2,1);min-width:0;display:flex;flex-direction:column;min-height:100vh}';
-    echo '.app-layout.collapsed .main-wrapper{margin-left:var(--sidebar-collapsed-w)}';
+    echo '.app-layout.collapsed .main-wrapper{margin-left:var(--sidebar-collapsed-w)!important}';
     echo '.topbar{height:60px;background:#fff;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:90;box-shadow:0 1px 3px rgba(0,0,0,.02)}';
     echo '.topbar-left{display:flex;align-items:center;gap:14px}';
-    echo '.topbar-toggle{background:#f1f5f9;border:1px solid #cbd5e1;color:#334155;border-radius:6px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}';
+    echo '.topbar-toggle{background:#f1f5f9;border:1px solid #cbd5e1;color:#334155;border-radius:6px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;transition:all .15s}';
+    echo '.topbar-toggle:hover{background:#e2e8f0;color:#0f172a}';
     echo '.topbar-title{font-size:17px;font-weight:700;color:#0f172a;margin:0}';
     echo '.topbar-right{display:flex;align-items:center;gap:10px}';
     echo 'main{flex:1;max-width:1320px;width:100%;margin:0 auto;padding:24px}';
@@ -432,6 +439,7 @@ function render_header(string $title, ?array $user = null): void
         echo '<div class="app-layout" id="appLayout">';
         echo '<div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleMobileSidebar()"></div>';
         echo '<aside class="sidebar" id="appSidebar">';
+        echo '<div class="sidebar-resizer" id="sidebarResizer" title="Geser ke kiri untuk mode icon, atau geser ke kanan untuk melebarkan menu"></div>';
         echo '<div class="sidebar-header">';
         echo '  <a class="brand-link" href="' . route_url('dashboard') . '">';
         echo '    <div class="brand-logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg></div>';
@@ -587,7 +595,7 @@ function render_header(string $title, ?array $user = null): void
         echo '<div class="main-wrapper">';
         echo '<header class="topbar">';
         echo '  <div class="topbar-left">';
-        echo '    <button class="topbar-toggle" onclick="toggleMobileSidebar()" title="Buka Menu" style="display:none;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg></button>';
+        echo '    <button class="topbar-toggle" onclick="toggleSidebarSlide()" title="Slide / Buka-Tutup Menu"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg></button>';
         echo '    <h1 class="topbar-title">' . e($title) . '</h1>';
         echo '  </div>';
         echo '  <div class="topbar-right">';
@@ -612,11 +620,19 @@ function render_footer(): void
     if ($user) {
         echo '</div></div>'; // End main-wrapper and app-layout
         echo '<script>
+        var _isSidebarDragging = false;
+        var _savedSidebarWidth = 260;
+
         function applySidebarState() {
             var isCollapsed = localStorage.getItem("asetconnect_sidebar_collapsed") === "1";
+            var savedW = parseInt(localStorage.getItem("asetconnect_sidebar_width"), 10);
             var layout = document.getElementById("appLayout");
             var btn = document.getElementById("sidebarCollapseBtn");
             if (layout) {
+                if (savedW && savedW >= 180 && savedW <= 450) {
+                    _savedSidebarWidth = savedW;
+                    layout.style.setProperty("--sidebar-w", savedW + "px");
+                }
                 if (isCollapsed) {
                     layout.classList.add("collapsed");
                     if (btn) btn.innerHTML = "»";
@@ -626,6 +642,7 @@ function render_footer(): void
                 }
             }
         }
+
         function toggleSidebarCollapse() {
             var layout = document.getElementById("appLayout");
             var btn = document.getElementById("sidebarCollapseBtn");
@@ -633,22 +650,101 @@ function render_footer(): void
             var isCollapsed = layout.classList.toggle("collapsed");
             localStorage.setItem("asetconnect_sidebar_collapsed", isCollapsed ? "1" : "0");
             if (btn) btn.innerHTML = isCollapsed ? "»" : "«";
+            if (!isCollapsed) {
+                var w = _savedSidebarWidth || 260;
+                layout.style.setProperty("--sidebar-w", w + "px");
+            }
         }
+
+        function toggleSidebarSlide() {
+            if (window.innerWidth <= 900) {
+                toggleMobileSidebar();
+            } else {
+                toggleSidebarCollapse();
+            }
+        }
+
         function toggleMobileSidebar() {
             var sidebar = document.getElementById("appSidebar");
             var overlay = document.getElementById("sidebarOverlay");
             if (sidebar) sidebar.classList.toggle("mobile-open");
             if (overlay) overlay.classList.toggle("active");
         }
-        applySidebarState();
-        if (window.innerWidth <= 900) {
-            var toggleBtn = document.querySelector(".topbar-toggle");
-            if (toggleBtn) toggleBtn.style.display = "flex";
+
+        function initSidebarResizer() {
+            var resizer = document.getElementById("sidebarResizer");
+            var layout = document.getElementById("appLayout");
+            var btn = document.getElementById("sidebarCollapseBtn");
+            if (!resizer || !layout) return;
+
+            function handleMove(clientX) {
+                if (!_isSidebarDragging) return;
+                if (clientX <= 130) {
+                    // Slide ke paling kiri: otomatis snap ke tinggal icon
+                    if (!layout.classList.contains("collapsed")) {
+                        layout.classList.add("collapsed");
+                    }
+                    layout.style.setProperty("--sidebar-w", "68px");
+                    if (btn) btn.innerHTML = "»";
+                } else {
+                    // Slide ke kanan: munculkan kembali teks menu
+                    if (layout.classList.contains("collapsed")) {
+                        layout.classList.remove("collapsed");
+                    }
+                    var clamped = Math.max(180, Math.min(450, clientX));
+                    _savedSidebarWidth = clamped;
+                    layout.style.setProperty("--sidebar-w", clamped + "px");
+                    if (btn) btn.innerHTML = "«";
+                }
+            }
+
+            function handleEnd() {
+                if (!_isSidebarDragging) return;
+                _isSidebarDragging = false;
+                layout.classList.remove("resizing");
+                document.body.style.cursor = "";
+                document.body.style.userSelect = "";
+
+                var isCol = layout.classList.contains("collapsed");
+                localStorage.setItem("asetconnect_sidebar_collapsed", isCol ? "1" : "0");
+                if (!isCol && _savedSidebarWidth >= 180) {
+                    localStorage.setItem("asetconnect_sidebar_width", _savedSidebarWidth);
+                }
+            }
+
+            resizer.addEventListener("mousedown", function(e) {
+                _isSidebarDragging = true;
+                layout.classList.add("resizing");
+                document.body.style.cursor = "ew-resize";
+                document.body.style.userSelect = "none";
+                e.preventDefault();
+            });
+
+            window.addEventListener("mousemove", function(e) {
+                handleMove(e.clientX);
+            });
+
+            window.addEventListener("mouseup", handleEnd);
+
+            // Touch support
+            resizer.addEventListener("touchstart", function(e) {
+                if (e.touches && e.touches.length === 1) {
+                    _isSidebarDragging = true;
+                    layout.classList.add("resizing");
+                }
+            }, {passive: true});
+
+            window.addEventListener("touchmove", function(e) {
+                if (_isSidebarDragging && e.touches && e.touches.length === 1) {
+                    handleMove(e.touches[0].clientX);
+                }
+            }, {passive: true});
+
+            window.addEventListener("touchend", handleEnd);
         }
-        window.addEventListener("resize", function() {
-            var toggleBtn = document.querySelector(".topbar-toggle");
-            if (toggleBtn) toggleBtn.style.display = window.innerWidth <= 900 ? "flex" : "none";
-        });
+
+        applySidebarState();
+        initSidebarResizer();
         </script>';
     }
     echo '</body></html>';

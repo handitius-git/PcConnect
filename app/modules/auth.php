@@ -138,50 +138,99 @@ function handle_route_login(PDO $pdo): void
         flash('Username atau password salah.', 'err');
         redirect_to('login');
     }
+    $loginQuotes = [
+        [
+            'quote' => 'Keberlanjutan operasional berawal dari keteraturan data dan keandalan tata kelola setiap aset perusahaan.',
+            'sub' => 'Tata Kelola & Aset',
+            'pills' => ['📦 Manajemen Aset', '🛠️ Preventive PM', '🔒 Akuntabilitas']
+        ],
+        [
+            'quote' => 'Ketelitian pada data kecil hari ini adalah fondasi keputusan strategis yang menentukan masa depan bisnis.',
+            'sub' => 'Integritas & Akurasi Data',
+            'pills' => ['📊 Akurasi Data', '🎯 Fokus Mutu', '✨ Disiplin Kerja']
+        ],
+        [
+            'quote' => 'Teknologi terbaik bukan hanya tentang kecanggihan alat, melainkan bagaimana ia mempermudah kerja sama manusia.',
+            'sub' => 'Teknologi & Kolaborasi',
+            'pills' => ['🤝 Sinergi Tim', '💡 Solusi Cerdas', '⚡ Efisiensi']
+        ],
+        [
+            'quote' => 'Efisiensi bukanlah tentang bekerja terburu-buru, melainkan bekerja secara terstruktur, terukur, dan konsisten.',
+            'sub' => 'Produktivitas & Sistem',
+            'pills' => ['📈 Proses Terukur', '⏱️ Disiplin Waktu', '🚀 Produktivitas']
+        ],
+        [
+            'quote' => 'Perawatan rutin dan langkah preventif terencana adalah investasi terbaik untuk kelancaran kerja tanpa henti.',
+            'sub' => 'Perawatan & Keandalan',
+            'pills' => ['🔧 Preventive PM', '🛡️ Zero Downtime', '⚙️ Keandalan']
+        ],
+        [
+            'quote' => 'Kepercayaan dibangun dari transparansi, keterbukaan informasi, dan komitmen memberikan dedikasi terbaik.',
+            'sub' => 'Dedikasi & Pelayanan',
+            'pills' => ['🏆 Profesionalisme', '🔍 Transparansi', '🌟 Komitmen']
+        ],
+        [
+            'quote' => 'Kecepatan mengatasi kendala lahir dari komunikasi yang jernih dan kesiapan setiap lini operasional.',
+            'sub' => 'Sinergi Operasional',
+            'pills' => ['🔗 Kolaborasi Lintas Tim', '💬 Komunikasi', '💪 Solutif']
+        ]
+    ];
+    $initIdx = array_rand($loginQuotes);
+    $initQuote = $loginQuotes[$initIdx];
+    $quotesJson = json_encode($loginQuotes, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE);
+
     render_header('Login');
     echo '<style>
-    .login-wrapper{display:flex;min-height:calc(100vh - 40px);width:100%;align-items:stretch;margin:0 auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 25px 50px -12px rgba(15,23,42,.18);border:1px solid #e2e8f0}
-    .login-quote-side{flex:1.1;background:linear-gradient(145deg,#0b1329 0%,#1e293b 55%,#0f172a 100%);color:#fff;padding:60px 48px;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden}
-    .login-quote-side::before{content:"";position:absolute;top:-100px;left:-100px;width:320px;height:320px;background:radial-gradient(circle,rgba(37,99,235,.25) 0%,rgba(37,99,235,0) 70%);border-radius:50%;pointer-events:none}
-    .login-quote-side::after{content:"";position:absolute;bottom:-80px;right:-80px;width:300px;height:300px;background:radial-gradient(circle,rgba(14,165,233,.2) 0%,rgba(14,165,233,0) 70%);border-radius:50%;pointer-events:none}
-    .quote-brand{display:flex;align-items:center;gap:14px;position:relative;z-index:2}
-    .quote-logo{width:46px;height:46px;background:linear-gradient(135deg,#2563eb,#38bdf8);border-radius:12px;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 20px rgba(37,99,235,.4)}
-    .quote-logo svg{width:26px;height:26px;stroke:#fff;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
-    .quote-brand h2{margin:0;font-size:24px;font-weight:800;color:#fff;letter-spacing:-.02em}
-    .quote-brand span{font-size:12px;color:#94a3b8;display:block;margin-top:2px}
-    .quote-center{margin:auto 0;position:relative;z-index:2;max-width:480px;padding:30px 0}
-    .quote-mark{font-size:64px;line-height:1;color:#38bdf8;font-family:Georgia,serif;opacity:.6;margin-bottom:8px}
-    .quote-text{font-size:20px;line-height:1.6;font-weight:400;color:#f1f5f9;margin:0 0 20px 0;font-style:italic}
-    .quote-author{display:flex;align-items:center;gap:12px}
-    .quote-line{width:36px;height:2px;background:#38bdf8}
-    .quote-sub{font-size:13px;color:#94a3b8;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
-    .quote-pills{display:flex;gap:8px;flex-wrap:wrap;position:relative;z-index:2;margin-top:20px}
-    .quote-pill{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);color:#e2e8f0;padding:6px 12px;border-radius:999px;font-size:12px}
-    .login-form-side{flex:.9;padding:60px 48px;display:flex;flex-direction:column;justify-content:center;background:#fff}
-    .login-form-box{max-width:380px;width:100%;margin:0 auto}
-    .login-header{margin-bottom:32px}
-    .login-header h1{font-size:26px;font-weight:800;color:#0f172a;margin:0 0 8px 0;letter-spacing:-.02em}
-    .login-header p{color:#64748b;font-size:14px;margin:0}
-    .login-group{margin-bottom:20px}
-    .login-group label{display:block;font-size:13px;font-weight:600;color:#334155;margin-bottom:6px}
+    .login-wrapper{display:flex;min-height:440px;width:100%;align-items:stretch;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 20px 40px -12px rgba(15,23,42,.15);border:1px solid #e2e8f0}
+    .login-quote-side{flex:1.05;background:linear-gradient(145deg,#0b1329 0%,#1e293b 55%,#0f172a 100%);color:#fff;padding:32px 28px;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden}
+    .login-quote-side::before{content:"";position:absolute;top:-80px;left:-80px;width:240px;height:240px;background:radial-gradient(circle,rgba(37,99,235,.25) 0%,rgba(37,99,235,0) 70%);border-radius:50%;pointer-events:none}
+    .login-quote-side::after{content:"";position:absolute;bottom:-60px;right:-60px;width:220px;height:220px;background:radial-gradient(circle,rgba(14,165,233,.2) 0%,rgba(14,165,233,0) 70%);border-radius:50%;pointer-events:none}
+    .quote-brand{display:flex;align-items:center;gap:12px;position:relative;z-index:2}
+    .quote-logo{width:38px;height:38px;background:linear-gradient(135deg,#2563eb,#38bdf8);border-radius:10px;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(37,99,235,.35)}
+    .quote-logo svg{width:22px;height:22px;stroke:#fff;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+    .quote-brand h2{margin:0;font-size:20px;font-weight:800;color:#fff;letter-spacing:-.02em}
+    .quote-brand span{font-size:11.5px;color:#94a3b8;display:block;margin-top:1px}
+    .quote-center{margin:auto 0;position:relative;z-index:2;padding:16px 0}
+    .quote-top-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+    .quote-mark{font-size:42px;line-height:1;color:#38bdf8;font-family:Georgia,serif;opacity:.7}
+    .quote-ctrls{display:flex;align-items:center;gap:4px}
+    .quote-btn{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);color:#94a3b8;width:24px;height:24px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:11px;transition:all .15s;padding:0}
+    .quote-btn:hover{background:rgba(255,255,255,.2);color:#fff}
+    .quote-text{font-size:15.5px;line-height:1.55;font-weight:400;color:#f1f5f9;margin:0 0 14px 0;font-style:italic;min-height:72px;transition:opacity .25s ease,transform .25s ease}
+    .quote-text.fading{opacity:0;transform:translateY(4px)}
+    .quote-author{display:flex;align-items:center;gap:10px}
+    .quote-line{width:28px;height:2px;background:#38bdf8}
+    .quote-sub{font-size:11.5px;color:#94a3b8;font-weight:600;letter-spacing:.04em;text-transform:uppercase;transition:opacity .25s}
+    .quote-pills{display:flex;gap:6px;flex-wrap:wrap;position:relative;z-index:2;margin-top:14px;transition:opacity .25s}
+    .quote-pill{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#e2e8f0;padding:4px 9px;border-radius:999px;font-size:11px}
+    .quote-dots{display:flex;gap:5px;align-items:center}
+    .quote-dot{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.25);cursor:pointer;transition:all .2s}
+    .quote-dot.active{background:#38bdf8;width:16px;border-radius:4px}
+    .login-form-side{flex:.95;padding:34px 34px;display:flex;flex-direction:column;justify-content:center;background:#fff}
+    .login-form-box{max-width:320px;width:100%;margin:0 auto}
+    .login-header{margin-bottom:20px}
+    .login-header h1{font-size:22px;font-weight:800;color:#0f172a;margin:0 0 4px 0;letter-spacing:-.02em}
+    .login-header p{color:#64748b;font-size:13px;margin:0}
+    .login-group{margin-bottom:15px}
+    .login-group label{display:block;font-size:12.5px;font-weight:600;color:#334155;margin-bottom:4px}
     .input-wrap{position:relative;display:flex;align-items:center}
-    .input-wrap input{padding-right:42px;height:44px;border-radius:8px;border:1px solid #cbd5e1;font-size:14px;width:100%}
+    .input-wrap input{padding-right:38px;height:38px;border-radius:7px;border:1px solid #cbd5e1;font-size:13px;width:100%}
     .input-wrap input:focus{border-color:#2563eb;outline:none;box-shadow:0 0 0 3px rgba(37,99,235,.15)}
-    .toggle-pwd{position:absolute;right:10px;background:none;border:none;color:#64748b;cursor:pointer;padding:6px;display:flex;align-items:center;justify-content:center;border-radius:4px}
+    .toggle-pwd{position:absolute;right:8px;background:none;border:none;color:#64748b;cursor:pointer;padding:5px;display:flex;align-items:center;justify-content:center;border-radius:4px}
     .toggle-pwd:hover{color:#0f172a}
-    .btn-login{width:100%;height:46px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;transition:all .15s;box-shadow:0 4px 14px rgba(37,99,235,.35);display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px}
-    .btn-login:hover{background:linear-gradient(135deg,#1e40af,#1d4ed8);transform:translateY(-1px);box-shadow:0 6px 20px rgba(37,99,235,.4)}
-    .login-footer-info{margin-top:32px;text-align:center;font-size:12px;color:#94a3b8;display:flex;align-items:center;justify-content:center;gap:6px}
-    @media(max-width:860px){
-        .login-wrapper{flex-direction:column;border-radius:0;box-shadow:none;border:none}
-        .login-quote-side{padding:36px 24px}
-        .login-form-side{padding:40px 24px}
-        .quote-center{margin:20px 0}
-        .quote-text{font-size:17px}
+    .btn-login{width:100%;height:40px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border:none;border-radius:7px;font-size:14px;font-weight:700;cursor:pointer;transition:all .15s;box-shadow:0 3px 12px rgba(37,99,235,.3);display:flex;align-items:center;justify-content:center;gap:8px;margin-top:6px}
+    .btn-login:hover{background:linear-gradient(135deg,#1e40af,#1d4ed8);transform:translateY(-1px);box-shadow:0 5px 16px rgba(37,99,235,.35)}
+    .login-footer-info{margin-top:20px;text-align:center;font-size:11.5px;color:#94a3b8;display:flex;align-items:center;justify-content:center;gap:6px}
+    @media(max-width:768px){
+        .login-wrapper{flex-direction:column;border-radius:0;box-shadow:none;border:none;min-height:auto}
+        .login-quote-side{padding:28px 20px}
+        .login-form-side{padding:30px 20px}
+        .quote-center{margin:10px 0}
+        .quote-text{font-size:15px;min-height:auto}
     }
     </style>';
 
-    echo '<div style="max-width:1080px;margin:30px auto;padding:12px;">';
+    echo '<div style="max-width:840px;margin:35px auto 20px;padding:12px;">';
     echo '<div class="login-wrapper">';
     
     // Left Quote Panel
@@ -190,25 +239,34 @@ function handle_route_login(PDO $pdo): void
     echo '    <div class="quote-logo"><svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg></div>';
     echo '    <div>';
     echo '      <h2>' . e($appName) . '</h2>';
-    echo '      <span>Enterprise Asset & Maintenance System</span>';
+    echo '      <span>Enterprise Asset & Maintenance</span>';
     echo '    </div>';
     echo '  </div>';
 
     echo '  <div class="quote-center">';
-    echo '    <div class="quote-mark">“</div>';
-    echo '    <p class="quote-text">Keberlanjutan operasional berawal dari keteraturan data dan keandalan tata kelola setiap aset perusahaan.</p>';
+    echo '    <div class="quote-top-bar">';
+    echo '      <div class="quote-mark">“</div>';
+    echo '      <div class="quote-ctrls">';
+    echo '        <button type="button" class="quote-btn" onclick="prevQuote()" title="Kutipan sebelumnya">‹</button>';
+    echo '        <button type="button" class="quote-btn" onclick="nextQuote()" title="Kutipan selanjutnya">›</button>';
+    echo '      </div>';
+    echo '    </div>';
+    echo '    <p class="quote-text" id="quoteTextEl">' . e($initQuote['quote']) . '</p>';
     echo '    <div class="quote-author">';
     echo '      <div class="quote-line"></div>';
-    echo '      <span class="quote-sub">Aset & Maintenance Management</span>';
+    echo '      <span class="quote-sub" id="quoteSubEl">' . e($initQuote['sub']) . '</span>';
     echo '    </div>';
-    echo '    <div class="quote-pills">';
-    echo '      <span class="quote-pill">📦 Manajemen Aset & Pinjaman</span>';
-    echo '      <span class="quote-pill">🛠️ Preventive & Corrective PM</span>';
-    echo '      <span class="quote-pill">🔒 Regulasi Berbasis Role</span>';
-    echo '    </div>';
+    $pillsHtml = '';
+    foreach ($initQuote['pills'] as $p) {
+        $pillsHtml .= '<span class="quote-pill">' . e($p) . '</span>';
+    }
+    echo '    <div class="quote-pills" id="quotePillsEl">' . $pillsHtml . '</div>';
     echo '  </div>';
 
-    echo '  <div style="font-size:12px;color:#64748b;">© ' . date('Y') . ' ' . e($appName) . ' • Terintegrasi Multi-Device</div>';
+    echo '  <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:#64748b;">';
+    echo '    <span>© ' . date('Y') . ' ' . e($appName) . '</span>';
+    echo '    <div class="quote-dots" id="quoteDotsEl"></div>';
+    echo '  </div>';
     echo '</div>';
 
     // Right Form Panel
@@ -216,7 +274,7 @@ function handle_route_login(PDO $pdo): void
     echo '  <div class="login-form-box">';
     echo '    <div class="login-header">';
     echo '      <h1>Selamat Datang</h1>';
-    echo '      <p>Silakan masuk dengan akun Anda untuk mengakses sistem ' . e($appName) . '</p>';
+    echo '      <p>Masuk untuk mengakses sistem ' . e($appName) . '</p>';
     echo '    </div>';
 
     echo '    <form method="post" autocomplete="on">';
@@ -233,19 +291,19 @@ function handle_route_login(PDO $pdo): void
     echo '        <div class="input-wrap">';
     echo '          <input type="password" id="loginPass" name="password" placeholder="Masukkan password" required>';
     echo '          <button type="button" class="toggle-pwd" onclick="togglePasswordVisibility()" title="Lihat/Sembunyikan Password">';
-    echo '            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
+    echo '            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
     echo '          </button>';
     echo '        </div>';
     echo '      </div>';
 
     echo '      <button class="btn-login" type="submit">';
     echo '        <span>Masuk ke Sistem</span>';
-    echo '        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+    echo '        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>';
     echo '      </button>';
     echo '    </form>';
 
     echo '    <div class="login-footer-info">';
-    echo '      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>';
+    echo '      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>';
     echo '      <span>Koneksi & Akses Terenkripsi Aman</span>';
     echo '    </div>';
     echo '  </div>';
@@ -255,11 +313,76 @@ function handle_route_login(PDO $pdo): void
     echo '</div>'; // End container
 
     echo '<script>
+    var _allQuotes = ' . $quotesJson . ';
+    var _curQuoteIdx = ' . (int)$initIdx . ';
+    var _quoteTimer = null;
+
+    function renderQuoteDots() {
+        var el = document.getElementById("quoteDotsEl");
+        if (!el || !_allQuotes) return;
+        var h = "";
+        for (var i = 0; i < _allQuotes.length; i++) {
+            h += "<span class=\"quote-dot" + (i === _curQuoteIdx ? " active" : "") + "\" onclick=\"setQuote(" + i + ")\"></span>";
+        }
+        el.innerHTML = h;
+    }
+
+    function setQuote(idx) {
+        if (!_allQuotes || _allQuotes.length === 0) return;
+        _curQuoteIdx = (idx + _allQuotes.length) % _allQuotes.length;
+        var item = _allQuotes[_curQuoteIdx];
+        var textEl = document.getElementById("quoteTextEl");
+        var subEl = document.getElementById("quoteSubEl");
+        var pillsEl = document.getElementById("quotePillsEl");
+
+        if (textEl) textEl.classList.add("fading");
+        if (subEl) subEl.style.opacity = "0";
+        if (pillsEl) pillsEl.style.opacity = "0";
+
+        setTimeout(function() {
+            if (textEl) {
+                textEl.innerText = item.quote || "";
+                textEl.classList.remove("fading");
+            }
+            if (subEl) {
+                subEl.innerText = item.sub || "";
+                subEl.style.opacity = "1";
+            }
+            if (pillsEl) {
+                var ph = "";
+                (item.pills || []).forEach(function(p) {
+                    ph += "<span class=\"quote-pill\">" + p + "</span>";
+                });
+                pillsEl.innerHTML = ph;
+                pillsEl.style.opacity = "1";
+            }
+            renderQuoteDots();
+        }, 220);
+
+        restartQuoteTimer();
+    }
+
+    function nextQuote() {
+        setQuote(_curQuoteIdx + 1);
+    }
+
+    function prevQuote() {
+        setQuote(_curQuoteIdx - 1);
+    }
+
+    function restartQuoteTimer() {
+        if (_quoteTimer) clearInterval(_quoteTimer);
+        _quoteTimer = setInterval(nextQuote, 6500);
+    }
+
     function togglePasswordVisibility() {
         var p = document.getElementById("loginPass");
         if (!p) return;
         p.type = p.type === "password" ? "text" : "password";
     }
+
+    renderQuoteDots();
+    restartQuoteTimer();
     </script>';
 
     render_footer();
