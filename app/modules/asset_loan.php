@@ -103,7 +103,7 @@ function find_asset_item_for_loan(PDO $pdo, string $raw): ?array
 
 function handle_route_asset_loans(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance']);
+    $user = require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance', 'loan_officer']);
     $tab = trim((string)($_GET['tab'] ?? 'active'));
     if (!in_array($tab, ['active', 'overdue', 'returned', 'all'], true)) {
         $tab = 'active';
@@ -339,7 +339,7 @@ function handle_route_asset_loans(PDO $pdo): void
  */
 function handle_route_asset_loan_form(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin', 'technician']);
+    $user = require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance', 'loan_officer']);
     $id = (int)($_GET['id'] ?? $_POST['loan_id'] ?? 0);
     $loan = null;
     $existingItems = [];
@@ -977,7 +977,7 @@ function handle_route_asset_loan_form(PDO $pdo): void
  */
 function handle_route_asset_loan_detail(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance']);
+    $user = require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance', 'loan_officer']);
     $id = (int)($_GET['id'] ?? 0);
 
     $stmt = $pdo->prepare("SELECT al.*, u1.name AS officer_name, u2.name AS return_officer_name
@@ -1143,7 +1143,7 @@ function handle_route_asset_loan_detail(PDO $pdo): void
  */
 function handle_route_asset_loan_return(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin', 'technician']);
+    $user = require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance', 'loan_officer']);
     $id = (int)($_GET['id'] ?? $_POST['loan_id'] ?? 0);
 
     $stmt = $pdo->prepare("SELECT * FROM asset_loans WHERE id = ?");
@@ -1338,7 +1338,7 @@ function handle_route_asset_loan_return(PDO $pdo): void
  */
 function handle_route_report_asset_loans(PDO $pdo): void
 {
-    $user = require_role(['admin', 'maintenance_admin', 'technician']);
+    $user = require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance', 'loan_officer']);
     $startDate = trim((string)($_GET['start_date'] ?? ''));
     $endDate = trim((string)($_GET['end_date'] ?? ''));
     $statusFilter = trim((string)($_GET['status'] ?? ''));

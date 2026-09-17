@@ -14,7 +14,7 @@ function require_mobile_loan_user(): array
         flash('Silakan login terlebih dahulu untuk mengakses Peminjaman Aset Mobile.', 'err');
         redirect_to('login');
     }
-    return require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance']);
+    return require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance', 'loan_officer']);
 }
 
 function render_mobile_loan_header(string $title, ?array $user): void
@@ -407,7 +407,7 @@ function handle_route_mobile_asset_loan_create(PDO $pdo): void
             <span>➕</span> Catat Peminjaman Aset
         </h2>
         <form method="post" action="<?= route_url('mobile_asset_loan_create') ?>" onsubmit="return validateMobileLoanForm()">
-            <?= csrf_field() ?>
+            <input type="hidden" name="csrf" value="<?= csrf_token() ?>">
 
             <!-- 1. Peminjam (Autocomplete Master Pengguna) -->
             <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;margin-bottom:12px;">
@@ -912,7 +912,7 @@ function handle_route_mobile_asset_loan_return(PDO $pdo): void
             </div>
 
             <form method="post" action="<?= route_url('mobile_asset_loan_return', ['id' => $id]) ?>" style="margin-top:14px;">
-                <?= csrf_field() ?>
+                <input type="hidden" name="csrf" value="<?= csrf_token() ?>">
                 <input type="hidden" name="loan_id" value="<?= $id ?>">
 
                 <label>Waktu Pengembalian Aktual</label>
@@ -1260,3 +1260,4 @@ function handle_route_mobile_asset_loan_detail(PDO $pdo): void
     <?php
     render_mobile_loan_footer('dashboard');
 }
+

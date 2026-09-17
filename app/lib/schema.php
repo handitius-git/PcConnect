@@ -1061,7 +1061,7 @@ function ensure_performance_indexes(PDO $pdo): void
 function ensure_app_schema(PDO $pdo, bool $force = false): void
 {
     if (!$force && empty($_GET['force_schema'])) {
-        $lockFile = sys_get_temp_dir() . '/pcconnect_schema_v16.lock';
+        $lockFile = sys_get_temp_dir() . '/pcconnect_schema_v17.lock';
         if (file_exists($lockFile) && (time() - filemtime($lockFile) < 1800) && db_table_exists($pdo, 'pcs')) {
             return;
         }
@@ -1088,7 +1088,7 @@ function ensure_app_schema(PDO $pdo, bool $force = false): void
     ensure_unified_asset_schema($pdo);
     ensure_performance_indexes($pdo);
 
-    @touch(sys_get_temp_dir() . '/pcconnect_schema_v16.lock');
+    @touch(sys_get_temp_dir() . '/pcconnect_schema_v17.lock');
 }
 
 function ensure_user_roles_schema(PDO $pdo): void
@@ -1098,8 +1098,8 @@ function ensure_user_roles_schema(PDO $pdo): void
             $stmt = $pdo->query("SHOW COLUMNS FROM users LIKE 'role'");
             $row = $stmt->fetch();
             $type = (string)($row['Type'] ?? '');
-            if (!str_contains($type, 'corrective_maintenance')) {
-                $pdo->exec("ALTER TABLE users MODIFY role ENUM('admin','maintenance_admin','technician','corrective_maintenance') NOT NULL DEFAULT 'technician'");
+            if (!str_contains($type, 'loan_officer') || !str_contains($type, 'corrective_maintenance')) {
+                $pdo->exec("ALTER TABLE users MODIFY role ENUM('admin','maintenance_admin','technician','corrective_maintenance','loan_officer') NOT NULL DEFAULT 'technician'");
             }
         }
     } catch (Throwable $ignored) {

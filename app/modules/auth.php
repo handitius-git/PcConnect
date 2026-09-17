@@ -43,6 +43,7 @@ function role_label(string $role): string
         'maintenance_admin' => 'Admin Maintenance',
         'technician' => 'Teknisi Preventive',
         'corrective_maintenance' => 'Corrective Maintenance',
+        'loan_officer' => 'Petugas Peminjaman Aset',
     ][$role] ?? $role;
 }
 
@@ -52,7 +53,7 @@ function db_supports_maintenance_admin(PDO $pdo): bool
         $stmt = $pdo->query("SHOW COLUMNS FROM users LIKE 'role'");
         $row = $stmt->fetch();
         $type = (string)($row['Type'] ?? '');
-        return strpos($type, 'maintenance_admin') !== false && strpos($type, 'corrective_maintenance') !== false;
+        return strpos($type, 'maintenance_admin') !== false && strpos($type, 'corrective_maintenance') !== false && strpos($type, 'loan_officer') !== false;
     } catch (Throwable $e) {
         return false;
     }
@@ -64,7 +65,7 @@ function ensure_maintenance_admin_role(PDO $pdo): bool
         return true;
     }
     try {
-        $pdo->exec("ALTER TABLE users MODIFY role ENUM('admin','maintenance_admin','technician','corrective_maintenance') NOT NULL DEFAULT 'technician'");
+        $pdo->exec("ALTER TABLE users MODIFY role ENUM('admin','maintenance_admin','technician','corrective_maintenance','loan_officer') NOT NULL DEFAULT 'technician'");
         return db_supports_maintenance_admin($pdo);
     } catch (Throwable $e) {
         return false;
@@ -127,6 +128,9 @@ function handle_route_login(PDO $pdo): void
             }
             if ($user['role'] === 'corrective_maintenance') {
                 redirect_to('mobile_service');
+            }
+            if ($user['role'] === 'loan_officer') {
+                redirect_to('mobile_asset_loans');
             }
             redirect_to($user['role'] === 'technician' ? 'mobile_dashboard' : 'dashboard');
         }
@@ -270,14 +274,15 @@ function handle_route_users(PDO $pdo): void
             'admin' => 'Admin Full',
             'maintenance_admin' => 'Admin Maintenance (Preventive)',
             'technician' => 'Teknisi Preventive Maintenance',
-            'corrective_maintenance' => 'Corrective Maintenance (Field Service & Reparasi)'
+            'corrective_maintenance' => 'Corrective Maintenance (Field Service & Reparasi)',
+            'loan_officer' => 'Petugas Peminjaman Aset (Mobile & Web)'
         ] as $roleValue => $roleLabel) {
             $roleOptions .= '<option value="' . e($roleValue) . '"' . ($editUser['role'] === $roleValue ? ' selected' : '') . '>' . e($roleLabel) . '</option>';
         }
         echo '<section class="panel"><div class="split"><h2>Edit User</h2><a class="btn" href="' . route_url('users') . '">Batal Edit</a></div><form method="post"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="update"><input type="hidden" name="id" value="' . e($editUser['id']) . '"><div class="grid three"><label>Nama<input name="name" value="' . e($editUser['name']) . '" required></label><label>Username<input name="username" value="' . e($editUser['username']) . '" required></label><label>Role<select name="role" required>' . $roleOptions . '</select></label></div><button class="btn primary">Simpan Perubahan</button></form></section>';
     }
-    echo '<section class="grid two"><div class="panel"><h2>Tambah User</h2><form method="post"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="add">' . employee_portal_name_picker_html('user', 'userNameInput', 'userUsernameInput') . '<label>Nama<input id="userNameInput" name="name" required></label><label>Username<input id="userUsernameInput" name="username" required></label><label>Role<select name="role"><option value="admin">Admin Full</option><option value="maintenance_admin">Admin Maintenance (Preventive)</option><option value="technician">Teknisi - Preventive Maintenance</option><option value="corrective_maintenance" selected>Corrective Maintenance - Field Service & Reparasi</option></select></label><label>Password<input type="password" name="password" required minlength="8"></label><button class="btn primary">Tambah User</button></form></div>';
-    echo '<div class="panel"><h2>Catatan Hak Akses Role</h2><ul><li><strong>Admin Full:</strong> Akses penuh ke seluruh menu & sistem.</li><li><strong>Admin Maintenance:</strong> Manajemen jadwal & checklist preventive maintenance.</li><li><strong>Teknisi:</strong> Akses aplikasi mobile scan Preventive Maintenance.</li><li><strong>Corrective Maintenance:</strong> Akses aplikasi mobile "PcConnect Field Service" (Troubleshoot, Service QR, Part Replacement).</li></ul></div></section>';
+    echo '<section class="grid two"><div class="panel"><h2>Tambah User</h2><form method="post"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="add">' . employee_portal_name_picker_html('user', 'userNameInput', 'userUsernameInput') . '<label>Nama<input id="userNameInput" name="name" required></label><label>Username<input id="userUsernameInput" name="username" required></label><label>Role<select name="role"><option value="admin">Admin Full</option><option value="maintenance_admin">Admin Maintenance (Preventive)</option><option value="technician">Teknisi - Preventive Maintenance</option><option value="corrective_maintenance">Corrective Maintenance - Field Service & Reparasi</option><option value="loan_officer" selected>Petugas Peminjaman Aset (Mobile & Web)</option></select></label><label>Password<input type="password" name="password" required minlength="8"></label><button class="btn primary">Tambah User</button></form></div>';
+    echo '<div class="panel"><h2>Catatan Hak Akses Role</h2><ul><li><strong>Admin Full:</strong> Akses penuh ke seluruh menu & sistem.</li><li><strong>Admin Maintenance:</strong> Manajemen jadwal & checklist preventive maintenance.</li><li><strong>Teknisi:</strong> Akses aplikasi mobile scan Preventive Maintenance.</li><li><strong>Corrective Maintenance:</strong> Akses aplikasi mobile "PcConnect Field Service" (Troubleshoot, Service QR, Part Replacement).</li><li><strong>Petugas Peminjaman Aset:</strong> Akses serah-terima alat kerja & unit aset, pencatatan peminjaman (scan QR/kode), dan konfirmasi pengembalian melalui Mobile Peminjaman & Web Desktop.</li></ul></div></section>';
     echo '<section class="panel"><h2>Daftar User</h2><table><tr><th>Nama</th><th>Username</th><th>Role</th><th>Status</th><th>Reset Password</th><th>Aksi</th></tr>';
     foreach ($pdo->query('SELECT * FROM users ORDER BY role, name') as $row) {
         echo '<tr><td>' . e($row['name']) . '</td><td>' . e($row['username']) . '</td><td><span class="badge">' . e(role_label((string)$row['role'])) . '</span></td><td>' . ((int)$row['is_active'] === 1 ? '<span class="badge ok">Aktif</span>' : '<span class="badge danger">Nonaktif</span>') . '</td>';

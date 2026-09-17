@@ -128,6 +128,11 @@ function verify_csrf(): void
     }
 }
 
+function csrf_field(): string
+{
+    return '<input type="hidden" name="csrf" value="' . csrf_token() . '">';
+}
+
 function flash(?string $message = null, string $type = 'ok'): ?array
 {
     if ($message !== null) {
@@ -204,6 +209,10 @@ function render_header(string $title, ?array $user = null): void
             echo '<details name="nav_top"><summary>Maintenance</summary><div class="menu"><details><summary>Preventive Maintenance</summary><div class="submenu"><a href="' . route_url('maintenance') . '">Schedule Maintenance</a></div></details><details><summary>Corrective & Service</summary><div class="submenu"><a href="' . route_url('tickets') . '">Tiket & Troubleshooting</a><a href="' . route_url('mobile_service') . '" target="_blank">📱 Mobile Field Service (Teknisi)</a><a href="' . route_url('walkarounds') . '">Patroli / Walkaround</a></div></details></div></details>';
             echo '<details name="nav_top"><summary>Manajemen Aset</summary><div class="menu"><a href="' . route_url('asset_items') . '">Unit Aset</a><a href="' . route_url('asset_loans') . '">Peminjaman Aset</a><a href="' . route_url('mobile_asset_loans') . '" target="_blank">📱 Peminjaman Aset (Mobile)</a></div></details>';
             echo '<details name="nav_top"><summary>Reports</summary><div class="menu"><a href="' . route_url('reports') . '">Report Preventive Maintenance</a><a href="' . route_url('maintenance_status_report') . '">Report Status PC/Printer</a><a href="' . route_url('corrective_repairs') . '">Report Corrective Maintenance</a><a href="' . route_url('asset_movements') . '">Report Mutasi Aset</a><a href="' . route_url('report_asset_loans') . '">Report Peminjaman Aset</a></div></details>';
+        } elseif (($user['role'] ?? '') === 'loan_officer') {
+            echo '<a href="' . route_url('mobile_asset_loans') . '">📱 Mobile Peminjaman</a>';
+            echo '<details name="nav_top"><summary>Manajemen Aset</summary><div class="menu"><a href="' . route_url('asset_loans') . '">Peminjaman Aset</a><a href="' . route_url('mobile_asset_loans') . '" target="_blank">📱 Peminjaman Aset (Mobile)</a></div></details>';
+            echo '<details name="nav_top"><summary>Reports</summary><div class="menu"><a href="' . route_url('report_asset_loans') . '">Report Peminjaman Aset</a></div></details>';
         } else {
             echo '<details name="nav_top"><summary>Maintenance</summary><div class="menu"><details><summary>Preventive Maintenance</summary><div class="submenu"><a href="' . route_url('maintenance') . '">Schedule Maintenance</a></div></details><details><summary>Corrective & Service</summary><div class="submenu"><a href="' . route_url('tickets') . '">Tiket & Troubleshooting</a><a href="' . route_url('mobile_service') . '" target="_blank">📱 Mobile Field Service (Teknisi)</a><a href="' . route_url('walkarounds') . '">Patroli / Walkaround</a></div></details></div></details>';
             echo '<details name="nav_top"><summary>Manajemen Aset</summary><div class="menu"><a href="' . route_url('asset_loans') . '">Peminjaman Aset</a><a href="' . route_url('mobile_asset_loans') . '" target="_blank">📱 Peminjaman Aset (Mobile)</a></div></details>';
@@ -239,6 +248,8 @@ function render_mobile_header(string $title, ?array $user = null): void
     if ($user) {
         if (can_manage_maintenance($user)) {
             echo '<nav class="mobile-nav"><a href="' . route_url('asset_items') . '">Unit Aset</a><a href="' . route_url('maintenance') . '">Schedule</a><a href="' . route_url('reports') . '">Reports</a><a href="' . route_url('logout') . '">Logout</a></nav>';
+        } elseif (($user['role'] ?? '') === 'loan_officer') {
+            echo '<nav class="mobile-nav"><a href="' . route_url('mobile_asset_loans') . '">Pinjaman</a><a href="' . route_url('mobile_asset_loan_create') . '">Pinjam Baru</a><a href="' . route_url('mobile_asset_loan_return') . '">Pengembalian</a><a href="' . route_url('logout') . '">Logout</a></nav>';
         } else {
             echo '<nav class="mobile-nav"><a href="' . route_url('mobile_dashboard') . '">Dashboard</a><a href="' . route_url('mobile_schedule') . '">Schedule</a><a href="' . route_url('mobile_scan') . '">Scan</a><a href="' . route_url('mobile_history') . '">History</a></nav>';
         }

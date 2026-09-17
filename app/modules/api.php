@@ -312,7 +312,7 @@ function handle_route_api_ingest(PDO $pdo): void
 
 function handle_route_employee_search(PDO $pdo): void
 {
-    require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance']);
+    require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance', 'loan_officer']);
     $query = trim((string)($_GET['q'] ?? ''));
     $limit = max(1, min(200, (int)($_GET['limit'] ?? 50)));
     $rows = employee_search_rows($pdo, $query, $limit);
@@ -323,7 +323,7 @@ function handle_route_employee_search(PDO $pdo): void
 
 function handle_route_api_lookup_asset_for_loan(PDO $pdo): void
 {
-    require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance']);
+    require_role(['admin', 'maintenance_admin', 'technician', 'corrective_maintenance', 'loan_officer']);
     $raw = trim((string)($_GET['code'] ?? $_POST['code'] ?? $_GET['eqr'] ?? $_POST['eqr'] ?? ''));
     
     if (!function_exists('find_asset_item_for_loan')) {
