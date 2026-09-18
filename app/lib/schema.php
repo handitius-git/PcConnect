@@ -1076,13 +1076,9 @@ function ensure_performance_indexes(PDO $pdo): void
 
 function ensure_app_schema(PDO $pdo, bool $force = false): void
 {
-    $lockFile = sys_get_temp_dir() . '/asetconnect_schema_v20.lock';
+    $lockFile = sys_get_temp_dir() . '/asetconnect_schema_v22.lock';
     if (!$force && empty($_GET['force_schema'])) {
         if (file_exists($lockFile) && db_table_exists($pdo, 'pcs') && db_table_exists($pdo, 'role_regulations')) {
-            return;
-        }
-        if (db_table_exists($pdo, 'pcs') && db_table_exists($pdo, 'asset_items') && db_table_exists($pdo, 'role_regulations')) {
-            @touch($lockFile);
             return;
         }
     }

@@ -850,9 +850,30 @@ function ingest_analysis_payload(PDO $pdo, array $payload): array
     return ['pc_id' => $pcId, 'summary' => $summary];
 }
 
+function ensure_pc_schema(PDO $pdo): void
+{
+    static $checked = false;
+    if ($checked) {
+        return;
+    }
+    $checked = true;
+    try {
+        if (db_table_exists($pdo, 'pcs')) {
+            if (!db_column_exists($pdo, 'pcs', 'asset_group_id')) {
+                $pdo->exec('ALTER TABLE pcs ADD COLUMN asset_group_id INT NULL AFTER computer_name');
+            }
+            if (!db_column_exists($pdo, 'pcs', 'category')) {
+                $pdo->exec('ALTER TABLE pcs ADD COLUMN category VARCHAR(100) NULL AFTER asset_group_id');
+            }
+        }
+    } catch (Throwable $ignored) {
+    }
+}
+
 function handle_route_pcs(PDO $pdo): void
 {
     $user = require_regulation('pcs', 'view');
+    ensure_pc_schema($pdo);
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete_pc') {
         require_regulation('pcs', 'delete');
@@ -877,6 +898,9 @@ function handle_route_pcs(PDO $pdo): void
     $filterCategory = trim((string)($_GET['category'] ?? ''));
     $q = trim((string)($_GET['q'] ?? ''));
 
+    $hasPcGroupCol = db_column_exists($pdo, 'pcs', 'asset_group_id');
+    $hasPcCatCol = db_column_exists($pdo, 'pcs', 'category');
+
     $baseSql = "SELECT p.*, 
                        ai.asset_code, ai.asset_name, ai.asset_type, ai.asset_category, ai.asset_mode,
                        ma.maintenance_asset_code
@@ -886,11 +910,15 @@ function handle_route_pcs(PDO $pdo): void
     $conditions = [];
     $params = [];
     if ($filterGroupId > 0) {
-        $conditions[] = '(COALESCE(p.asset_group_id, ai.asset_group_id) = ?)';
+        $conditions[] = $hasPcGroupCol
+            ? '(COALESCE(p.asset_group_id, ai.asset_group_id) = ?)'
+            : '(ai.asset_group_id = ?)';
         $params[] = $filterGroupId;
     }
     if ($filterCategory !== '') {
-        $conditions[] = '(COALESCE(NULLIF(p.category, ""), ai.asset_category) = ?)';
+        $conditions[] = $hasPcCatCol
+            ? '(COALESCE(NULLIF(p.category, ""), ai.asset_category) = ?)'
+            : '(ai.asset_category = ?)';
         $params[] = $filterCategory;
     }
     if ($q !== '') {
@@ -922,6 +950,7 @@ function handle_route_pcs(PDO $pdo): void
 
 function handle_route_pc_form(PDO $pdo): void
 {
+    ensure_pc_schema($pdo);
     $pcId = strtoupper(trim((string)($_GET['pc_id'] ?? $_POST['pc_id'] ?? '')));
     $editing = $pcId !== '';
     $user = $editing ? require_regulation('pcs', 'edit') : require_regulation('pcs', 'create');
@@ -1096,6 +1125,7 @@ function handle_route_pc_form(PDO $pdo): void
 function handle_route_pc_detail(PDO $pdo): void
 {
     $user = require_regulation('pcs', 'view');
+    ensure_pc_schema($pdo);
     $pcId = (string)($_GET['pc_id'] ?? '');
     $stmt = $pdo->prepare('SELECT * FROM pcs WHERE pc_id = ?');
     $stmt->execute([$pcId]);
