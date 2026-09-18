@@ -197,31 +197,36 @@ function can_manage_maintenance(?array $user): bool
 function get_regulated_menus(): array
 {
     return [
-        'Master' => [
+        'Transaksi Aset' => [
             'asset_items' => 'Unit Aset',
-            'pcs' => 'Pendataan Khusus Computer',
-            'printers' => 'Printer & Scanner',
-            'master_pengguna' => 'Master Pengguna',
-            'asset_companies' => 'Company',
+            'pcs' => 'Pendataan PC',
+            'asset_loans' => 'Peminjaman Aset',
+            'asset_movements' => 'Mutasi / Tukar Pasang',
+        ],
+        'Maintenance Aset' => [
+            'maintenance' => 'Schedule PM',
+            'tickets' => 'Tiket Corrective',
+            'walkarounds' => 'Patroli Walkaround',
+            'jobs' => 'Job Desk PM',
+            'corrective_job_desks' => 'Job Desk Corrective',
+            'mobile_service' => 'Mobile Service',
+        ],
+        'Reports & QR_Label' => [
+            'labels' => 'QR Label Unit',
+        ],
+        'Data Master' => [
             'asset_groups' => 'Master Komoditas',
             'asset_types' => 'Master Kategori',
             'asset_brands' => 'Master Brand / Merk',
             'asset_master_items' => 'Master Barang (Katalog Model)',
-            'asset_locations' => 'Master Lokasi',
             'asset_identifiers' => 'Identifier Aset',
             'asset_specifications' => 'Spesifikasi Aset',
-            'jobs' => 'Job Desk Preventive Maintenance',
-            'asset_maintenance_templates' => 'Template Maintenance',
-            'corrective_job_desks' => 'Job Desk Corrective Maintenance',
-            'users' => 'Users',
-            'labels' => 'QR Label Unit Aset',
+            'asset_locations' => 'Master Lokasi',
+            'asset_companies' => 'Company',
+            'master_pengguna' => 'Master Pengguna',
         ],
-        'Transaksi' => [
-            'asset_loans' => 'Peminjaman Aset',
-            'maintenance' => 'Schedule Maintenance',
-            'tickets' => 'Tiket & Troubleshooting',
-            'walkarounds' => 'Patroli / Walkaround',
-            'asset_movements' => 'Mutasi / Tukar Pasang',
+        'Pengaturan & Setup' => [
+            'users' => 'Akses Users',
         ]
     ];
 }
@@ -273,15 +278,15 @@ function has_regulation(string $menuKey, string $action = 'view', ?array $user =
     $regs = get_user_regulations($role);
     if (!isset($regs[$menuKey])) {
         if ($role === 'maintenance_admin') {
-            if (in_array($menuKey, ['maintenance', 'asset_items', 'tickets', 'walkarounds', 'asset_loans', 'asset_movements'], true)) {
+            if (in_array($menuKey, ['maintenance', 'asset_items', 'tickets', 'walkarounds', 'asset_loans', 'asset_movements', 'jobs', 'corrective_job_desks', 'mobile_service'], true)) {
                 return true;
             }
         } elseif ($role === 'technician') {
-            if (in_array($menuKey, ['maintenance', 'tickets'], true) && in_array($action, ['view', 'edit'], true)) {
+            if (in_array($menuKey, ['maintenance', 'tickets', 'jobs', 'corrective_job_desks', 'mobile_service'], true) && in_array($action, ['view', 'edit'], true)) {
                 return true;
             }
         } elseif ($role === 'corrective_maintenance') {
-            if (in_array($menuKey, ['tickets', 'walkarounds'], true)) {
+            if (in_array($menuKey, ['tickets', 'walkarounds', 'corrective_job_desks', 'mobile_service'], true)) {
                 return true;
             }
         } elseif ($role === 'loan_officer') {
@@ -347,6 +352,14 @@ function render_header(string $title, ?array $user = null): void
     echo '.nav-submenu .nav-item{padding:7px 10px;font-size:12.5px;color:#94a3b8}';
     echo '.nav-submenu .nav-item:hover{color:#fff}';
     echo '.nav-badge{background:rgba(37,99,235,.2);color:#60a5fa;border:1px solid rgba(37,99,235,.4);padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700}';
+    echo '.nav-subaccordion{margin:3px 0 3px 6px;border-left:2px solid rgba(255,255,255,.12);border-radius:0 6px 6px 0;transition:border-color .15s}';
+    echo '.nav-subaccordion[open]{border-left-color:#38bdf8}';
+    echo '.nav-subaccordion summary{padding:6px 8px;font-size:12px;font-weight:600;color:#94a3b8;cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;border-radius:4px;transition:all .15s}';
+    echo '.nav-subaccordion summary::-webkit-details-marker{display:none}';
+    echo '.nav-subaccordion summary:hover{color:#fff;background:rgba(255,255,255,.06)}';
+    echo '.nav-subaccordion[open]>summary .nav-chevron{transform:rotate(90deg)}';
+    echo '.nav-subaccordion .nav-item{padding:6px 10px;font-size:12px}';
+    echo '.brand-link.active .brand-logo{box-shadow:0 0 0 2px #fff,0 4px 14px rgba(37,99,235,.6)}';
     // User profile footer in sidebar
     echo '.sidebar-user{padding:12px 14px;border-top:1px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.2);flex-shrink:0;overflow:hidden}';
     echo '.user-avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#475569,#334155);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;border:1px solid rgba(255,255,255,.15)}';
@@ -357,7 +370,7 @@ function render_header(string $title, ?array $user = null): void
     echo '.logout-btn:hover{background:rgba(239,68,68,.15);color:#ef4444}';
     // Collapsed state behavior
     echo '.app-layout.collapsed .sidebar{width:var(--sidebar-collapsed-w)!important}';
-    echo '.app-layout.collapsed .brand-text,.app-layout.collapsed .nav-label,.app-layout.collapsed .nav-chevron,.app-layout.collapsed .nav-group-label,.app-layout.collapsed .user-info,.app-layout.collapsed .nav-submenu{display:none!important}';
+    echo '.app-layout.collapsed .brand-text,.app-layout.collapsed .nav-label,.app-layout.collapsed .nav-chevron,.app-layout.collapsed .nav-group-label,.app-layout.collapsed .user-info,.app-layout.collapsed .nav-submenu,.app-layout.collapsed .nav-subaccordion{display:none!important}';
     echo '.app-layout.collapsed .sidebar-header{padding:0 10px;justify-content:center;position:relative}';
     echo '.app-layout.collapsed .collapse-btn{display:flex!important;position:absolute;right:-10px;top:20px;background:#1d4ed8;color:#fff;border-radius:50%;width:20px;height:20px;font-size:10px;box-shadow:0 2px 6px rgba(0,0,0,.3);z-index:125;border:1px solid rgba(255,255,255,.4)}';
     echo '.app-layout.collapsed .collapse-btn:hover{background:#2563eb;transform:scale(1.1)}';
@@ -441,26 +454,23 @@ function render_header(string $title, ?array $user = null): void
         echo '<aside class="sidebar" id="appSidebar">';
         echo '<div class="sidebar-resizer" id="sidebarResizer" title="Geser ke kiri untuk mode icon, atau geser ke kanan untuk melebarkan menu"></div>';
         echo '<div class="sidebar-header">';
-        echo '  <a class="brand-link" href="' . route_url('dashboard') . '">';
+        echo '  <a class="brand-link' . ($curRoute === 'dashboard' ? ' active' : '') . '" href="' . route_url('dashboard') . '" title="AsetConnect Dashboard">';
         echo '    <div class="brand-logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg></div>';
-        echo '    <span class="brand-text">' . e($appName) . '</span>';
+        echo '    <div class="brand-text" style="display:flex;flex-direction:column;line-height:1.2;">';
+        echo '      <span style="font-size:16px;font-weight:800;color:#fff;">' . e($appName) . '</span>';
+        echo '      <span style="font-size:11px;color:#94a3b8;font-weight:500;">Dashboard</span>';
+        echo '    </div>';
         echo '  </a>';
         echo '  <button class="collapse-btn" id="sidebarCollapseBtn" onclick="toggleSidebarCollapse()" title="Collapse / Expand Sidebar">«</button>';
         echo '</div>';
 
         echo '<nav class="sidebar-nav">';
 
-        // Dashboard
-        if ($isAdmin || can_manage_maintenance($user)) {
-            $act = $curRoute === 'dashboard' ? ' active' : '';
-            echo '<a class="nav-item' . $act . '" href="' . route_url('dashboard') . '" title="Dashboard"><span class="nav-icon">' . $svgDash . '</span><span class="nav-label">Dashboard</span></a>';
-        }
-
-        // Master Accordion
-        $masterRoutes = ['asset_items', 'pcs', 'printers', 'master_pengguna', 'asset_companies', 'asset_groups', 'asset_types', 'asset_brands', 'asset_master_items', 'asset_locations', 'asset_identifiers', 'asset_specifications', 'jobs', 'asset_maintenance_templates', 'corrective_job_desks', 'users', 'labels'];
-        $isMasterOpen = in_array($curRoute, $masterRoutes, true);
-        echo '<details class="nav-accordion"' . ($isMasterOpen ? ' open' : '') . '>';
-        echo '  <summary class="nav-item" title="Data Master"><span class="nav-icon">' . $svgLayers . '</span><span class="nav-label">Data Master</span><span class="nav-chevron">▶</span></summary>';
+        // 1. Transaksi Aset Accordion (Unit Aset, Pendataan PC, Pinjam, Mutasi)
+        $transRoutes = ['asset_items', 'pcs', 'asset_loans', 'mobile_asset_loans', 'asset_movements'];
+        $isTransOpen = in_array($curRoute, $transRoutes, true);
+        echo '<details class="nav-accordion"' . ($isTransOpen ? ' open' : '') . '>';
+        echo '  <summary class="nav-item" title="Transaksi Aset"><span class="nav-icon">' . $svgBox . '</span><span class="nav-label">Transaksi Aset</span><span class="nav-chevron">▶</span></summary>';
         echo '  <div class="nav-submenu">';
         if ($isAdmin || has_regulation('asset_items', 'view', $user)) {
             echo '<a class="nav-item' . ($curRoute === 'asset_items' ? ' active' : '') . '" href="' . route_url('asset_items') . '"><span class="nav-icon">' . $svgBox . '</span><span class="nav-label">Unit Aset</span></a>';
@@ -468,73 +478,9 @@ function render_header(string $title, ?array $user = null): void
         if ($isAdmin || has_regulation('pcs', 'view', $user)) {
             echo '<a class="nav-item' . ($curRoute === 'pcs' ? ' active' : '') . '" href="' . route_url('pcs') . '"><span class="nav-icon">' . $svgPc . '</span><span class="nav-label">Pendataan PC</span></a>';
         }
-        if ($isAdmin || has_regulation('printers', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'printers' ? ' active' : '') . '" href="' . route_url('printers') . '"><span class="nav-icon">' . $svgPrn . '</span><span class="nav-label">Printer & Scanner</span></a>';
-        }
-        if ($isAdmin || has_regulation('master_pengguna', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'master_pengguna' ? ' active' : '') . '" href="' . route_url('master_pengguna') . '"><span class="nav-icon">' . $svgUsers . '</span><span class="nav-label">Master Pengguna</span></a>';
-        }
-        if ($isAdmin || has_regulation('asset_companies', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'asset_companies' ? ' active' : '') . '" href="' . route_url('asset_companies') . '"><span class="nav-icon">' . $svgShield . '</span><span class="nav-label">Company</span></a>';
-        }
-        if ($isAdmin || has_regulation('asset_groups', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'asset_groups' ? ' active' : '') . '" href="' . route_url('asset_groups') . '"><span class="nav-icon">' . $svgLayers . '</span><span class="nav-label">Master Komoditas</span></a>';
-        }
-        if ($isAdmin || has_regulation('asset_types', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'asset_types' ? ' active' : '') . '" href="' . route_url('asset_types') . '"><span class="nav-icon">' . $svgLayers . '</span><span class="nav-label">Master Kategori</span></a>';
-        }
-        if ($isAdmin || has_regulation('asset_brands', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'asset_brands' ? ' active' : '') . '" href="' . route_url('asset_brands') . '"><span class="nav-icon">' . $svgBox . '</span><span class="nav-label">Master Brand</span></a>';
-        }
-        if ($isAdmin || has_regulation('asset_master_items', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'asset_master_items' ? ' active' : '') . '" href="' . route_url('asset_master_items') . '"><span class="nav-icon">' . $svgBox . '</span><span class="nav-label">Master Barang</span></a>';
-        }
-        if ($isAdmin || has_regulation('asset_locations', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'asset_locations' ? ' active' : '') . '" href="' . route_url('asset_locations') . '"><span class="nav-icon">' . $svgPatrol . '</span><span class="nav-label">Master Lokasi</span></a>';
-        }
-        if ($isAdmin || has_regulation('asset_identifiers', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'asset_identifiers' ? ' active' : '') . '" href="' . route_url('asset_identifiers') . '"><span class="nav-icon">' . $svgQr . '</span><span class="nav-label">Identifier Aset</span></a>';
-        }
-        if ($isAdmin || has_regulation('asset_specifications', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'asset_specifications' ? ' active' : '') . '" href="' . route_url('asset_specifications') . '"><span class="nav-icon">' . $svgTool . '</span><span class="nav-label">Spesifikasi Aset</span></a>';
-        }
-        if ($isAdmin || has_regulation('jobs', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'jobs' ? ' active' : '') . '" href="' . route_url('jobs') . '"><span class="nav-icon">' . $svgTool . '</span><span class="nav-label">Job Desk PM</span></a>';
-        }
-        if ($isAdmin || has_regulation('asset_maintenance_templates', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'asset_maintenance_templates' ? ' active' : '') . '" href="' . route_url('asset_maintenance_templates') . '"><span class="nav-icon">' . $svgLayers . '</span><span class="nav-label">Template Maintenance</span></a>';
-        }
-        if ($isAdmin || has_regulation('corrective_job_desks', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'corrective_job_desks' ? ' active' : '') . '" href="' . route_url('corrective_job_desks') . '"><span class="nav-icon">' . $svgTicket . '</span><span class="nav-label">Job Desk Corrective</span></a>';
-        }
-        if ($isAdmin || has_regulation('users', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'users' ? ' active' : '') . '" href="' . route_url('users') . '"><span class="nav-icon">' . $svgUsers . '</span><span class="nav-label">Users</span></a>';
-        }
-        if ($isAdmin || has_regulation('labels', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'labels' ? ' active' : '') . '" href="' . route_url('labels') . '"><span class="nav-icon">' . $svgQr . '</span><span class="nav-label">QR Label Unit</span></a>';
-        }
-        echo '  </div>';
-        echo '</details>';
-
-        // Transaksi Accordion
-        $transRoutes = ['asset_loans', 'mobile_asset_loans', 'maintenance', 'tickets', 'walkarounds', 'asset_movements', 'mobile_service'];
-        $isTransOpen = in_array($curRoute, $transRoutes, true);
-        echo '<details class="nav-accordion"' . ($isTransOpen ? ' open' : '') . '>';
-        echo '  <summary class="nav-item" title="Transaksi Aset"><span class="nav-icon">' . $svgTool . '</span><span class="nav-label">Transaksi Aset</span><span class="nav-chevron">▶</span></summary>';
-        echo '  <div class="nav-submenu">';
         if ($isAdmin || has_regulation('asset_loans', 'view', $user)) {
             echo '<a class="nav-item' . ($curRoute === 'asset_loans' ? ' active' : '') . '" href="' . route_url('asset_loans') . '"><span class="nav-icon">' . $svgLoan . '</span><span class="nav-label">Peminjaman Aset</span></a>';
             echo '<a class="nav-item" href="' . route_url('mobile_asset_loans') . '" target="_blank"><span class="nav-icon">' . $svgMobile . '</span><span class="nav-label">📱 Mobile Pinjam</span><span class="nav-badge">PWA</span></a>';
-        }
-        if ($isAdmin || has_regulation('maintenance', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'maintenance' ? ' active' : '') . '" href="' . route_url('maintenance') . '"><span class="nav-icon">' . $svgTool . '</span><span class="nav-label">Schedule PM</span></a>';
-        }
-        if ($isAdmin || has_regulation('tickets', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'tickets' ? ' active' : '') . '" href="' . route_url('tickets') . '"><span class="nav-icon">' . $svgTicket . '</span><span class="nav-label">Tiket Corrective</span></a>';
-            echo '<a class="nav-item" href="' . route_url('mobile_service') . '" target="_blank"><span class="nav-icon">' . $svgMobile . '</span><span class="nav-label">📱 Mobile Service</span><span class="nav-badge">PWA</span></a>';
-        }
-        if ($isAdmin || has_regulation('walkarounds', 'view', $user)) {
-            echo '<a class="nav-item' . ($curRoute === 'walkarounds' ? ' active' : '') . '" href="' . route_url('walkarounds') . '"><span class="nav-icon">' . $svgPatrol . '</span><span class="nav-label">Patroli Walkaround</span></a>';
         }
         if ($isAdmin || has_regulation('asset_movements', 'view', $user)) {
             echo '<a class="nav-item' . ($curRoute === 'asset_movements' ? ' active' : '') . '" href="' . route_url('asset_movements') . '"><span class="nav-icon">' . $svgMove . '</span><span class="nav-label">Mutasi / Tukar Pasang</span></a>';
@@ -542,12 +488,59 @@ function render_header(string $title, ?array $user = null): void
         echo '  </div>';
         echo '</details>';
 
-        // Reports Accordion
-        $reportRoutes = ['reports', 'maintenance_status_report', 'corrective_repairs', 'report_asset_loans'];
+        // 2. Maintenance Aset Accordion (Schedule PM, Tiket, Patroli, Submenu Job Desk, Submenu Mobile)
+        $maintRoutes = ['maintenance', 'tickets', 'walkarounds', 'jobs', 'corrective_job_desks', 'mobile_service'];
+        $isMaintOpen = in_array($curRoute, $maintRoutes, true);
+        echo '<details class="nav-accordion"' . ($isMaintOpen ? ' open' : '') . '>';
+        echo '  <summary class="nav-item" title="Maintenance Aset"><span class="nav-icon">' . $svgTool . '</span><span class="nav-label">Maintenance Aset</span><span class="nav-chevron">▶</span></summary>';
+        echo '  <div class="nav-submenu">';
+        if ($isAdmin || has_regulation('maintenance', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'maintenance' ? ' active' : '') . '" href="' . route_url('maintenance') . '"><span class="nav-icon">' . $svgTool . '</span><span class="nav-label">Schedule PM</span></a>';
+        }
+        if ($isAdmin || has_regulation('tickets', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'tickets' ? ' active' : '') . '" href="' . route_url('tickets') . '"><span class="nav-icon">' . $svgTicket . '</span><span class="nav-label">Tiket Corrective</span></a>';
+        }
+        if ($isAdmin || has_regulation('walkarounds', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'walkarounds' ? ' active' : '') . '" href="' . route_url('walkarounds') . '"><span class="nav-icon">' . $svgPatrol . '</span><span class="nav-label">Patroli Walkaround</span></a>';
+        }
+
+        // Sub menu Job Desk
+        $jobDeskRoutes = ['jobs', 'corrective_job_desks'];
+        $isJobDeskOpen = in_array($curRoute, $jobDeskRoutes, true);
+        echo '<details class="nav-subaccordion"' . ($isJobDeskOpen ? ' open' : '') . '>';
+        echo '  <summary title="Job Desk Maintenance"><span>📋 Job Desk</span><span class="nav-chevron">▶</span></summary>';
+        echo '  <div style="display:flex;flex-direction:column;gap:1px;padding-top:2px;">';
+        if ($isAdmin || has_regulation('jobs', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'jobs' ? ' active' : '') . '" href="' . route_url('jobs') . '"><span class="nav-icon">' . $svgTool . '</span><span class="nav-label">Job Desk PM</span></a>';
+        }
+        if ($isAdmin || has_regulation('corrective_job_desks', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'corrective_job_desks' ? ' active' : '') . '" href="' . route_url('corrective_job_desks') . '"><span class="nav-icon">' . $svgTicket . '</span><span class="nav-label">Job Desk Corrective</span></a>';
+        }
+        echo '  </div>';
+        echo '</details>';
+
+        // Sub menu Mobile
+        if ($isAdmin || has_regulation('mobile_service', 'view', $user)) {
+            echo '<details class="nav-subaccordion"' . ($curRoute === 'mobile_service' ? ' open' : '') . '>';
+            echo '  <summary title="Mobile Field Service"><span>📱 Mobile</span><span class="nav-chevron">▶</span></summary>';
+            echo '  <div style="display:flex;flex-direction:column;gap:1px;padding-top:2px;">';
+            echo '<a class="nav-item' . ($curRoute === 'mobile_service' ? ' active' : '') . '" href="' . route_url('mobile_service') . '" target="_blank"><span class="nav-icon">' . $svgMobile . '</span><span class="nav-label">📱 Mobile Service</span><span class="nav-badge">PWA</span></a>';
+            echo '  </div>';
+            echo '</details>';
+        }
+
+        echo '  </div>';
+        echo '</details>';
+
+        // 3. Reports & QR_Label Accordion
+        $reportRoutes = ['labels', 'reports', 'maintenance_status_report', 'corrective_repairs', 'report_asset_loans'];
         $isReportOpen = in_array($curRoute, $reportRoutes, true);
         echo '<details class="nav-accordion"' . ($isReportOpen ? ' open' : '') . '>';
-        echo '  <summary class="nav-item" title="Laporan & Report"><span class="nav-icon">' . $svgChart . '</span><span class="nav-label">Laporan & Report</span><span class="nav-chevron">▶</span></summary>';
+        echo '  <summary class="nav-item" title="Reports & QR_Label"><span class="nav-icon">' . $svgChart . '</span><span class="nav-label">Reports & QR_Label</span><span class="nav-chevron">▶</span></summary>';
         echo '  <div class="nav-submenu">';
+        if ($isAdmin || has_regulation('labels', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'labels' ? ' active' : '') . '" href="' . route_url('labels') . '"><span class="nav-icon">' . $svgQr . '</span><span class="nav-label">QR Label Unit</span></a>';
+        }
         echo '<a class="nav-item' . ($curRoute === 'reports' ? ' active' : '') . '" href="' . route_url('reports') . '"><span class="nav-icon">' . $svgChart . '</span><span class="nav-label">Report PM</span></a>';
         echo '<a class="nav-item' . ($curRoute === 'maintenance_status_report' ? ' active' : '') . '" href="' . route_url('maintenance_status_report') . '"><span class="nav-icon">' . $svgChart . '</span><span class="nav-label">Report Status PC/PRN</span></a>';
         echo '<a class="nav-item' . ($curRoute === 'corrective_repairs' ? ' active' : '') . '" href="' . route_url('corrective_repairs') . '"><span class="nav-icon">' . $svgChart . '</span><span class="nav-label">Report Corrective</span></a>';
@@ -555,22 +548,63 @@ function render_header(string $title, ?array $user = null): void
         echo '  </div>';
         echo '</details>';
 
-        // Setup Accordion (Admin only)
-        if ($isAdmin) {
-            $setupRoutes = ['setup_regulations', 'employee_source'];
+        // 4. Data Master Accordion (Posisinya di bawah Reports & QR_Label)
+        $masterRoutes = ['asset_groups', 'asset_types', 'asset_brands', 'asset_master_items', 'asset_identifiers', 'asset_specifications', 'asset_locations', 'asset_companies', 'master_pengguna'];
+        $isMasterOpen = in_array($curRoute, $masterRoutes, true);
+        echo '<details class="nav-accordion"' . ($isMasterOpen ? ' open' : '') . '>';
+        echo '  <summary class="nav-item" title="Data Master"><span class="nav-icon">' . $svgLayers . '</span><span class="nav-label">Data Master</span><span class="nav-chevron">▶</span></summary>';
+        echo '  <div class="nav-submenu">';
+        if ($isAdmin || has_regulation('asset_groups', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_groups' ? ' active' : '') . '" href="' . route_url('asset_groups') . '"><span class="nav-icon">' . $svgLayers . '</span><span class="nav-label">Master Komoditas</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_types', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_types' ? ' active' : '') . '" href="' . route_url('asset_types') . '"><span class="nav-icon">' . $svgLayers . '</span><span class="nav-label">Master Kategori</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_brands', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_brands' ? ' active' : '') . '" href="' . route_url('asset_brands') . '"><span class="nav-icon">' . $svgBox . '</span><span class="nav-label">Master Brand / Merk</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_master_items', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_master_items' ? ' active' : '') . '" href="' . route_url('asset_master_items') . '"><span class="nav-icon">' . $svgBox . '</span><span class="nav-label">Master Barang</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_identifiers', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_identifiers' ? ' active' : '') . '" href="' . route_url('asset_identifiers') . '"><span class="nav-icon">' . $svgQr . '</span><span class="nav-label">Identifier Aset</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_specifications', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_specifications' ? ' active' : '') . '" href="' . route_url('asset_specifications') . '"><span class="nav-icon">' . $svgTool . '</span><span class="nav-label">Spesifikasi Aset</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_locations', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_locations' ? ' active' : '') . '" href="' . route_url('asset_locations') . '"><span class="nav-icon">' . $svgPatrol . '</span><span class="nav-label">Master Lokasi</span></a>';
+        }
+        if ($isAdmin || has_regulation('asset_companies', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'asset_companies' ? ' active' : '') . '" href="' . route_url('asset_companies') . '"><span class="nav-icon">' . $svgShield . '</span><span class="nav-label">Company</span></a>';
+        }
+        if ($isAdmin || has_regulation('master_pengguna', 'view', $user)) {
+            echo '<a class="nav-item' . ($curRoute === 'master_pengguna' ? ' active' : '') . '" href="' . route_url('master_pengguna') . '"><span class="nav-icon">' . $svgUsers . '</span><span class="nav-label">Master Pengguna</span></a>';
+        }
+        echo '  </div>';
+        echo '</details>';
+
+        // 5. Setup Accordion
+        if ($isAdmin || has_regulation('users', 'view', $user)) {
+            $setupRoutes = ['users', 'setup_regulations', 'employee_source'];
             $isSetupOpen = in_array($curRoute, $setupRoutes, true);
             echo '<details class="nav-accordion"' . ($isSetupOpen ? ' open' : '') . '>';
-            echo '  <summary class="nav-item" title="Pengaturan Sistem"><span class="nav-icon">' . $svgCog . '</span><span class="nav-label">Pengaturan & Setup</span><span class="nav-chevron">▶</span></summary>';
+            echo '  <summary class="nav-item" title="Pengaturan & Setup"><span class="nav-icon">' . $svgCog . '</span><span class="nav-label">Pengaturan & Setup</span><span class="nav-chevron">▶</span></summary>';
             echo '  <div class="nav-submenu">';
-            echo '<a class="nav-item' . ($curRoute === 'setup_regulations' ? ' active' : '') . '" href="' . route_url('setup_regulations') . '"><span class="nav-icon">' . $svgShield . '</span><span class="nav-label">Regulasi Hak Akses</span></a>';
-            echo '<a class="nav-item' . ($curRoute === 'employee_source' ? ' active' : '') . '" href="' . route_url('employee_source') . '"><span class="nav-icon">' . $svgCog . '</span><span class="nav-label">Employee Source</span></a>';
+            if ($isAdmin || has_regulation('users', 'view', $user)) {
+                echo '<a class="nav-item' . ($curRoute === 'users' ? ' active' : '') . '" href="' . route_url('users') . '"><span class="nav-icon">' . $svgUsers . '</span><span class="nav-label">Akses Users</span></a>';
+            }
+            if ($isAdmin) {
+                echo '<a class="nav-item' . ($curRoute === 'setup_regulations' ? ' active' : '') . '" href="' . route_url('setup_regulations') . '"><span class="nav-icon">' . $svgShield . '</span><span class="nav-label">Regulasi Hak Akses</span></a>';
+                echo '<a class="nav-item' . ($curRoute === 'employee_source' ? ' active' : '') . '" href="' . route_url('employee_source') . '"><span class="nav-icon">' . $svgCog . '</span><span class="nav-label">Employee Source</span></a>';
+            }
             echo '  </div>';
             echo '</details>';
         }
 
         echo '</nav>'; // End sidebar-nav
 
-        // Sidebar user profile footer
+        // Sidebar user profile footer (Kiri Bawah dengan Sign In / Sign Out)
         $initial = strtoupper(substr((string)($user['name'] ?? 'U'), 0, 1));
         $roleLabel = match ($role) {
             'admin' => 'Administrator',
@@ -586,12 +620,15 @@ function render_header(string $title, ?array $user = null): void
         echo '    <div class="user-name">' . e($user['name'] ?? 'User') . '</div>';
         echo '    <div class="user-role">' . e($roleLabel) . '</div>';
         echo '  </div>';
-        echo '  <a class="logout-btn" href="' . route_url('logout') . '" title="Logout"><span style="width:18px;height:18px;">' . $svgLogout . '</span></a>';
+        echo '  <div style="display:flex;gap:4px;align-items:center;">';
+        echo '    <a class="logout-btn" href="' . route_url('login') . '" title="Sign In / Ganti User" style="color:#60a5fa;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><polyline points="10 17 15 12 10 7"></polyline><line x1="15" y1="12" x2="3" y2="12"></line></svg></a>';
+        echo '    <a class="logout-btn" href="' . route_url('logout') . '" title="Sign Out / Logout"><span style="width:17px;height:17px;">' . $svgLogout . '</span></a>';
+        echo '  </div>';
         echo '</div>';
 
         echo '</aside>'; // End sidebar
 
-        // Main content wrapper
+        // Main content wrapper (Topbar Kanan Atas dengan Sign In / Sign Out)
         echo '<div class="main-wrapper">';
         echo '<header class="topbar">';
         echo '  <div class="topbar-left">';
@@ -601,10 +638,16 @@ function render_header(string $title, ?array $user = null): void
         echo '  <div class="topbar-right">';
         echo '    <span class="badge ok">' . e($roleLabel) . '</span>';
         echo '    <span style="font-size:13px;font-weight:600;color:#334155;">' . e($user['name'] ?? '') . '</span>';
+        echo '    <a href="' . route_url('login') . '" class="btn" style="padding:4px 9px;font-size:12px;display:inline-flex;align-items:center;gap:4px;" title="Sign In Akun Lain / Ganti User"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><polyline points="10 17 15 12 10 7"></polyline><line x1="15" y1="12" x2="3" y2="12"></line></svg> Sign In</a>';
+        echo '    <a href="' . route_url('logout') . '" class="btn danger" style="padding:4px 9px;font-size:12px;display:inline-flex;align-items:center;gap:4px;" title="Sign Out"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg> Sign Out</a>';
         echo '  </div>';
         echo '</header>';
         echo '<main>';
     } else {
+        echo '<header class="topbar" style="justify-content:space-between;padding:0 24px;">';
+        echo '  <div class="topbar-left"><a href="' . route_url('login') . '" style="display:flex;align-items:center;gap:10px;font-weight:800;font-size:16px;color:#0f172a;"><div style="width:30px;height:30px;background:linear-gradient(135deg,#2563eb,#38bdf8);border-radius:7px;display:flex;align-items:center;justify-content:center;color:#fff;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg></div> ' . e($appName) . '</a></div>';
+        echo '  <div class="topbar-right"><a href="' . route_url('login') . '" class="btn primary" style="padding:6px 14px;font-size:13px;display:inline-flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><polyline points="10 17 15 12 10 7"></polyline><line x1="15" y1="12" x2="3" y2="12"></line></svg> Sign In</a></div>';
+        echo '</header>';
         echo '<main style="max-width:100%;padding:0;">';
     }
 
