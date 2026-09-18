@@ -102,6 +102,17 @@ function absolute_route_url(string $route, array $params = []): string
     return $base . '/index.php?' . $query;
 }
 
+function current_host_url(string $route, array $params = []): string
+{
+    if (!empty($_SERVER['HTTP_HOST'])) {
+        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $script = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
+        $query = http_build_query(array_merge(['route' => $route], $params));
+        return $scheme . '://' . $_SERVER['HTTP_HOST'] . $script . '?' . $query;
+    }
+    return absolute_route_url($route, $params);
+}
+
 function mobile_asset_url(string $assetCode): string
 {
     return (string)config_value('mobile_base_url') . rawurlencode($assetCode);
@@ -358,7 +369,7 @@ function render_header(string $title, ?array $user = null): void
 {
     $flash = flash();
     $appName = app_name();
-    echo '<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . e($title) . ' - ' . e($appName) . '</title><style>';
+    echo '<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . e($title) . ' - ' . e($appName) . '</title><link rel="icon" type="image/svg+xml" href="favicon.svg"><link rel="alternate icon" type="image/x-icon" href="favicon.ico"><style>';
     echo ':root{--sidebar-w:260px;--sidebar-collapsed-w:68px;--primary:#1457d9;--primary-hover:#0f46b3;--bg:#f5f7fb;--text:#1e293b;--sidebar-bg:#0f172a;--sidebar-hover:#1e293b;--sidebar-active:#1d4ed8;--sidebar-text:#94a3b8;--sidebar-text-active:#f8fafc;--border:#e2e8f0}';
     echo '*{box-sizing:border-box}body{margin:0;font-family:Segoe UI,-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}a{color:inherit;text-decoration:none}';
     echo '.app-layout{display:flex;min-height:100vh;width:100%}';
@@ -440,6 +451,7 @@ function render_header(string $title, ?array $user = null): void
     echo '.btn-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;cursor:pointer;transition:all .15s ease-in-out;padding:0;text-decoration:none;box-sizing:border-box}';
     echo '.btn-icon:hover{transform:translateY(-1px);box-shadow:0 2px 5px rgba(0,0,0,.08)}';
     echo '.btn-icon.edit{color:#2563eb;border-color:#bfdbfe;background:#eff6ff}.btn-icon.edit:hover{background:#dbeafe;color:#1d4ed8;border-color:#93c5fd}';
+    echo '.btn-icon.view{color:#0284c7;border-color:#bae6fd;background:#f0f9ff}.btn-icon.view:hover{background:#e0f2fe;color:#0369a1;border-color:#7dd3fc}';
     echo '.btn-icon.repair{color:#d97706;border-color:#fde68a;background:#fffbeb}.btn-icon.repair:hover{background:#fef3c7;color:#b45309;border-color:#fcd34d}';
     echo '.btn-icon.delete{color:#dc2626;border-color:#fecaca;background:#fef2f2}.btn-icon.delete:hover{background:#fee2e2;color:#b91c1c;border-color:#fca5a5}';
     echo 'label{display:block;font-weight:600;margin:12px 0 6px;font-size:13px;color:#334155}';
@@ -841,7 +853,7 @@ function render_mobile_header(string $title, ?array $user = null): void
 {
     $flash = flash();
     $appName = app_name();
-    echo '<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . e($title) . ' - ' . e($appName) . ' Mobile</title><style>';
+    echo '<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' . e($title) . ' - ' . e($appName) . ' Mobile</title><link rel="icon" type="image/svg+xml" href="favicon.svg"><link rel="alternate icon" type="image/x-icon" href="favicon.ico"><style>';
     echo 'body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:#f3f6fb;color:#172033}main{max-width:560px;margin:0 auto;padding:14px 14px 82px}.mobile-top{position:sticky;top:0;z-index:2;background:#172033;color:#fff;padding:14px 16px;font-weight:700}.mobile-nav{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid #d9e1ee;display:grid;grid-template-columns:repeat(4,1fr);z-index:3}.mobile-nav a{text-align:center;text-decoration:none;color:#334155;padding:10px 4px;font-size:13px}.panel,.stat{background:#fff;border:1px solid #dde5f0;border-radius:8px;padding:16px;margin-bottom:12px}.grid{display:grid;gap:12px}.two{grid-template-columns:repeat(2,minmax(0,1fr))}.split{display:flex;justify-content:space-between;gap:10px;align-items:center}.btn{display:inline-block;border:1px solid #c7d0df;background:#fff;color:#172033;text-decoration:none;border-radius:6px;padding:10px 12px;cursor:pointer;font:inherit}.btn.primary{background:#1457d9;border-color:#1457d9;color:#fff}.btn.good{background:#0f8a5f;border-color:#0f8a5f;color:#fff}.btn.danger{background:#b91c1c;border-color:#b91c1c;color:#fff}label{display:block;font-weight:600;margin:10px 0 6px}input,select,textarea{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:6px;padding:10px;font:inherit}textarea{min-height:110px}.badge{display:inline-block;border-radius:999px;background:#e8eef7;padding:4px 8px;font-size:12px}.ok{background:#dcfce7;color:#166534}.danger-text{color:#991b1b}.muted{color:#64748b}.flash{padding:12px;border-radius:6px;margin-bottom:12px;background:#e7f7ef;color:#14532d}.flash.err{background:#fee2e2;color:#991b1b}.readonly{opacity:.72}.check-row{display:grid;grid-template-columns:28px minmax(0,1fr);gap:10px;align-items:start;border-bottom:1px solid #e2e8f0;padding:12px 0}.check-row input[type=checkbox]{width:22px;height:22px;margin:2px 0 0}.check-title{display:block;font-weight:700;line-height:1.35}.check-note-label{font-size:13px;color:#64748b;margin-top:8px}.check-note-label input{margin-top:4px}.scan-video{display:none;width:100%;border-radius:8px;background:#111;margin-bottom:10px}.camera-note{font-size:13px;color:#64748b;margin:8px 0}.photo-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.photo-grid img{width:100%;border-radius:6px;border:1px solid #d9e1ee}.signature-pad{width:100%;height:160px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;touch-action:none}@media(max-width:420px){.two,.photo-grid{grid-template-columns:1fr}}';
     echo '</style></head><body><div class="mobile-top">' . e($appName) . ' Mobile</div><main>';
     if ($flash) {
@@ -1394,9 +1406,9 @@ function geo_distance_m(float $lat1, float $lng1, float $lat2, float $lng2): flo
     return $earthRadius * 2 * atan2(sqrt($a), sqrt(max(0, 1 - $a)));
 }
 
-function company_options(PDO $pdo, ?int $selected = null): string
+function company_options(PDO $pdo, ?int $selected = null, bool $allowAll = false, string $allLabel = '- Tanpa company -'): string
 {
-    $html = '<option value="">- Tanpa company -</option>';
+    $html = '<option value="">' . e($allLabel) . '</option>';
     if (!db_table_exists($pdo, 'asset_companies')) {
         return $html;
     }
@@ -1419,24 +1431,19 @@ function asset_item_options(PDO $pdo, ?int $selected = null, ?string $onlyUnsync
 
     // Filter agar asset dengan Mode 'Bundle (Child Asset)' tidak muncul untuk sinkronisasi PC/Printer/Maintenance
     if (!$allowChildAssets) {
-        $where[] = '((ai.asset_mode IS NULL OR ai.asset_mode <> "child") AND NOT EXISTS (SELECT 1 FROM asset_item_members aim WHERE aim.child_asset_item_id = ai.id AND aim.detached_at IS NULL) OR ai.id = ?)';
-        $params[] = (int)$selected;
+        $where[] = "(asset_mode <> 'child' OR asset_mode IS NULL)";
     }
 
-    if ($onlyUnsyncedForPcId !== null && db_table_exists($pdo, 'pcs') && db_column_exists($pdo, 'pcs', 'asset_item_id')) {
-        if ($onlyUnsyncedForPcId !== '') {
-            $where[] = 'NOT EXISTS (SELECT 1 FROM pcs p WHERE p.asset_item_id = ai.id AND p.asset_item_id IS NOT NULL AND p.pc_id <> ?)';
-            $params[] = $onlyUnsyncedForPcId;
-        } else {
-            $where[] = 'NOT EXISTS (SELECT 1 FROM pcs p WHERE p.asset_item_id = ai.id AND p.asset_item_id IS NOT NULL)';
-        }
+    if ($onlyUnsyncedForPcId !== null && $onlyUnsyncedForPcId !== '') {
+        $where[] = '(source_pc_id IS NULL OR source_pc_id = "" OR source_pc_id = ?)';
+        $params[] = $onlyUnsyncedForPcId;
     }
 
-    $sql = 'SELECT ai.id, ai.asset_code, ai.asset_name, ai.asset_type, ai.asset_category, ai.asset_mode FROM asset_items ai';
+    $sql = 'SELECT id, asset_code, asset_name, asset_type, asset_category, asset_mode FROM asset_items';
     if ($where) {
         $sql .= ' WHERE ' . implode(' AND ', $where);
     }
-    $sql .= ' ORDER BY ai.asset_code';
+    $sql .= ' ORDER BY asset_code ASC';
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
@@ -1444,8 +1451,10 @@ function asset_item_options(PDO $pdo, ?int $selected = null, ?string $onlyUnsync
     foreach ($stmt->fetchAll() as $row) {
         $sel = (int)$row['id'] === (int)$selected ? ' selected' : '';
         $rawMode = (string)($row['asset_mode'] ?? 'standalone');
-        $modeLabel = $rawMode === 'group' ? 'Bundle (Parent)' : ($rawMode === 'child' ? 'Bundle (Child)' : 'Single');
-        $html .= '<option value="' . e($row['id']) . '"' . $sel . '>' . e($row['asset_code'] . ' - ' . $row['asset_name'] . ' (' . ($row['asset_category'] ?? '-') . ' / ' . $row['asset_type'] . ' / ' . $modeLabel . ')') . '</option>';
+        $mode = $rawMode === 'group' ? ' [Bundle]' : ($rawMode === 'child' ? ' [Child]' : '');
+        $cat = trim((string)($row['asset_category'] ?? ''));
+        $catText = $cat !== '' ? ' (' . $cat . ' / ' . $row['asset_type'] . ')' : ' (' . $row['asset_type'] . ')';
+        $html .= '<option value="' . (int)$row['id'] . '"' . $sel . '>' . e($row['asset_code'] . ' - ' . $row['asset_name'] . $catText . $mode) . '</option>';
     }
     return $html;
 }
@@ -1468,11 +1477,11 @@ function asset_item_categories(?PDO $pdo = null): array
     }
 }
 
-function asset_category_options(PDO $pdo, ?string $selected = null): string
+function asset_category_options(PDO $pdo, ?string $selected = null, bool $allowAll = false, string $allLabel = '- Pilih Kategori Asset -'): string
 {
-    $html = '<option value="">- Pilih Kategori Asset -</option>';
+    $html = '<option value="">' . e($allLabel) . '</option>';
     foreach (asset_item_categories($pdo) as $cat) {
-        $sel = ((string)$selected === $cat) ? ' selected' : '';
+        $sel = ((string)$selected === (string)$cat) ? ' selected' : '';
         $html .= '<option value="' . e($cat) . '"' . $sel . '>' . e($cat) . '</option>';
     }
     return $html;

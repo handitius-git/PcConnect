@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS pcs (
     employee_nik VARCHAR(80) NULL,
     owner_name VARCHAR(160) NOT NULL,
     computer_name VARCHAR(160) NULL,
+    asset_group_id INT NULL,
+    category VARCHAR(100) NULL,
     asset_item_id BIGINT NULL,
     asset_bundle_id BIGINT NULL,
     maintenance_asset_id BIGINT NULL,

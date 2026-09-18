@@ -69,7 +69,7 @@ if (str_starts_with($route, 'api_') || $route === 'employee_search') {
 } elseif (in_array($route, ['login', 'logout', 'dashboard', 'users', 'technicians'], true)) {
     // Handled by auth.php directly
     $modulesToLoad = [];
-} elseif (in_array($route, ['pcs', 'pc_detail', 'pc_form', 'pc_location', 'pc_locations', 'pc_asset_sync', 'download_agent', 'upload_analysis'], true)) {
+} elseif (in_array($route, ['pcs', 'pc_detail', 'pc_form', 'pc_location', 'pc_locations', 'pc_asset_sync', 'download_agent', 'download_runner_cmd', 'upload_analysis'], true)) {
     $modulesToLoad = [
         'app/lib/qr.php',
         'app/modules/asset.php',
@@ -240,6 +240,9 @@ switch ($route) {
         break;
     case 'download_agent':
         handle_route_download_agent();
+        break;
+    case 'download_runner_cmd':
+        handle_route_download_runner_cmd();
         break;
     case 'upload_analysis':
         handle_route_upload_analysis($pdo);

@@ -477,7 +477,7 @@ function ensure_asset_management_schema(PDO $pdo): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
         try {
-            foreach (['Computer','Printer','Kendaraan','Lain-lain'] as $seedCat) {
+            foreach (['Computer', 'Laptop', 'Desktop', 'Server', 'All-in-One', 'Printer', 'Kendaraan', 'Lain-lain'] as $seedCat) {
                 $stmt = $pdo->prepare('SELECT id FROM asset_categories WHERE category_name=? LIMIT 1');
                 $stmt->execute([$seedCat]);
                 if (!$stmt->fetchColumn()) {
@@ -683,10 +683,10 @@ function repair_asset_type_groups(PDO $pdo): void
         $fcId = (int)$pdo->query("SELECT id FROM asset_groups WHERE UPPER(TRIM(group_code)) IN ('FC','FACILITY') OR group_name LIKE '%Facility%' OR group_name LIKE '%Fasilitas%' OR group_name LIKE '%Gedung%' ORDER BY id ASC LIMIT 1")->fetchColumn();
 
         if ($itId <= 0) {
-            $pdo->exec("INSERT INTO asset_groups (group_code, group_name, is_active) VALUES ('IT', 'IT Aset', 1)");
+            $pdo->exec("INSERT INTO asset_groups (group_code, group_name, is_active) VALUES ('IT', 'IT-ASET', 1)");
             $itId = (int)$pdo->lastInsertId();
         } else {
-            $pdo->exec("UPDATE asset_groups SET group_name = 'IT Aset' WHERE id = {$itId} AND group_name = 'IT Asset'");
+            $pdo->exec("UPDATE asset_groups SET group_name = 'IT-ASET' WHERE id = {$itId}");
         }
         if ($vhId <= 0) {
             $pdo->exec("INSERT INTO asset_groups (group_code, group_name, is_active) VALUES ('VH', 'Vehicle', 1)");
@@ -827,6 +827,12 @@ function ensure_maintenance_asset_schema(PDO $pdo): void
             INDEX idx_maint_asset_item_item (asset_item_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+        if (db_table_exists($pdo, 'pcs') && !db_column_exists($pdo, 'pcs', 'asset_group_id')) {
+            $pdo->exec('ALTER TABLE pcs ADD COLUMN asset_group_id INT NULL AFTER computer_name');
+        }
+        if (db_table_exists($pdo, 'pcs') && !db_column_exists($pdo, 'pcs', 'category')) {
+            $pdo->exec('ALTER TABLE pcs ADD COLUMN category VARCHAR(100) NULL AFTER asset_group_id');
+        }
         if (!db_column_exists($pdo, 'pcs', 'maintenance_asset_id')) {
             $pdo->exec('ALTER TABLE pcs ADD COLUMN maintenance_asset_id BIGINT NULL AFTER asset_bundle_id');
         }

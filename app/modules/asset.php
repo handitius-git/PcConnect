@@ -178,8 +178,7 @@ function asset_items_table(PDO $pdo, array $rows): string
     $html .= '<th class="sortable" onclick="sortAssetTable(4)" style="cursor:pointer;" title="Klik untuk mengurutkan">Mode Asset <span class="sort-ind">⇅</span></th>';
     $html .= '<th class="sortable" onclick="sortAssetTable(5)" style="cursor:pointer;" title="Klik untuk mengurutkan">Type <span class="sort-ind">⇅</span></th>';
     $html .= '<th class="sortable" onclick="sortAssetTable(6)" style="cursor:pointer;" title="Klik untuk mengurutkan">Nama / Merek <span class="sort-ind">⇅</span></th>';
-    $html .= '<th class="sortable" onclick="sortAssetTable(7)" style="cursor:pointer;" title="Klik untuk mengurutkan">Nilai <span class="sort-ind">⇅</span></th>';
-    $html .= '<th class="sortable" onclick="sortAssetTable(8)" style="cursor:pointer;" title="Klik untuk mengurutkan">Status <span class="sort-ind">⇅</span></th>';
+    $html .= '<th class="sortable" onclick="sortAssetTable(7)" style="cursor:pointer;" title="Klik untuk mengurutkan">Status <span class="sort-ind">⇅</span></th>';
     $html .= '<th style="text-align:center;width:96px;">Aksi</th>';
     $html .= '</tr></thead><tbody>';
 
@@ -241,7 +240,6 @@ function asset_items_table(PDO $pdo, array $rows): string
         $html .= '<td>' . $mode . '</td>';
         $html .= '<td>' . e($row['asset_type']) . '</td>';
         $html .= '<td>' . e($row['asset_name']) . '<br><span class="muted">' . e(trim(($row['brand'] ?? '') . ' ' . ($row['model'] ?? ''))) . '</span></td>';
-        $html .= '<td>Awal: Rp ' . e(number_format((float)$row['purchase_value'], 0, ',', '.')) . '<br>Current: Rp ' . e(number_format((float)$row['current_value'], 0, ',', '.')) . '</td>';
         $html .= '<td><span class="badge">' . e($row['status']) . '</span></td>';
         $html .= '<td style="text-align:center;"><div style="display:inline-flex;gap:5px;align-items:center;justify-content:center;">' . $itemActions . '</div></td>';
         $html .= '</tr>';
@@ -286,12 +284,6 @@ function asset_items_table(PDO $pdo, array $rows): string
         rows.sort(function(a, b) {
             var cellA = a.children[colIndex] ? a.children[colIndex].innerText.trim() : "";
             var cellB = b.children[colIndex] ? b.children[colIndex].innerText.trim() : "";
-
-            if (colIndex === 7) {
-                var numA = parseFloat(cellA.replace(/[^0-9]/g, "")) || 0;
-                var numB = parseFloat(cellB.replace(/[^0-9]/g, "")) || 0;
-                return isAsc ? numA - numB : numB - numA;
-            }
 
             return isAsc 
                 ? cellA.localeCompare(cellB, undefined, {numeric: true, sensitivity: "base"})
@@ -5123,10 +5115,9 @@ function handle_route_asset_items(PDO $pdo): void
     
     $masterItemId = (int)($_GET['master_item_id'] ?? 0);
     $groupId = (int)($_GET['group_id'] ?? 0);
-    $typeId = (int)($_GET['type_id'] ?? 0);
-    $brandId = (int)($_GET['brand_id'] ?? 0);
+    $category = trim((string)($_GET['category'] ?? ''));
+    $companyId = (int)($_GET['company_id'] ?? 0);
     $locationId = (int)($_GET['location_id'] ?? 0);
-    $q = trim((string)($_GET['q'] ?? ''));
 
     $where = ["1=1"];
     $params = [];
@@ -5138,30 +5129,17 @@ function handle_route_asset_items(PDO $pdo): void
         $where[] = "ai.asset_group_id = ?";
         $params[] = $groupId;
     }
-    if ($typeId > 0) {
-        $where[] = "ai.asset_type_id = ?";
-        $params[] = $typeId;
+    if ($category !== '') {
+        $where[] = "ai.asset_category = ?";
+        $params[] = $category;
     }
-    if ($brandId > 0) {
-        $where[] = "ai.brand_id = ?";
-        $params[] = $brandId;
+    if ($companyId > 0) {
+        $where[] = "ai.company_id = ?";
+        $params[] = $companyId;
     }
     if ($locationId > 0) {
         $where[] = "ai.location_id = ?";
         $params[] = $locationId;
-    }
-    if ($q !== '') {
-        $where[] = "(ai.asset_code LIKE ? OR ai.asset_name LIKE ? OR ai.serial_number LIKE ? OR ai.source_pc_id LIKE ? OR ai.custodian_name LIKE ? OR ai.custodian_nik LIKE ? OR ai.model LIKE ? OR ai.location_label LIKE ? OR EXISTS (SELECT 1 FROM asset_identifiers aid WHERE aid.asset_item_id = ai.id AND aid.identifier_value LIKE ?) OR EXISTS (SELECT 1 FROM asset_specifications asp WHERE asp.asset_item_id = ai.id AND asp.specification_value LIKE ?))";
-        $params[] = "%{$q}%";
-        $params[] = "%{$q}%";
-        $params[] = "%{$q}%";
-        $params[] = "%{$q}%";
-        $params[] = "%{$q}%";
-        $params[] = "%{$q}%";
-        $params[] = "%{$q}%";
-        $params[] = "%{$q}%";
-        $params[] = "%{$q}%";
-        $params[] = "%{$q}%";
     }
 
     $sql = "SELECT ai.*, c.company_name, ami.item_name AS master_item_name, ami.item_code AS master_item_code 
@@ -5190,18 +5168,17 @@ function handle_route_asset_items(PDO $pdo): void
     echo '<section class="panel">';
     echo '<div class="split"><h1>' . $filterTitle . '</h1><div class="actions">' . $addBtn . '<a class="btn" href="' . route_url('export_excel', ['type' => 'asset_items']) . '">Export Excel</a></div></div>';
 
-    // Filters
-    echo '<form method="get" class="actions" style="margin:16px 0 8px 0">';
+    // Filters: Hanya Komoditas, Kategori, Company, Lokasi
+    echo '<form method="get" class="actions" style="margin:16px 0 8px 0;flex-wrap:wrap;gap:8px;">';
     echo '<input type="hidden" name="route" value="asset_items">';
     if ($masterItemId > 0) {
         echo '<input type="hidden" name="master_item_id" value="' . $masterItemId . '">';
     }
     echo '<select name="group_id" onchange="this.form.submit()">' . asset_group_options($pdo, $groupId, true, 'Semua Komoditas') . '</select>';
-    echo '<select name="brand_id" onchange="this.form.submit()">' . asset_brand_options($pdo, $brandId, true, 'Semua Brand') . '</select>';
+    echo '<select name="category" onchange="this.form.submit()">' . asset_category_options($pdo, $category, true, 'Semua Kategori') . '</select>';
+    echo '<select name="company_id" onchange="this.form.submit()">' . company_options($pdo, $companyId, true, 'Semua Company') . '</select>';
     echo '<select name="location_id" onchange="this.form.submit()">' . asset_location_options($pdo, $locationId, true, 'Semua Lokasi') . '</select>';
-    echo '<input name="q" value="' . e($q) . '" placeholder="Cari kode / SN / NIK / nama / lokasi..." style="width:200px">';
-    echo '<button class="btn">Filter</button>';
-    if ($masterItemId || $groupId || $brandId || $locationId || $q !== '') {
+    if ($masterItemId || $groupId || $category !== '' || $companyId || $locationId) {
         echo '<a class="btn" href="' . route_url('asset_items') . '">Reset Filter</a>';
     }
     echo '</form>';
