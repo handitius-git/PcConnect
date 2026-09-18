@@ -28,11 +28,7 @@ register_shutdown_function(function (): void {
 });
 
 if (!ob_get_level()) {
-    if (extension_loaded('zlib') && !ini_get('zlib.output_compression') && !headers_sent()) {
-        ob_start('ob_gzhandler');
-    } else {
-        ob_start();
-    }
+    ob_start();
 }
 
 $baseDir = dirname(__DIR__);
@@ -40,6 +36,7 @@ $baseDir = dirname(__DIR__);
 // Core modules loaded on every request
 require_once $baseDir . '/app/lib/bootstrap.php';
 require_once $baseDir . '/app/lib/schema.php';
+require_once $baseDir . '/app/modules/auth.php';
 
 ensure_session_started();
 
@@ -57,9 +54,8 @@ if (str_starts_with($route, 'api_') || $route === 'employee_search') {
         'app/modules/api.php',
     ];
 } elseif (in_array($route, ['login', 'logout', 'dashboard', 'users', 'technicians'], true)) {
-    $modulesToLoad = [
-        'app/modules/auth.php',
-    ];
+    // Handled by auth.php directly
+    $modulesToLoad = [];
 } elseif (in_array($route, ['pcs', 'pc_detail', 'pc_form', 'pc_location', 'pc_locations', 'pc_asset_sync', 'download_agent', 'upload_analysis'], true)) {
     $modulesToLoad = [
         'app/lib/qr.php',
@@ -69,6 +65,7 @@ if (str_starts_with($route, 'api_') || $route === 'employee_search') {
 } elseif (in_array($route, ['printers', 'printer_detail', 'printer_form', 'printer_location', 'printer_locations'], true)) {
     $modulesToLoad = [
         'app/lib/qr.php',
+        'app/modules/asset.php',
         'app/modules/printer.php',
     ];
 } elseif (str_starts_with($route, 'asset_loan') || $route === 'report_asset_loans') {
@@ -81,11 +78,13 @@ if (str_starts_with($route, 'api_') || $route === 'employee_search') {
     $modulesToLoad = [
         'app/lib/qr.php',
         'app/modules/asset.php',
+        'app/modules/asset_loan.php',
         'app/modules/mobile_loan.php',
     ];
 } elseif (str_starts_with($route, 'asset_')) {
     $modulesToLoad = [
         'app/lib/qr.php',
+        'app/modules/pc.php',
         'app/modules/asset.php',
     ];
 } elseif (in_array($route, ['maintenance', 'maintenance_cleanup', 'maintenance_categories', 'maintenance_do', 'maintenance_unlock', 'maintenance_status_report', 'schedule_form', 'report_print', 'export_excel', 'jobs', 'calendar', 'reports'], true)) {
@@ -127,6 +126,8 @@ if (str_starts_with($route, 'api_') || $route === 'employee_search') {
     $modulesToLoad = [
         'app/lib/qr.php',
         'app/modules/asset.php',
+        'app/modules/pc.php',
+        'app/modules/printer.php',
         'app/modules/labels.php',
     ];
 } elseif ($route === 'setup_regulations') {
@@ -141,7 +142,6 @@ if (str_starts_with($route, 'api_') || $route === 'employee_search') {
     // Default fallback
     $modulesToLoad = [
         'app/lib/qr.php',
-        'app/modules/auth.php',
         'app/modules/pc.php',
         'app/modules/asset.php',
         'app/modules/maintenance.php',

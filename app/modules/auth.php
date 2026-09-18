@@ -2,26 +2,28 @@
 
 declare(strict_types=1);
 
-function enforce_idle_logout(string $route): void
-{
-    $route = (string)$route;
-    if (substr($route, 0, 4) === 'api_' || in_array($route, ['login', 'logout', 'mobile_service_login', 'mobile_service_logout'], true) || empty($_SESSION['user_id'])) {
-        return;
-    }
-    // Auto-logout setelah 30 menit (1800 detik) tidak digunakan
-    $timeoutSeconds = 1800;
-    $lastActivity = (int)($_SESSION['last_activity_at'] ?? 0);
-    $now = time();
-    if ($lastActivity > 0 && ($now - $lastActivity) > $timeoutSeconds) {
-        $isFieldService = str_starts_with($route, 'mobile_service') || str_starts_with($route, 'mobile_repair');
-        unset($_SESSION['user_id'], $_SESSION['last_activity_at'], $_SESSION['csrf'], $_SESSION['pending_mobile_code']);
-        if ($isFieldService) {
-            redirect_to('mobile_service_login');
-        } else {
-            redirect_to('login');
+if (!function_exists('enforce_idle_logout')) {
+    function enforce_idle_logout(string $route): void
+    {
+        $route = (string)$route;
+        if (substr($route, 0, 4) === 'api_' || in_array($route, ['login', 'logout', 'mobile_service_login', 'mobile_service_logout'], true) || empty($_SESSION['user_id'])) {
+            return;
         }
+        // Auto-logout setelah 30 menit (1800 detik) tidak digunakan
+        $timeoutSeconds = 1800;
+        $lastActivity = (int)($_SESSION['last_activity_at'] ?? 0);
+        $now = time();
+        if ($lastActivity > 0 && ($now - $lastActivity) > $timeoutSeconds) {
+            $isFieldService = str_starts_with($route, 'mobile_service') || str_starts_with($route, 'mobile_repair');
+            unset($_SESSION['user_id'], $_SESSION['last_activity_at'], $_SESSION['csrf'], $_SESSION['pending_mobile_code']);
+            if ($isFieldService) {
+                redirect_to('mobile_service_login');
+            } else {
+                redirect_to('login');
+            }
+        }
+        $_SESSION['last_activity_at'] = $now;
     }
-    $_SESSION['last_activity_at'] = $now;
 }
 function load_user_for_admin(PDO $pdo, int $userId): ?array
 {
