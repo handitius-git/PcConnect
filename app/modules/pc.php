@@ -873,8 +873,9 @@ function handle_route_pcs(PDO $pdo): void
     }
 
     render_header('Data PC', $user);
-    $q = trim((string)($_GET['q'] ?? ''));
+    $filterGroupId = (int)($_GET['group_id'] ?? 0);
     $filterCategory = trim((string)($_GET['category'] ?? ''));
+    $q = trim((string)($_GET['q'] ?? ''));
 
     $baseSql = "SELECT p.*, 
                        ai.asset_code, ai.asset_name, ai.asset_type, ai.asset_category, ai.asset_mode,
@@ -884,15 +885,19 @@ function handle_route_pcs(PDO $pdo): void
                 LEFT JOIN maintenance_assets ma ON ma.id = p.maintenance_asset_id";
     $conditions = [];
     $params = [];
+    if ($filterGroupId > 0) {
+        $conditions[] = '(COALESCE(p.asset_group_id, ai.asset_group_id) = ?)';
+        $params[] = $filterGroupId;
+    }
+    if ($filterCategory !== '') {
+        $conditions[] = '(COALESCE(NULLIF(p.category, ""), ai.asset_category) = ?)';
+        $params[] = $filterCategory;
+    }
     if ($q !== '') {
         $conditions[] = '(p.pc_id LIKE ? OR p.owner_name LIKE ? OR p.computer_name LIKE ?)';
         $params[] = "%$q%";
         $params[] = "%$q%";
         $params[] = "%$q%";
-    }
-    if ($filterCategory !== '') {
-        $conditions[] = '(COALESCE(NULLIF(p.category, ""), ai.asset_category) = ?)';
-        $params[] = $filterCategory;
     }
     $whereSql = $conditions ? ' WHERE ' . implode(' AND ', $conditions) : '';
     $stmt = $pdo->prepare("$baseSql $whereSql ORDER BY p.pc_id");
@@ -900,8 +905,18 @@ function handle_route_pcs(PDO $pdo): void
 
     $addBtn = has_regulation('pcs', 'create') ? '<a class="btn primary" href="' . route_url('pc_form') . '">+ Tambah PC</a>' : '';
     echo '<section class="panel"><div class="split"><h1>Data PC</h1><div class="actions">' . $addBtn . '<a class="btn" href="' . route_url('pc_locations') . '">Kelola Lokasi GPS</a><a class="btn" href="' . route_url('upload_analysis') . '">Upload JSON Analisa</a><a class="btn" href="' . route_url('export_excel', ['type' => 'pcs']) . '">Export Excel</a></div></div>';
-    echo '<form method="get" style="margin-top:14px"><input type="hidden" name="route" value="pcs"><div class="grid three"><label>Cari PC<input name="q" value="' . e($q) . '" placeholder="Cari PcID, pengguna, atau computer name..."></label><label>Kategori<select name="category" onchange="this.form.submit()">' . asset_category_options($pdo, $filterCategory !== '' ? $filterCategory : null, true, 'Semua Kategori') . '</select></label><div class="actions" style="align-items:flex-end"><button class="btn primary">Filter / Cari</button><a class="btn" href="' . route_url('pcs') . '">Reset</a></div></div></form></section>';
-    echo '<section class="panel">' . pc_table($stmt->fetchAll(), true) . '</section>';
+    echo '<form method="get" class="actions" style="margin:16px 0 8px 0;flex-wrap:wrap;gap:8px;align-items:center;">';
+    echo '<input type="hidden" name="route" value="pcs">';
+    echo '<select name="group_id" onchange="this.form.submit()">' . asset_group_options($pdo, $filterGroupId, true, 'Semua Komoditas') . '</select>';
+    echo '<select name="category" onchange="this.form.submit()">' . asset_category_options($pdo, $filterCategory !== '' ? $filterCategory : null, true, 'Semua Kategori') . '</select>';
+    echo '<input name="q" value="' . e($q) . '" placeholder="Cari PcID, pengguna, computer name..." style="width:auto;min-width:240px;padding:8px 12px;">';
+    echo '<button class="btn primary" style="padding:8px 14px;">Cari</button>';
+    if ($filterGroupId > 0 || $filterCategory !== '' || $q !== '') {
+        echo '<a class="btn" href="' . route_url('pcs') . '">Reset Filter</a>';
+    }
+    echo '</form>';
+    echo pc_table($stmt->fetchAll(), true);
+    echo '</section>';
     render_footer();
 }
 
