@@ -346,6 +346,12 @@ function detect_pc_category(?string $generalSpecs, ?string $computerName = null)
             if (isset($json['hardware']) && is_array($json['hardware'])) {
                 $text .= ' ' . ($json['hardware']['manufacturer'] ?? '') . ' ' . ($json['hardware']['model'] ?? '') . ' ' . ($json['hardware']['processor'] ?? '');
             }
+            if (isset($json['system']) && is_array($json['system'])) {
+                $text .= ' ' . ($json['system']['model'] ?? '') . ' ' . ($json['system']['system_type'] ?? '');
+            }
+            if (isset($json['chassis'])) {
+                $text .= ' ' . (is_array($json['chassis']) ? implode(' ', $json['chassis']) : (string)$json['chassis']);
+            }
         } else {
             $text .= ' ' . $generalSpecs;
         }
@@ -356,19 +362,104 @@ function detect_pc_category(?string $generalSpecs, ?string $computerName = null)
     $textLower = strtolower($text);
 
     if (preg_match('/(server|poweredge|proliant|thinksystem|blade|ucs)/i', $textLower)) {
-        return 'Server';
+        return 'SRV';
     }
     if (preg_match('/(laptop|notebook|thinkpad|latitude|elitebook|probook|zenbook|macbook|surface pro|ideapad|pavilion|inspiron|vostro|aspire|travelmate|legion|yoga|swift)/i', $textLower)
         || preg_match('/\b(nb|nbk|lp|lap)\b/i', $textLower)) {
-        return 'Laptop';
+        return 'NBK';
     }
-    if (preg_match('/(all-in-one|aio|optiplex aio|imac)/i', $textLower)) {
-        return 'All-in-One';
+    // Bila belum berhasil mendeteksi kategori atau tipe umum, default sementara adalah CMP
+    return 'CMP';
+}
+
+function normalize_pc_category(?string $category, ?string $specs = '', ?string $computerName = ''): string
+{
+    $cat = strtoupper(trim((string)$category));
+    if ($cat === 'CMP' || $cat === 'COMPUTER' || $cat === 'DESKTOP' || $cat === 'ALL-IN-ONE' || $cat === 'AIO' || $cat === 'PC') {
+        return 'CMP';
     }
-    if (preg_match('/(desktop|optiplex|tower|precision|thinkcentre|veriton|micro|workstation|pc)/i', $textLower)) {
-        return 'Desktop';
+    if ($cat === 'NBK' || $cat === 'NOTEBOOK' || $cat === 'LAPTOP') {
+        return 'NBK';
     }
-    return 'Computer';
+    if ($cat === 'SRV' || $cat === 'SERVER') {
+        return 'SRV';
+    }
+    if ($cat === 'DSP' || $cat === 'MONITOR' || $cat === 'DISPLAY') {
+        return 'DSP';
+    }
+    if ($cat === 'PRT' || $cat === 'PRINTER') {
+        return 'PRT';
+    }
+    if ($cat === 'TOOLS') {
+        return 'TOOLS';
+    }
+    if ($cat !== '') {
+        return $cat;
+    }
+    $detected = detect_pc_category($specs, $computerName);
+    return $detected !== '' ? $detected : 'CMP';
+}
+
+function pc_master_categories(PDO $pdo): array
+{
+    try {
+        if (db_table_exists($pdo, 'asset_types')) {
+            $itGroupId = default_pc_group_id($pdo);
+            $stmt = $pdo->prepare("SELECT id, asset_group_id, type_code, type_name FROM asset_types WHERE (asset_group_id = ? OR asset_group_id = 1) AND is_active = 1 ORDER BY (type_code = 'CMP') DESC, (type_code = 'NBK') DESC, (type_code = 'SRV') DESC, type_name ASC");
+            $stmt->execute([$itGroupId]);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            if ($rows) {
+                return $rows;
+            }
+            $allStmt = $pdo->query("SELECT id, asset_group_id, type_code, type_name FROM asset_types WHERE is_active = 1 ORDER BY (type_code = 'CMP') DESC, (type_code = 'NBK') DESC, id ASC");
+            $allRows = $allStmt->fetchAll(PDO::FETCH_ASSOC);
+            if ($allRows) {
+                return $allRows;
+            }
+        }
+    } catch (Throwable $ignored) {}
+    return [
+        ['id' => 1, 'asset_group_id' => 1, 'type_code' => 'CMP', 'type_name' => 'Computer'],
+        ['id' => 2, 'asset_group_id' => 1, 'type_code' => 'NBK', 'type_name' => 'Notebook'],
+        ['id' => 4, 'asset_group_id' => 1, 'type_code' => 'SRV', 'type_name' => 'Server'],
+    ];
+}
+
+function pc_master_category_label(PDO $pdo, ?string $categoryCode): string
+{
+    $norm = normalize_pc_category($categoryCode);
+    foreach (pc_master_categories($pdo) as $cat) {
+        if (strtoupper($cat['type_code']) === $norm) {
+            return $cat['type_code'] . ' - ' . $cat['type_name'];
+        }
+    }
+    return $norm !== '' ? $norm : 'CMP - Computer';
+}
+
+function pc_master_category_options(PDO $pdo, ?string $selected = 'CMP', bool $allowAll = false, string $allLabel = '- Pilih Kategori -'): string
+{
+    $html = '';
+    if ($allowAll) {
+        $sel = ($selected === null || $selected === '') ? ' selected' : '';
+        $html .= '<option value=""' . $sel . '>' . e($allLabel) . '</option>';
+    }
+    $normSelected = normalize_pc_category($selected);
+    $categories = pc_master_categories($pdo);
+    $foundSelected = false;
+    foreach ($categories as $cat) {
+        $code = strtoupper(trim((string)$cat['type_code']));
+        $name = trim((string)$cat['type_name']);
+        $label = $code === $name ? $code : ($code . ' - ' . $name);
+        $isSel = (!$allowAll && ($normSelected === $code)) || ($allowAll && $selected !== null && $selected !== '' && $normSelected === $code);
+        if ($isSel) {
+            $foundSelected = true;
+        }
+        $html .= '<option value="' . e($code) . '"' . ($isSel ? ' selected' : '') . '>' . e($label) . '</option>';
+    }
+    if (!$foundSelected && $normSelected !== '' && !$allowAll) {
+        $html .= '<option value="' . e($normSelected) . '" selected>' . e($normSelected) . '</option>';
+    }
+    return $html;
 }
 
 function pc_table(array $rows, bool $actions = false): string
@@ -381,8 +472,10 @@ function pc_table(array $rows, bool $actions = false): string
     $canDelete = has_regulation('pcs', 'delete');
     $html = '<table><tr><th>PcID</th><th>NIK</th><th>Pengguna</th><th>Computer Name</th><th>Kategori</th><th>Manajemen Aset</th><th>Analisa Terakhir</th><th>Aksi</th></tr>';
     foreach ($rows as $row) {
-        $cat = trim((string)($row['category'] ?? '')) ?: (trim((string)($row['asset_category'] ?? '')) ?: detect_pc_category($row['general_specs'] ?? '', $row['computer_name'] ?? ''));
-        $catBadge = '<span class="badge">' . e($cat ?: 'Computer') . '</span>';
+        $rawCat = trim((string)($row['category'] ?? '')) ?: (trim((string)($row['asset_category'] ?? '')) ?: '');
+        $normCat = normalize_pc_category($rawCat, $row['general_specs'] ?? '', $row['computer_name'] ?? '');
+        $catLabel = pc_master_category_label($pdo, $normCat);
+        $catBadge = '<span class="badge" title="' . e($catLabel) . '">' . e($normCat) . '</span>';
 
         $rowActions = '<a class="btn-icon view" href="' . route_url('pc_detail', ['pc_id' => $row['pc_id']]) . '" title="Detail PC">'
             . '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
@@ -470,7 +563,10 @@ function pc_form_html(array $pc, bool $editing): string
     $pdo = Database::pdo();
     $effectivePcId = $editing ? (string)$pc['pc_id'] : next_pc_id($pdo);
     $selectedGroupId = (int)($pc['asset_group_id'] ?? default_pc_group_id($pdo));
-    $pcCategory = trim((string)($pc['category'] ?? '')) ?: detect_pc_category($pc['general_specs'] ?? '', $pc['computer_name'] ?? '');
+    if ($selectedGroupId <= 0) {
+        $selectedGroupId = default_pc_group_id($pdo);
+    }
+    $pcCategory = normalize_pc_category($pc['category'] ?? null, $pc['general_specs'] ?? '', $pc['computer_name'] ?? '');
 
     $assetCode = '';
     $hasSync = !empty($pc['asset_item_id']);
@@ -498,7 +594,7 @@ function pc_form_html(array $pc, bool $editing): string
         $html .= '<label>PcID<input value="Otomatis (' . e($effectivePcId) . ')" readonly></label><label>Secret QR<input value="Otomatis random" readonly></label>';
     }
     $html .= '<label>Komoditas (Grup Aset) *<select name="asset_group_id" required>' . asset_group_options($pdo, $selectedGroupId, false) . '</select></label>';
-    $html .= '<label>Kategori Aset *<select name="category" id="pcCategorySelect" required>' . asset_category_options($pdo, $pcCategory, true, '- Pilih Kategori -') . '</select></label>';
+    $html .= '<label>Kategori Aset (Master Kategori) *<select name="category" id="pcCategorySelect" required>' . pc_master_category_options($pdo, $pcCategory, false) . '</select></label>';
     $html .= employee_picker_html($pc);
     if ($editing) {
         $html .= '<label>Computer Name<input name="computer_name" value="' . e($pc['computer_name']) . '" placeholder="Otomatis dari PcNalisa"></label>';
@@ -506,7 +602,7 @@ function pc_form_html(array $pc, bool $editing): string
         $html .= '<label>Computer Name<input value="Otomatis dari PcNalisa" readonly></label>';
     }
     $html .= '<div style="grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;background:#f1f5f9;border:1px solid #e2e8f0;padding:8px 12px;border-radius:6px;font-size:12px;color:#475569;">'
-        . '<span>💡 <strong>Komoditas:</strong> Default IT - IT-ASET. <strong>Kategori:</strong> Terpilih otomatis dari Spesifikasi Umum / dapat dipilih ulang manual.</span>'
+        . '<span>💡 <strong>Komoditas:</strong> Default IT - IT-ASET. <strong>Kategori:</strong> Master Kategori (Default: CMP / dapat diubah dan disimpan).</span>'
         . '<button type="button" class="btn" style="padding:3px 10px;font-size:11px;" onclick="autoDetectPcCategory()">⚡ Deteksi Kategori dari Spesifikasi</button>'
         . '</div>';
     $html .= '</div></section>';
@@ -612,25 +708,21 @@ function autoDetectPcCategory() {
     var compNameInput = document.querySelector(\'input[name="computer_name"]\');
     var catSelect = document.getElementById(\'pcCategorySelect\');
     if (!catSelect) return;
-    var text = ((specsArea ? specsArea.value : "") + " " + (compNameInput ? compNameInput.value : "")).toLowerCase();
-    var targetCat = "Computer";
+    var text = ((specsArea ? specsArea.value : \'\') + \' \' + (compNameInput ? compNameInput.value : \'\')).toLowerCase();
+    var targetCode = \'CMP\';
     if (/server|poweredge|proliant|thinksystem|blade|ucs/.test(text)) {
-        targetCat = "Server";
+        targetCode = \'SRV\';
     } else if (/laptop|notebook|thinkpad|latitude|elitebook|probook|zenbook|macbook|surface pro|ideapad|pavilion|inspiron|vostro|aspire|travelmate|legion|yoga|swift|\\b(nb|nbk|lp|lap)\\b/.test(text)) {
-        targetCat = "Laptop";
-    } else if (/all-in-one|aio|optiplex aio|imac/.test(text)) {
-        targetCat = "All-in-One";
-    } else if (/desktop|optiplex|tower|precision|thinkcentre|veriton|micro|workstation|pc/.test(text)) {
-        targetCat = "Desktop";
+        targetCode = \'NBK\';
     }
     for (var i = 0; i < catSelect.options.length; i++) {
-        if (catSelect.options[i].value.toLowerCase() === targetCat.toLowerCase()) {
+        if (catSelect.options[i].value.toUpperCase() === targetCode) {
             catSelect.selectedIndex = i;
             return;
         }
     }
     for (var j = 0; j < catSelect.options.length; j++) {
-        if (catSelect.options[j].value.toLowerCase() === "computer") {
+        if (catSelect.options[j].value.toUpperCase() === \'CMP\') {
             catSelect.selectedIndex = j;
             return;
         }
@@ -661,7 +753,10 @@ function pc_form_fallback_html(array $pc, bool $editing, string $error): string
     $pdo = Database::pdo();
     $title = $editing ? 'Edit PC' : 'Tambah PC Baru';
     $selectedGroupId = (int)($pc['asset_group_id'] ?? default_pc_group_id($pdo));
-    $pcCategory = trim((string)($pc['category'] ?? '')) ?: detect_pc_category($pc['general_specs'] ?? '', $pc['computer_name'] ?? '');
+    if ($selectedGroupId <= 0) {
+        $selectedGroupId = default_pc_group_id($pdo);
+    }
+    $pcCategory = normalize_pc_category($pc['category'] ?? null, $pc['general_specs'] ?? '', $pc['computer_name'] ?? '');
 
     $html = '<section class="panel"><div class="flash err">Form utama gagal dibuka: ' . e($error) . '</div><h1>' . e($title) . '</h1><p class="muted">Form aman ini tetap bisa dipakai untuk tambah/edit PC.</p></section>';
     $html .= '<section class="panel"><form method="post"><input type="hidden" name="csrf" value="' . csrf_token() . '">';
@@ -672,7 +767,7 @@ function pc_form_fallback_html(array $pc, bool $editing, string $error): string
     } else {
         $html .= '<div class="grid two"><label>PcID<input value="Otomatis saat simpan" readonly></label><label>Secret QR<input value="Otomatis random" readonly></label></div>';
     }
-    $html .= '<div class="grid two"><label>Komoditas (Grup Aset) *<select name="asset_group_id" required>' . asset_group_options($pdo, $selectedGroupId, false) . '</select></label><label>Kategori Aset *<select name="category" required>' . asset_category_options($pdo, $pcCategory, true, '- Pilih Kategori -') . '</select></label></div>';
+    $html .= '<div class="grid two"><label>Komoditas (Grup Aset) *<select name="asset_group_id" required>' . asset_group_options($pdo, $selectedGroupId, false) . '</select></label><label>Kategori Aset (Master Kategori) *<select name="category" required>' . pc_master_category_options($pdo, $pcCategory, false) . '</select></label></div>';
     $html .= employee_picker_html($pc, true);
     $html .= saved_location_datalist_html();
     $html .= '<label>Nama / Titik Lokasi<input name="location_label" list="savedLocationGroups" value="' . e($pc['location_label'] ?? '') . '" placeholder="Contoh: Lantai 2 - Meja Finance"></label>';
@@ -829,14 +924,17 @@ function ingest_analysis_payload(PDO $pdo, array $payload): array
     $stmt->execute([$pcId]);
     $existing = $stmt->fetch();
 
+    $detectedCat = detect_pc_category($specs, $computerName);
+    $itGroupId = default_pc_group_id($pdo);
+
     if ($existing) {
-        $pdo->prepare('UPDATE pcs SET owner_name = COALESCE(NULLIF(owner_name,""), ?), computer_name = ?, general_specs = ?, software = ?, device_management = ?, benchmark = ?, startup_analysis = ?, ai_recommendation = ?, last_analyzed_at = NOW() WHERE pc_id = ?')->execute([
-            $owner, $computerName, $specs, $software, $device, $benchmark, $startup, $summary, $pcId
+        $pdo->prepare('UPDATE pcs SET owner_name = COALESCE(NULLIF(owner_name,""), ?), computer_name = ?, general_specs = ?, software = ?, device_management = ?, benchmark = ?, startup_analysis = ?, ai_recommendation = ?, category = COALESCE(NULLIF(category, ""), ?), asset_group_id = COALESCE(NULLIF(asset_group_id, 0), ?), last_analyzed_at = NOW() WHERE pc_id = ?')->execute([
+            $owner, $computerName, $specs, $software, $device, $benchmark, $startup, $summary, $detectedCat, $itGroupId, $pcId
         ]);
     } else {
         $sec = pc_security_code_seed($pcId);
-        $pdo->prepare('INSERT INTO pcs (pc_id, security_code, owner_name, computer_name, general_specs, software, device_management, benchmark, startup_analysis, ai_recommendation, last_analyzed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())')->execute([
-            $pcId, $sec, $owner, $computerName, $specs, $software, $device, $benchmark, $startup, $summary
+        $pdo->prepare('INSERT INTO pcs (pc_id, security_code, owner_name, computer_name, asset_group_id, category, general_specs, software, device_management, benchmark, startup_analysis, ai_recommendation, last_analyzed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())')->execute([
+            $pcId, $sec, $owner, $computerName, $itGroupId, $detectedCat, $specs, $software, $device, $benchmark, $startup, $summary
         ]);
     }
 
@@ -864,6 +962,20 @@ function ensure_pc_schema(PDO $pdo): void
             }
             if (!db_column_exists($pdo, 'pcs', 'category')) {
                 $pdo->exec('ALTER TABLE pcs ADD COLUMN category VARCHAR(100) NULL AFTER asset_group_id');
+            }
+            // Populate null asset_group_id with IT group
+            $itId = default_pc_group_id($pdo);
+            $pdo->exec("UPDATE pcs SET asset_group_id = {$itId} WHERE asset_group_id IS NULL OR asset_group_id = 0");
+
+            // Auto-detect or default empty/null category to CMP
+            $stmt = $pdo->query("SELECT id, pc_id, general_specs, computer_name FROM pcs WHERE category IS NULL OR category = ''");
+            $nullRows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+            if ($nullRows) {
+                $up = $pdo->prepare("UPDATE pcs SET category = ? WHERE id = ?");
+                foreach ($nullRows as $nr) {
+                    $c = detect_pc_category($nr['general_specs'] ?? '', $nr['computer_name'] ?? '');
+                    $up->execute([$c !== '' ? $c : 'CMP', (int)$nr['id']]);
+                }
             }
         }
     } catch (Throwable $ignored) {
@@ -916,10 +1028,28 @@ function handle_route_pcs(PDO $pdo): void
         $params[] = $filterGroupId;
     }
     if ($filterCategory !== '') {
-        $conditions[] = $hasPcCatCol
-            ? '(COALESCE(NULLIF(p.category, ""), ai.asset_category) = ?)'
-            : '(ai.asset_category = ?)';
-        $params[] = $filterCategory;
+        $catNorm = normalize_pc_category($filterCategory);
+        $catAliases = [$catNorm];
+        if ($catNorm === 'CMP') {
+            $catAliases = array_merge($catAliases, ['Computer', 'Desktop', 'All-in-One', 'PC']);
+        } elseif ($catNorm === 'NBK') {
+            $catAliases = array_merge($catAliases, ['Notebook', 'Laptop']);
+        } elseif ($catNorm === 'SRV') {
+            $catAliases = array_merge($catAliases, ['Server']);
+        }
+        $placeholders = implode(',', array_fill(0, count($catAliases), '?'));
+        if ($hasPcCatCol) {
+            if ($catNorm === 'CMP') {
+                $conditions[] = '((COALESCE(NULLIF(p.category, ""), ai.asset_category) IN (' . $placeholders . ')) OR (p.category IS NULL AND (ai.asset_category IS NULL OR ai.asset_category = "")))';
+            } else {
+                $conditions[] = '(COALESCE(NULLIF(p.category, ""), ai.asset_category) IN (' . $placeholders . '))';
+            }
+        } else {
+            $conditions[] = '(ai.asset_category IN (' . $placeholders . '))';
+        }
+        foreach ($catAliases as $alias) {
+            $params[] = $alias;
+        }
     }
     if ($q !== '') {
         $conditions[] = '(p.pc_id LIKE ? OR p.owner_name LIKE ? OR p.computer_name LIKE ?)';
@@ -936,7 +1066,7 @@ function handle_route_pcs(PDO $pdo): void
     echo '<form method="get" class="actions" style="margin:16px 0 8px 0;flex-wrap:wrap;gap:8px;align-items:center;">';
     echo '<input type="hidden" name="route" value="pcs">';
     echo '<select name="group_id" onchange="this.form.submit()">' . asset_group_options($pdo, $filterGroupId, true, 'Semua Komoditas') . '</select>';
-    echo '<select name="category" onchange="this.form.submit()">' . asset_category_options($pdo, $filterCategory !== '' ? $filterCategory : null, true, 'Semua Kategori') . '</select>';
+    echo '<select name="category" onchange="this.form.submit()">' . pc_master_category_options($pdo, $filterCategory !== '' ? $filterCategory : null, true, 'Semua Kategori') . '</select>';
     echo '<input name="q" value="' . e($q) . '" placeholder="Cari PcID, pengguna, computer name..." style="width:auto;min-width:240px;padding:8px 12px;">';
     echo '<button class="btn primary" style="padding:8px 14px;">Cari</button>';
     if ($filterGroupId > 0 || $filterCategory !== '' || $q !== '') {
@@ -1027,9 +1157,12 @@ function handle_route_pc_form(PDO $pdo): void
         }
 
         $assetGroupId = (int)($_POST['asset_group_id'] ?? 0) > 0 ? (int)$_POST['asset_group_id'] : default_pc_group_id($pdo);
-        $category = trim((string)($_POST['category'] ?? ''));
+        $category = strtoupper(trim((string)($_POST['category'] ?? '')));
         if ($category === '') {
-            $category = detect_pc_category((string)($_POST['general_specs'] ?? ''), $computerName);
+            $category = normalize_pc_category(null, (string)($_POST['general_specs'] ?? ''), $computerName);
+        }
+        if ($category === '') {
+            $category = 'CMP';
         }
 
         $pcData = [
@@ -1038,7 +1171,7 @@ function handle_route_pc_form(PDO $pdo): void
             'owner_name' => $ownerName,
             'computer_name' => $computerName,
             'asset_group_id' => $assetGroupId,
-            'category' => $category !== '' ? $category : 'Computer',
+            'category' => $category,
             'asset_item_id' => (int)($_POST['asset_item_id'] ?? 0) > 0 ? (int)$_POST['asset_item_id'] : null,
             'asset_bundle_id' => null,
             'location_label' => trim((string)($_POST['location_label'] ?? '')),
@@ -1076,6 +1209,21 @@ function handle_route_pc_form(PDO $pdo): void
                     throw new RuntimeException("Asset item '{$chkRow['asset_code']}' berstatus 'Bundle (Child Asset)' dan tidak dapat disinkronkan ke PC. Silakan pilih Parent Asset atau pisahkan asset ini terlebih dahulu.");
                 }
             }
+            $syncAssetItems = function(int $itemId) use ($pdo, $assetGroupId, $category): void {
+                if ($itemId <= 0) return;
+                $typeId = null;
+                try {
+                    if (db_table_exists($pdo, 'asset_types')) {
+                        $tStmt = $pdo->prepare("SELECT id FROM asset_types WHERE type_code = ? LIMIT 1");
+                        $tStmt->execute([$category]);
+                        $tCol = $tStmt->fetchColumn();
+                        if ($tCol) $typeId = (int)$tCol;
+                    }
+                } catch (Throwable $ignored) {}
+                $pdo->prepare("UPDATE asset_items SET asset_group_id = COALESCE(?, asset_group_id), asset_type_id = COALESCE(?, asset_type_id), asset_category = COALESCE(?, asset_category) WHERE id = ?")
+                    ->execute([$assetGroupId, $typeId, $category, $itemId]);
+            };
+
             if ($editing) {
                 $setParts = [];
                 foreach (array_keys($pcData) as $column) {
@@ -1084,8 +1232,7 @@ function handle_route_pc_form(PDO $pdo): void
                 $stmt = $pdo->prepare('UPDATE pcs SET ' . implode(', ', $setParts) . ' WHERE pc_id=?');
                 $stmt->execute([...array_values($pcData), $pcId]);
                 if (!empty($pcData['asset_item_id'])) {
-                    $pdo->prepare("UPDATE asset_items SET asset_group_id = COALESCE(?, asset_group_id), asset_category = COALESCE(?, asset_category) WHERE id = ?")
-                        ->execute([$assetGroupId, $category, (int)$pcData['asset_item_id']]);
+                    $syncAssetItems((int)$pcData['asset_item_id']);
                 }
                 sync_pc_maintenance_asset($pdo, $pcId);
                 flash('Data PC berhasil diperbarui.');
@@ -1102,8 +1249,7 @@ function handle_route_pc_form(PDO $pdo): void
             $stmt = $pdo->prepare('INSERT INTO pcs (pc_id, ' . implode(', ', $columns) . ') VALUES (' . $placeholders . ')');
             $stmt->execute([$postedPcId, ...array_values($pcData)]);
             if (!empty($pcData['asset_item_id'])) {
-                $pdo->prepare("UPDATE asset_items SET asset_group_id = COALESCE(?, asset_group_id), asset_category = COALESCE(?, asset_category) WHERE id = ?")
-                    ->execute([$assetGroupId, $category, (int)$pcData['asset_item_id']]);
+                $syncAssetItems((int)$pcData['asset_item_id']);
             }
             sync_pc_maintenance_asset($pdo, $postedPcId);
             flash('PC baru berhasil ditambahkan.');
@@ -1142,6 +1288,9 @@ function handle_route_pc_detail(PDO $pdo): void
     }
 
     $groupId = (int)($pc['asset_group_id'] ?? default_pc_group_id($pdo));
+    if ($groupId <= 0) {
+        $groupId = default_pc_group_id($pdo);
+    }
     $groupName = 'IT - IT-ASET';
     try {
         if (db_table_exists($pdo, 'asset_groups')) {
@@ -1154,7 +1303,9 @@ function handle_route_pc_detail(PDO $pdo): void
         }
     } catch (Throwable $ignored) {}
 
-    $pcCategory = trim((string)($pc['category'] ?? '')) ?: (trim((string)($pc['asset_category'] ?? '')) ?: detect_pc_category($pc['general_specs'] ?? '', $pc['computer_name'] ?? ''));
+    $rawCategory = trim((string)($pc['category'] ?? '')) ?: (trim((string)($pc['asset_category'] ?? '')) ?: '');
+    $pcCategory = normalize_pc_category($rawCategory, $pc['general_specs'] ?? '', $pc['computer_name'] ?? '');
+    $categoryLabel = pc_master_category_label($pdo, $pcCategory);
 
     render_header('Detail ' . $pcId, $user);
     echo '<style>.analysis-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.analysis-grid .panel{min-width:0;overflow:hidden}.analysis-table{table-layout:auto}.analysis-table td,.analysis-table th{overflow-wrap:anywhere;word-break:normal}.wide-panel{grid-column:1/-1}@media(max-width:900px){.analysis-grid{grid-template-columns:1fr}}</style>';
@@ -1162,7 +1313,7 @@ function handle_route_pc_detail(PDO $pdo): void
     echo '<section class="panel"><div class="split"><div><h1>' . e($pc['pc_id']) . '</h1><p>' . e($pc['owner_name']) . ' - ' . e($pc['computer_name'] ?: 'Computer name belum ada') . '</p>';
     echo '<p>'
         . '<span class="badge ok">Komoditas: ' . e($groupName) . '</span> '
-        . '<span class="badge ok">Kategori: ' . e($pcCategory ?: 'Computer') . '</span> '
+        . '<span class="badge ok">Kategori: ' . e($categoryLabel) . '</span> '
         . ($hasSync && $assetCode !== '' ? '<span class="badge">Maintenance Asset ID ' . e($assetCode) . '</span> ' : '<span class="badge danger">Belum Sinkron ke Asset Item</span> ')
         . '<span class="badge">NIK ' . e($pc['employee_nik'] ?? '-') . '</span>'
         . '</p>';
