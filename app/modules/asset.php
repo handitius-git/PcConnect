@@ -118,7 +118,6 @@ function asset_items_table(PDO $pdo, array $rows): string
         return '<p>Belum ada asset item.</p>';
     }
     $itemIds = array_column($rows, 'id');
-    $bulkLabels = asset_items_bulk_maintenance_labels($pdo, $itemIds);
 
     // Eager-load parent & child relationships for all items in the current page
     $childrenByParent = [];
@@ -163,22 +162,27 @@ function asset_items_table(PDO $pdo, array $rows): string
         }
     }
 
-    $specsByItem = [];
-    if ($itemIds && db_table_exists($pdo, 'asset_specifications')) {
-        $inIds = implode(',', array_map('intval', $itemIds));
-        try {
-            $sSpec = $pdo->query("SELECT asp.asset_item_id, ats.specification_name, asp.specification_value 
-                                 FROM asset_specifications asp 
-                                 JOIN asset_type_specifications ats ON ats.id = asp.asset_type_specification_id 
-                                 WHERE asp.asset_item_id IN ($inIds) AND asp.specification_value <> ''");
-            while ($rSpec = $sSpec->fetch(PDO::FETCH_ASSOC)) {
-                $specsByItem[(int)$rSpec['asset_item_id']][] = $rSpec['specification_name'] . ': ' . $rSpec['specification_value'];
-            }
-        } catch (Throwable $ignored) {
-        }
-    }
+    $html = '<style>
+        .asset-table-sortable th { user-select: none; transition: background 0.15s; }
+        .asset-table-sortable th.sortable:hover { background: #edf2f7; }
+        .sort-ind { display: inline-block; margin-left: 4px; font-size: 11px; opacity: 0.35; transition: all 0.15s; }
+        .sort-ind.active { opacity: 1; color: #2563eb; font-weight: 700; }
+    </style>';
 
-    $html = '<table><tr><th>Asset Code</th><th>Maintenance Asset ID</th><th>Company</th><th>Pengguna / Custodian</th><th>Category</th><th>Mode Asset</th><th>Type</th><th>Nama / Merek</th><th>Nilai</th><th>Status</th><th>Aksi</th></tr>';
+    $html .= '<table id="assetItemsTable" class="asset-table-sortable">';
+    $html .= '<thead><tr>';
+    $html .= '<th class="sortable" onclick="sortAssetTable(0)" style="cursor:pointer;" title="Klik untuk mengurutkan">Asset Code <span class="sort-ind">⇅</span></th>';
+    $html .= '<th class="sortable" onclick="sortAssetTable(1)" style="cursor:pointer;" title="Klik untuk mengurutkan">Company <span class="sort-ind">⇅</span></th>';
+    $html .= '<th class="sortable" onclick="sortAssetTable(2)" style="cursor:pointer;" title="Klik untuk mengurutkan">Pengguna / Custodian <span class="sort-ind">⇅</span></th>';
+    $html .= '<th class="sortable" onclick="sortAssetTable(3)" style="cursor:pointer;" title="Klik untuk mengurutkan">Category <span class="sort-ind">⇅</span></th>';
+    $html .= '<th class="sortable" onclick="sortAssetTable(4)" style="cursor:pointer;" title="Klik untuk mengurutkan">Mode Asset <span class="sort-ind">⇅</span></th>';
+    $html .= '<th class="sortable" onclick="sortAssetTable(5)" style="cursor:pointer;" title="Klik untuk mengurutkan">Type <span class="sort-ind">⇅</span></th>';
+    $html .= '<th class="sortable" onclick="sortAssetTable(6)" style="cursor:pointer;" title="Klik untuk mengurutkan">Nama / Merek <span class="sort-ind">⇅</span></th>';
+    $html .= '<th class="sortable" onclick="sortAssetTable(7)" style="cursor:pointer;" title="Klik untuk mengurutkan">Nilai <span class="sort-ind">⇅</span></th>';
+    $html .= '<th class="sortable" onclick="sortAssetTable(8)" style="cursor:pointer;" title="Klik untuk mengurutkan">Status <span class="sort-ind">⇅</span></th>';
+    $html .= '<th style="text-align:center;width:96px;">Aksi</th>';
+    $html .= '</tr></thead><tbody>';
+
     foreach ($rows as $row) {
         $rawMode = (string)($row['asset_mode'] ?? 'standalone');
         $itemId = (int)$row['id'];
@@ -206,10 +210,7 @@ function asset_items_table(PDO $pdo, array $rows): string
             $mode = '<span class="badge">Single</span>';
         }
 
-        $maintenanceLabels = $bulkLabels[(int)$row['id']] ?? [];
-        $maintenanceText = $maintenanceLabels ? implode("\n", $maintenanceLabels) : '-';
         $custodianText = !empty($row['custodian_name']) ? ('<strong>' . e($row['custodian_name']) . '</strong>' . (!empty($row['custodian_nik']) ? ('<br><span class="muted">NIK: ' . e($row['custodian_nik']) . '</span>') : '')) : '<span class="muted">-</span>';
-        $locationText = !empty($row['location_label']) ? '<br><span class="muted" style="font-size:11px">📍 ' . e($row['location_label']) . '</span>' : '';
 
         $idfs = $identifiersByItem[$itemId] ?? [];
         $idfHtml = '';
@@ -217,29 +218,93 @@ function asset_items_table(PDO $pdo, array $rows): string
             $idfHtml = '<div style="font-size:11px;color:#0284c7;margin-top:4px;line-height:1.3;">' . implode('<br>', array_map('e', array_slice($idfs, 0, 3))) . (count($idfs) > 3 ? '<br><span class="muted">+ ' . (count($idfs) - 3) . ' identifier lainnya</span>' : '') . '</div>';
         }
 
-        $specs = $specsByItem[$itemId] ?? [];
-        $specHtml = '';
-        if ($specs) {
-            $specHtml = '<div style="font-size:11px;color:#475569;margin-top:4px;line-height:1.3;">' . implode(' • ', array_map('e', array_slice($specs, 0, 3))) . (count($specs) > 3 ? '<br><span class="muted">+ ' . (count($specs) - 3) . ' spesifikasi lainnya</span>' : '') . '</div>';
-        }
-
         $sourcePcBadge = '';
         if (!empty($row['source_pc_id'])) {
             $sourcePcBadge = '<div style="margin-top:4px;"><span class="badge" style="background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;font-size:11px;font-weight:600;" title="Diimport dari Data PC">📥 Import PC: ' . e($row['source_pc_id']) . '</span></div>';
         }
 
+        // Exclusive compact action icons
         $itemActions = '';
         if (has_regulation('asset_items', 'edit')) {
-            $itemActions .= '<a class="btn" href="' . route_url('asset_item_form', ['id' => $row['id']]) . '">Buka</a> ';
+            $itemActions .= '<a class="btn-icon edit" href="' . route_url('asset_item_form', ['id' => $row['id']]) . '" title="Edit Unit Aset"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></a> ';
         }
-        $itemActions .= '<a class="btn" href="' . route_url('asset_repair_form', ['asset_item_id' => $row['id']]) . '">Repair</a>';
+        $itemActions .= '<a class="btn-icon repair" href="' . route_url('asset_repair_form', ['asset_item_id' => $row['id']]) . '" title="Input Repair"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg></a> ';
         if (has_regulation('asset_items', 'delete')) {
-            $itemActions .= ' <form method="post" action="' . route_url('asset_items') . '" style="display:inline;" onsubmit="return confirm(\'Hapus unit aset ' . addslashes((string)$row['asset_code']) . '?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete_item"><input type="hidden" name="id" value="' . (int)$row['id'] . '"><button class="btn danger" style="padding:4px 8px;font-size:12px;">Hapus</button></form>';
+            $itemActions .= '<form method="post" action="' . route_url('asset_items') . '" style="display:inline-block;margin:0;" onsubmit="return confirm(\'Hapus unit aset ' . addslashes((string)$row['asset_code']) . '?\')"><input type="hidden" name="csrf" value="' . csrf_token() . '"><input type="hidden" name="action" value="delete_item"><input type="hidden" name="id" value="' . (int)$row['id'] . '"><button type="submit" class="btn-icon delete" title="Hapus Unit Aset"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button></form>';
         }
 
-        $html .= '<tr><td><strong>' . e($row['asset_code']) . '</strong><br><span class="muted">SN: ' . e($row['serial_number'] ?: '-') . '</span>' . $sourcePcBadge . $idfHtml . '</td><td>' . nl2br(e($maintenanceText)) . '</td><td>' . e($row['company_name'] ?: '-') . $locationText . '</td><td>' . $custodianText . '</td><td>' . e($row['asset_category'] ?? '-') . '</td><td>' . $mode . '</td><td>' . e($row['asset_type']) . '</td><td>' . e($row['asset_name']) . '<br><span class="muted">' . e(trim(($row['brand'] ?? '') . ' ' . ($row['model'] ?? ''))) . '</span>' . $specHtml . '</td><td>Awal: Rp ' . e(number_format((float)$row['purchase_value'], 0, ',', '.')) . '<br>Current: Rp ' . e(number_format((float)$row['current_value'], 0, ',', '.')) . '</td><td><span class="badge">' . e($row['status']) . '</span></td><td><div class="actions" style="display:flex;gap:4px;flex-wrap:nowrap;">' . $itemActions . '</div></td></tr>';
+        $html .= '<tr>';
+        $html .= '<td><strong>' . e($row['asset_code']) . '</strong><br><span class="muted">SN: ' . e($row['serial_number'] ?: '-') . '</span>' . $sourcePcBadge . $idfHtml . '</td>';
+        $html .= '<td>' . e($row['company_name'] ?: '-') . '</td>';
+        $html .= '<td>' . $custodianText . '</td>';
+        $html .= '<td>' . e($row['asset_category'] ?? '-') . '</td>';
+        $html .= '<td>' . $mode . '</td>';
+        $html .= '<td>' . e($row['asset_type']) . '</td>';
+        $html .= '<td>' . e($row['asset_name']) . '<br><span class="muted">' . e(trim(($row['brand'] ?? '') . ' ' . ($row['model'] ?? ''))) . '</span></td>';
+        $html .= '<td>Awal: Rp ' . e(number_format((float)$row['purchase_value'], 0, ',', '.')) . '<br>Current: Rp ' . e(number_format((float)$row['current_value'], 0, ',', '.')) . '</td>';
+        $html .= '<td><span class="badge">' . e($row['status']) . '</span></td>';
+        $html .= '<td style="text-align:center;"><div style="display:inline-flex;gap:5px;align-items:center;justify-content:center;">' . $itemActions . '</div></td>';
+        $html .= '</tr>';
     }
-    return $html . '</table>';
+
+    $html .= '</tbody></table>';
+
+    // Client-side Sorting Script
+    $html .= '<script>
+    function sortAssetTable(colIndex) {
+        var table = document.getElementById("assetItemsTable");
+        if (!table) return;
+        var tbody = table.querySelector("tbody") || table;
+        var rows = Array.from(tbody.querySelectorAll("tr")).filter(function(r) { 
+            return !r.querySelector("th"); 
+        });
+        if (rows.length === 0) return;
+
+        var ths = table.querySelectorAll("thead th");
+        var targetTh = ths[colIndex];
+        if (!targetTh) return;
+
+        var currentDir = targetTh.getAttribute("data-sort-dir");
+        var isAsc = currentDir !== "asc";
+
+        ths.forEach(function(th, idx) {
+            var ind = th.querySelector(".sort-ind");
+            if (ind) {
+                ind.textContent = "⇅";
+                ind.classList.remove("active");
+            }
+            if (idx !== colIndex) th.removeAttribute("data-sort-dir");
+        });
+
+        targetTh.setAttribute("data-sort-dir", isAsc ? "asc" : "desc");
+        var activeInd = targetTh.querySelector(".sort-ind");
+        if (activeInd) {
+            activeInd.textContent = isAsc ? " ▲" : " ▼";
+            activeInd.classList.add("active");
+        }
+
+        rows.sort(function(a, b) {
+            var cellA = a.children[colIndex] ? a.children[colIndex].innerText.trim() : "";
+            var cellB = b.children[colIndex] ? b.children[colIndex].innerText.trim() : "";
+
+            if (colIndex === 7) {
+                var numA = parseFloat(cellA.replace(/[^0-9]/g, "")) || 0;
+                var numB = parseFloat(cellB.replace(/[^0-9]/g, "")) || 0;
+                return isAsc ? numA - numB : numB - numA;
+            }
+
+            return isAsc 
+                ? cellA.localeCompare(cellB, undefined, {numeric: true, sensitivity: "base"})
+                : cellB.localeCompare(cellA, undefined, {numeric: true, sensitivity: "base"});
+        });
+
+        rows.forEach(function(row) {
+            tbody.appendChild(row);
+        });
+    }
+    </script>';
+
+    return $html;
 }
 
 function asset_master_item_defaults(): array

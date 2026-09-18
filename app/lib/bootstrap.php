@@ -435,6 +435,11 @@ function render_header(string $title, ?array $user = null): void
     echo '.btn.primary{background:#1457d9;border-color:#1457d9;color:#fff}.btn.primary:hover{background:#0f46b3}';
     echo '.btn.good{background:#0f8a5f;border-color:#0f8a5f;color:#fff}.btn.good:hover{background:#0b6b4a}';
     echo '.btn.danger{background:#dc2626;border-color:#dc2626;color:#fff}.btn.danger:hover{background:#b91c1c}';
+    echo '.btn-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;cursor:pointer;transition:all .15s ease-in-out;padding:0;text-decoration:none;box-sizing:border-box}';
+    echo '.btn-icon:hover{transform:translateY(-1px);box-shadow:0 2px 5px rgba(0,0,0,.08)}';
+    echo '.btn-icon.edit{color:#2563eb;border-color:#bfdbfe;background:#eff6ff}.btn-icon.edit:hover{background:#dbeafe;color:#1d4ed8;border-color:#93c5fd}';
+    echo '.btn-icon.repair{color:#d97706;border-color:#fde68a;background:#fffbeb}.btn-icon.repair:hover{background:#fef3c7;color:#b45309;border-color:#fcd34d}';
+    echo '.btn-icon.delete{color:#dc2626;border-color:#fecaca;background:#fef2f2}.btn-icon.delete:hover{background:#fee2e2;color:#b91c1c;border-color:#fca5a5}';
     echo 'label{display:block;font-weight:600;margin:12px 0 6px;font-size:13px;color:#334155}';
     echo 'input,select,textarea{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:7px;padding:9px 12px;font:inherit;font-size:13px;background:#fff;transition:border-color .15s,box-shadow .15s}';
     echo 'input:focus,select:focus,textarea:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.15)}';
