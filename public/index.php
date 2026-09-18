@@ -38,6 +38,19 @@ require_once $baseDir . '/app/lib/bootstrap.php';
 require_once $baseDir . '/app/lib/schema.php';
 require_once $baseDir . '/app/modules/auth.php';
 
+if (!function_exists('ensure_session_started')) {
+    function ensure_session_started(): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            return;
+        }
+        if (headers_sent($file, $line)) {
+            throw new RuntimeException('Session tidak dapat dimulai karena output sudah dikirim dari ' . $file . ':' . $line . '.');
+        }
+        session_start();
+    }
+}
+
 ensure_session_started();
 
 $route = (string)($_GET['route'] ?? 'dashboard');

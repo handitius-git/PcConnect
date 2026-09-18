@@ -3,15 +3,17 @@ declare(strict_types=1);
 
 date_default_timezone_set('Asia/Jakarta');
 
-function ensure_session_started(): void
-{
-    if (session_status() === PHP_SESSION_ACTIVE) {
-        return;
+if (!function_exists('ensure_session_started')) {
+    function ensure_session_started(): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            return;
+        }
+        if (headers_sent($file, $line)) {
+            throw new RuntimeException('Session tidak dapat dimulai karena output sudah dikirim dari ' . $file . ':' . $line . '.');
+        }
+        session_start();
     }
-    if (headers_sent($file, $line)) {
-        throw new RuntimeException('Session tidak dapat dimulai karena output sudah dikirim dari ' . $file . ':' . $line . '.');
-    }
-    session_start();
 }
 
 final class Database
