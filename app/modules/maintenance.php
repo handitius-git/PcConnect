@@ -969,13 +969,13 @@ function handle_route_maintenance(PDO $pdo): void
         LEFT JOIN asset_items ai ON ai.id = s.asset_item_id
         LEFT JOIN maintenance_assets ma ON ma.id = s.maintenance_asset_id
         LEFT JOIN asset_groups ag ON ag.id = COALESCE(s.asset_group_id, ai.asset_group_id, ma.asset_group_id)
-        LEFT JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = s.pc_id COLLATE utf8mb4_unicode_ci 
-        LEFT JOIN printers pr ON pr.prn_id COLLATE utf8mb4_unicode_ci = s.printer_id COLLATE utf8mb4_unicode_ci 
+        LEFT JOIN pcs p ON p.pc_id = s.pc_id 
+        LEFT JOIN printers pr ON pr.prn_id = s.printer_id 
         LEFT JOIN users u ON u.id = s.technician_id 
         $where 
         ORDER BY s.scheduled_date DESC, s.id DESC")->fetchAll();
     } catch (Throwable $e) {
-        $rows = $pdo->query("SELECT s.*, s.pc_id asset_id, 'pc' asset_type, p.owner_name, p.computer_name, u.name technician, 'IT Asset' asset_group_name, 'IT' asset_group_code, NULL asset_mode FROM maintenance_schedules s JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = s.pc_id COLLATE utf8mb4_unicode_ci LEFT JOIN users u ON u.id=s.technician_id $where ORDER BY s.scheduled_date DESC, s.id DESC")->fetchAll();
+        $rows = $pdo->query("SELECT s.*, s.pc_id asset_id, 'pc' asset_type, p.owner_name, p.computer_name, u.name technician, 'IT Asset' asset_group_name, 'IT' asset_group_code, NULL asset_mode FROM maintenance_schedules s JOIN pcs p ON p.pc_id = s.pc_id LEFT JOIN users u ON u.id=s.technician_id $where ORDER BY s.scheduled_date DESC, s.id DESC")->fetchAll();
     }
     $addBtn = has_regulation('maintenance', 'create') ? '<a class="btn primary" href="' . route_url('schedule_form') . '">Tambah Schedule</a>' : '';
     $cleanupBtn = has_regulation('maintenance', 'delete') ? '<a class="btn danger" href="' . route_url('maintenance_cleanup') . '">Hapus Data</a>' : '';
@@ -1752,8 +1752,8 @@ function handle_route_maintenance_do(PDO $pdo): void
         ai.asset_mode
         FROM maintenance_schedules s 
         LEFT JOIN asset_items ai ON ai.id = s.asset_item_id
-        LEFT JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = s.pc_id COLLATE utf8mb4_unicode_ci 
-        LEFT JOIN printers pr ON pr.prn_id COLLATE utf8mb4_unicode_ci = s.printer_id COLLATE utf8mb4_unicode_ci 
+        LEFT JOIN pcs p ON p.pc_id = s.pc_id 
+        LEFT JOIN printers pr ON pr.prn_id = s.printer_id 
         WHERE s.id = ?');
     $stmt->execute([$id]);
     $schedule = $stmt->fetch();

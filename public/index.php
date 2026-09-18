@@ -27,51 +27,131 @@ register_shutdown_function(function (): void {
     }
 });
 
-$baseDir = dirname(__DIR__);
-@mkdir($baseDir . '/app/lib', 0777, true);
-@mkdir($baseDir . '/app/modules', 0777, true);
-
-$moduleFiles = [
-    'app/lib/bootstrap.php',
-    'app/lib/schema.php',
-    'app/lib/qr.php',
-    'app/modules/auth.php',
-    'app/modules/pc.php',
-    'app/modules/printer.php',
-    'app/modules/asset.php',
-    'app/modules/maintenance_asset.php',
-    'app/modules/maintenance.php',
-    'app/modules/mobile.php',
-    'app/modules/api.php',
-    'app/modules/labels.php',
-    'app/modules/corrective.php',
-    'app/modules/field_service.php',
-    'app/modules/pengguna.php',
-    'app/modules/asset_loan.php',
-    'app/modules/mobile_loan.php',
-    'app/modules/regulations.php',
-];
-
-$missingFiles = [];
-foreach ($moduleFiles as $mf) {
-    if (!file_exists($baseDir . '/' . $mf)) {
-        $missingFiles[] = $mf;
+if (!ob_get_level()) {
+    if (extension_loaded('zlib') && !ini_get('zlib.output_compression') && !headers_sent()) {
+        ob_start('ob_gzhandler');
+    } else {
+        ob_start();
     }
 }
 
-if (!empty($missingFiles)) {
-    http_response_code(503);
-    echo '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>Sinkronisasi Modul Diperlukan - AsetConnect</title><style>body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;box-sizing:border-box}.box{max-width:680px;background:#1e293b;border:1px solid #334155;border-radius:12px;padding:32px;box-shadow:0 20px 40px rgba(0,0,0,.4)}h1{color:#38bdf8;margin:0 0 12px;font-size:24px}p{color:#cbd5e1;line-height:1.6;margin:8px 0}.missing{background:#0f172a;border-radius:8px;padding:12px 18px;margin:16px 0;font-family:Consolas,monospace;color:#f43f5e;font-size:13px;line-height:1.7}.guide{background:#334155;border-radius:8px;padding:16px 20px;margin-top:20px}.guide h2{color:#f8fafc;font-size:16px;margin:0 0 8px}.guide ol{margin:0;padding-left:20px;color:#e2e8f0;line-height:1.8}code{background:#0f172a;padding:2px 8px;border-radius:4px;color:#38bdf8;font-weight:700}.btn{display:inline-block;background:#0284c7;color:#fff;text-decoration:none;padding:10px 18px;border-radius:6px;font-weight:600;margin-top:16px;cursor:pointer;border:none}</style></head><body><div class="box"><h1>AsetConnect: Sinkronisasi Modul Diperlukan</h1><p>Kode aplikasi telah dipecah menjadi modul-modul independen. Beberapa berkas modul baru belum berada di server QNAP NAS ini:</p><div class="missing">' . implode('<br>', array_map('htmlspecialchars', $missingFiles)) . '</div><div class="guide"><h2>Langkah 1 Kali Klik di VS Code untuk Sinkronisasi ke Server:</h2><ol><li>Buka window VS Code di komputer Anda.</li><li>Tekan tombol kombinasi <code>Ctrl</code> + <code>Shift</code> + <code>P</code> (membuka Command Palette).</li><li>Ketik <code>SFTP: Sync Local -> Remote</code> lalu tekan <b>Enter</b>.</li><li>Tunggu sampai proses upload selesai (lihat notifikasi / status bar SFTP di bagian bawah VS Code).</li></ol></div><p style="margin-top:20px">Setelah proses sinkronisasi di VS Code selesai, klik tombol di bawah untuk memuat AsetConnect:</p><a class="btn" href="' . htmlspecialchars($_SERVER['REQUEST_URI'] ?? 'index.php') . '">Muat Ulang Halaman</a></div></body></html>';
-    exit;
-}
+$baseDir = dirname(__DIR__);
 
-foreach ($moduleFiles as $mf) {
-    require_once $baseDir . '/' . $mf;
-}
+// Core modules loaded on every request
+require_once $baseDir . '/app/lib/bootstrap.php';
+require_once $baseDir . '/app/lib/schema.php';
 
 ensure_session_started();
 
 $route = (string)($_GET['route'] ?? 'dashboard');
+
+// Route-based lazy loading: only load modules required by the requested route
+$modulesToLoad = [];
+
+if (str_starts_with($route, 'api_') || $route === 'employee_search') {
+    $modulesToLoad = [
+        'app/modules/pc.php',
+        'app/modules/asset.php',
+        'app/modules/maintenance.php',
+        'app/modules/corrective.php',
+        'app/modules/api.php',
+    ];
+} elseif (in_array($route, ['login', 'logout', 'dashboard', 'users', 'technicians'], true)) {
+    $modulesToLoad = [
+        'app/modules/auth.php',
+    ];
+} elseif (in_array($route, ['pcs', 'pc_detail', 'pc_form', 'pc_location', 'pc_locations', 'pc_asset_sync', 'download_agent', 'upload_analysis'], true)) {
+    $modulesToLoad = [
+        'app/lib/qr.php',
+        'app/modules/asset.php',
+        'app/modules/pc.php',
+    ];
+} elseif (in_array($route, ['printers', 'printer_detail', 'printer_form', 'printer_location', 'printer_locations'], true)) {
+    $modulesToLoad = [
+        'app/lib/qr.php',
+        'app/modules/printer.php',
+    ];
+} elseif (str_starts_with($route, 'asset_loan') || $route === 'report_asset_loans') {
+    $modulesToLoad = [
+        'app/lib/qr.php',
+        'app/modules/asset.php',
+        'app/modules/asset_loan.php',
+    ];
+} elseif (str_starts_with($route, 'mobile_loan') || $route === 'mobile_asset_loans') {
+    $modulesToLoad = [
+        'app/lib/qr.php',
+        'app/modules/asset.php',
+        'app/modules/mobile_loan.php',
+    ];
+} elseif (str_starts_with($route, 'asset_')) {
+    $modulesToLoad = [
+        'app/lib/qr.php',
+        'app/modules/asset.php',
+    ];
+} elseif (in_array($route, ['maintenance', 'maintenance_cleanup', 'maintenance_categories', 'maintenance_do', 'maintenance_unlock', 'maintenance_status_report', 'schedule_form', 'report_print', 'export_excel', 'jobs', 'calendar', 'reports'], true)) {
+    $modulesToLoad = [
+        'app/lib/qr.php',
+        'app/modules/pc.php',
+        'app/modules/printer.php',
+        'app/modules/asset.php',
+        'app/modules/maintenance_asset.php',
+        'app/modules/maintenance.php',
+    ];
+} elseif (in_array($route, ['maintenance_assets', 'maintenance_asset_form', 'maintenance_asset_item_action'], true)) {
+    $modulesToLoad = [
+        'app/modules/asset.php',
+        'app/modules/maintenance_asset.php',
+    ];
+} elseif (in_array($route, ['tickets', 'ticket_form', 'ticket_detail', 'ticket_action', 'walkarounds', 'walkaround_form', 'walkaround_detail', 'corrective_repairs', 'corrective_action_types', 'corrective_job_desks', 'corrective_job_desk_form'], true)) {
+    $modulesToLoad = [
+        'app/lib/qr.php',
+        'app/modules/asset.php',
+        'app/modules/pc.php',
+        'app/modules/corrective.php',
+    ];
+} elseif (str_starts_with($route, 'mobile_service')) {
+    $modulesToLoad = [
+        'app/lib/qr.php',
+        'app/modules/asset.php',
+        'app/modules/corrective.php',
+        'app/modules/field_service.php',
+    ];
+} elseif (str_starts_with($route, 'mobile_')) {
+    $modulesToLoad = [
+        'app/lib/qr.php',
+        'app/modules/pc.php',
+        'app/modules/maintenance.php',
+        'app/modules/mobile.php',
+    ];
+} elseif (in_array($route, ['labels', 'qr_png', 'qr_view'], true)) {
+    $modulesToLoad = [
+        'app/lib/qr.php',
+        'app/modules/asset.php',
+        'app/modules/labels.php',
+    ];
+} elseif ($route === 'setup_regulations') {
+    $modulesToLoad = [
+        'app/modules/regulations.php',
+    ];
+} elseif (in_array($route, ['master_pengguna', 'employee_source'], true)) {
+    $modulesToLoad = [
+        'app/modules/pengguna.php',
+    ];
+} else {
+    // Default fallback
+    $modulesToLoad = [
+        'app/lib/qr.php',
+        'app/modules/auth.php',
+        'app/modules/pc.php',
+        'app/modules/asset.php',
+        'app/modules/maintenance.php',
+        'app/modules/corrective.php',
+    ];
+}
+
+foreach ($modulesToLoad as $file) {
+    require_once $baseDir . '/' . $file;
+}
 
 try {
     $pdo = Database::pdo();

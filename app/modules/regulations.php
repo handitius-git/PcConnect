@@ -36,6 +36,7 @@ function handle_route_setup_regulations(PDO $pdo): void
                 // Delete current regulations for this role and re-seed default
                 $pdo->prepare('DELETE FROM role_regulations WHERE role = ?')->execute([$selectedRole]);
                 ensure_role_regulations_schema($pdo);
+                clear_role_regulations_cache();
                 flash('Regulasi hak akses untuk role ' . e($roles[$selectedRole]) . ' berhasil direset ke pengaturan bawaan.');
             } catch (Throwable $e) {
                 flash('Gagal mereset regulasi: ' . $e->getMessage(), 'err');
@@ -73,6 +74,7 @@ function handle_route_setup_regulations(PDO $pdo): void
                     }
                 }
                 $pdo->commit();
+                clear_role_regulations_cache();
                 flash('Regulasi hak akses role ' . e($roles[$selectedRole]) . ' berhasil disimpan dan langsung aktif.');
             } catch (Throwable $e) {
                 $pdo->rollBack();

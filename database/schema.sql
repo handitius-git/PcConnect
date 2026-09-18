@@ -630,8 +630,21 @@ CREATE TABLE IF NOT EXISTS role_regulations (
     can_delete TINYINT(1) NOT NULL DEFAULT 1,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_role_menu (role, menu_key),
-    INDEX idx_role (role)
+    INDEX idx_role (role),
+    INDEX idx_rr_role_menu (role, menu_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Performance Composite Indexes
+ALTER TABLE pcs ADD INDEX IF NOT EXISTS idx_pcs_id_nik (pc_id, employee_nik);
+ALTER TABLE pcs ADD INDEX IF NOT EXISTS idx_pcs_owner (owner_name);
+ALTER TABLE pcs ADD INDEX IF NOT EXISTS idx_pcs_comp (computer_name);
+ALTER TABLE asset_items ADD INDEX IF NOT EXISTS idx_ai_status_cat (status, asset_category);
+ALTER TABLE asset_items ADD INDEX IF NOT EXISTS idx_ai_group_type (asset_group_id, asset_type_id);
+ALTER TABLE asset_items ADD INDEX IF NOT EXISTS idx_ai_code_status (asset_code, status);
+ALTER TABLE corrective_tickets ADD INDEX IF NOT EXISTS idx_ct_status_prio (status, priority);
+ALTER TABLE corrective_tickets ADD INDEX IF NOT EXISTS idx_ct_asset_item (asset_item_id);
+ALTER TABLE asset_walkarounds ADD INDEX IF NOT EXISTS idx_aw_pc (pc_id);
+
 
 
 

@@ -86,8 +86,8 @@ function get_maintenance_asset_unit(PDO $pdo, int $id): ?array
             FROM maintenance_assets ma
             " . ($hasGroups ? "LEFT JOIN asset_groups ag ON ag.id = ma.asset_group_id" : "") . "
             " . ($hasTypes ? "LEFT JOIN asset_types at ON at.id = ma.asset_type_id" : "") . "
-            " . ($hasPcs ? "LEFT JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci" : "") . "
-            " . ($hasPrinters ? "LEFT JOIN printers prn ON prn.prn_id COLLATE utf8mb4_unicode_ci = ma.printer_id COLLATE utf8mb4_unicode_ci" : "") . "
+            " . ($hasPcs ? "LEFT JOIN pcs p ON p.pc_id = ma.pc_id" : "") . "
+            " . ($hasPrinters ? "LEFT JOIN printers prn ON prn.prn_id = ma.printer_id" : "") . "
             " . ($hasMai ? "LEFT JOIN maintenance_asset_items mai ON mai.maintenance_asset_id = ma.id AND mai.detached_at IS NULL" : "") . "
             " . ($hasAssetItems ? "LEFT JOIN asset_items ai ON ai.id = COALESCE(p.asset_item_id, prn.asset_item_id, mai.asset_item_id)" : "") . "
             WHERE ma.id = ?
@@ -429,7 +429,7 @@ function resolve_maintenance_asset_id_from_raw_input(PDO $pdo, string $rawInput)
         // g. Match via asset_items linked to pcs
         if ($hasAssetItems && $hasPcs) {
             $stmt = $pdo->prepare("SELECT ma.id FROM maintenance_assets ma
-                                   JOIN pcs p ON p.pc_id COLLATE utf8mb4_unicode_ci = ma.pc_id COLLATE utf8mb4_unicode_ci
+                                   JOIN pcs p ON p.pc_id = ma.pc_id
                                    JOIN asset_items ai ON ai.id = p.asset_item_id
                                    WHERE ai.asset_code = ? LIMIT 1");
             $stmt->execute([$code]);
@@ -1922,13 +1922,13 @@ function handle_route_corrective_job_desks(PDO $pdo): void
     FROM corrective_job_desks d
     LEFT JOIN asset_groups g ON g.id = d.asset_group_id
     LEFT JOIN asset_types t ON t.id = d.asset_type_id
-    LEFT JOIN corrective_action_types a ON a.job_desk_name COLLATE utf8mb4_unicode_ci = d.job_desk_name COLLATE utf8mb4_unicode_ci
+    LEFT JOIN corrective_action_types a ON a.job_desk_name = d.job_desk_name
     LEFT JOIN (
         SELECT ca.job_desk_name, COUNT(*) AS repair_count 
         FROM corrective_repairs cr 
         JOIN corrective_action_types ca ON ca.action_code = cr.action_type 
         GROUP BY ca.job_desk_name
-    ) cr_sub ON cr_sub.job_desk_name COLLATE utf8mb4_unicode_ci = d.job_desk_name COLLATE utf8mb4_unicode_ci
+    ) cr_sub ON cr_sub.job_desk_name = d.job_desk_name
     GROUP BY d.id, d.job_desk_name, d.asset_group_id, d.asset_type_id, d.description, g.group_code, g.group_name, t.type_code, t.type_name
     ORDER BY g.group_name, t.type_name, d.job_desk_name';
 

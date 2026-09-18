@@ -240,6 +240,10 @@ function get_user_regulations(?string $role): array
     if (isset($cache[$role])) {
         return $cache[$role];
     }
+    if (session_status() === PHP_SESSION_ACTIVE && !empty($_SESSION['cached_role_regulations'][$role])) {
+        $cache[$role] = $_SESSION['cached_role_regulations'][$role];
+        return $cache[$role];
+    }
     try {
         $pdo = Database::pdo();
         if (function_exists('db_table_exists') && db_table_exists($pdo, 'role_regulations')) {
@@ -256,11 +260,21 @@ function get_user_regulations(?string $role): array
                 ];
             }
             $cache[$role] = $regs;
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                $_SESSION['cached_role_regulations'][$role] = $regs;
+            }
             return $regs;
         }
     } catch (Throwable $e) {
     }
     return [];
+}
+
+function clear_role_regulations_cache(): void
+{
+    if (session_status() === PHP_SESSION_ACTIVE && isset($_SESSION['cached_role_regulations'])) {
+        unset($_SESSION['cached_role_regulations']);
+    }
 }
 
 function has_regulation(string $menuKey, string $action = 'view', ?array $user = null): bool
@@ -853,18 +867,45 @@ function parse_asset_code(string $code): array
 if (!function_exists('db_table_exists')) {
     function db_table_exists(PDO $pdo, string $table): bool
     {
-        static $cache = [];
-        if (isset($cache[$table])) {
-            return $cache[$table];
+        static $tables = null;
+        if ($tables === null) {
+            try {
+                $rows = $pdo->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN);
+                $tables = [];
+                foreach ($rows as $t) {
+                    $tables[strtolower((string)$t)] = true;
+                }
+            } catch (Throwable $e) {
+                $tables = [];
+            }
         }
-        try {
-            $stmt = $pdo->prepare('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?');
-            $stmt->execute([$table]);
-            $cache[$table] = (int)$stmt->fetchColumn() > 0;
-        } catch (Throwable $e) {
-            $cache[$table] = false;
+        return isset($tables[strtolower($table)]);
+    }
+}
+
+if (!function_exists('db_column_exists')) {
+    function db_column_exists(PDO $pdo, string $table, string $column): bool
+    {
+        static $columns = [];
+        $tableLower = strtolower($table);
+        $colLower = strtolower($column);
+        if (!isset($columns[$tableLower])) {
+            if (!db_table_exists($pdo, $table)) {
+                $columns[$tableLower] = [];
+                return false;
+            }
+            try {
+                $rows = $pdo->query("SHOW COLUMNS FROM `{$table}`")->fetchAll(PDO::FETCH_COLUMN);
+                $cols = [];
+                foreach ($rows as $c) {
+                    $cols[strtolower((string)$c)] = true;
+                }
+                $columns[$tableLower] = $cols;
+            } catch (Throwable $e) {
+                $columns[$tableLower] = [];
+            }
         }
-        return $cache[$table];
+        return isset($columns[$tableLower][$colLower]);
     }
 }
 
@@ -1887,7 +1928,7 @@ if (!function_exists('corrective_action_type_options')) {
                            COALESCE(cat.job_desk_name, " . ($hasJobDesks ? "cjd.job_desk_name, " : "") . "'Tindakan Umum') AS desk_name,
                            cat.asset_group_id, cat.asset_type_id, cat.sort_order
                     FROM corrective_action_types cat
-                    " . ($hasJobDesks ? "LEFT JOIN corrective_job_desks cjd ON cjd.job_desk_name COLLATE utf8mb4_unicode_ci = cat.job_desk_name COLLATE utf8mb4_unicode_ci" : "") . "
+                    " . ($hasJobDesks ? "LEFT JOIN corrective_job_desks cjd ON cjd.job_desk_name = cat.job_desk_name" : "") . "
                     WHERE " . implode(' AND ', $where) . " 
                     ORDER BY " . ($assetTypeId ? "CASE WHEN COALESCE(cat.asset_type_id, " . ($hasJobDesks ? "cjd.asset_type_id, " : "") . "0) = " . (int)$assetTypeId . " THEN 0 ELSE 1 END, " : "") . "
                              cat.sort_order ASC, cat.action_name ASC";
@@ -1902,7 +1943,7 @@ if (!function_exists('corrective_action_type_options')) {
                                   COALESCE(cat.job_desk_name, " . ($hasJobDesks ? "cjd.job_desk_name, " : "") . "'Tindakan Umum') AS desk_name,
                                   cat.sort_order
                            FROM corrective_action_types cat
-                           " . ($hasJobDesks ? "LEFT JOIN corrective_job_desks cjd ON cjd.job_desk_name COLLATE utf8mb4_unicode_ci = cat.job_desk_name COLLATE utf8mb4_unicode_ci" : "") . "
+                           " . ($hasJobDesks ? "LEFT JOIN corrective_job_desks cjd ON cjd.job_desk_name = cat.job_desk_name" : "") . "
                            WHERE cat.is_active = 1 
                            ORDER BY cat.sort_order ASC, cat.action_name ASC";
                 $rows = $pdo->query($sqlAll)->fetchAll(PDO::FETCH_ASSOC);

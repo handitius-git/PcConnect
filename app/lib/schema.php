@@ -5,36 +5,46 @@ declare(strict_types=1);
 if (!function_exists('db_table_exists')) {
     function db_table_exists(PDO $pdo, string $table): bool
     {
-        static $cache = [];
-        if (isset($cache[$table])) {
-            return $cache[$table];
+        static $tables = null;
+        if ($tables === null) {
+            try {
+                $rows = $pdo->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN);
+                $tables = [];
+                foreach ($rows as $t) {
+                    $tables[strtolower((string)$t)] = true;
+                }
+            } catch (Throwable $e) {
+                $tables = [];
+            }
         }
-        try {
-            $stmt = $pdo->prepare('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?');
-            $stmt->execute([$table]);
-            $cache[$table] = (int)$stmt->fetchColumn() > 0;
-        } catch (Throwable $e) {
-            $cache[$table] = false;
-        }
-        return $cache[$table];
+        return isset($tables[strtolower($table)]);
     }
 }
 
-function db_column_exists(PDO $pdo, string $table, string $column): bool
-{
-    static $cache = [];
-    $key = $table . '.' . $column;
-    if (isset($cache[$key])) {
-        return $cache[$key];
+if (!function_exists('db_column_exists')) {
+    function db_column_exists(PDO $pdo, string $table, string $column): bool
+    {
+        static $columns = [];
+        $tableLower = strtolower($table);
+        $colLower = strtolower($column);
+        if (!isset($columns[$tableLower])) {
+            if (!db_table_exists($pdo, $table)) {
+                $columns[$tableLower] = [];
+                return false;
+            }
+            try {
+                $rows = $pdo->query("SHOW COLUMNS FROM `{$table}`")->fetchAll(PDO::FETCH_COLUMN);
+                $cols = [];
+                foreach ($rows as $c) {
+                    $cols[strtolower((string)$c)] = true;
+                }
+                $columns[$tableLower] = $cols;
+            } catch (Throwable $e) {
+                $columns[$tableLower] = [];
+            }
+        }
+        return isset($columns[$tableLower][$colLower]);
     }
-    try {
-        $stmt = $pdo->prepare('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?');
-        $stmt->execute([$table, $column]);
-        $cache[$key] = ((int)$stmt->fetchColumn() > 0);
-    } catch (Throwable $e) {
-        $cache[$key] = false;
-    }
-    return $cache[$key];
 }
 
 function db_foreign_key_name(PDO $pdo, string $table, string $column, string $referencedTable): string
@@ -1060,9 +1070,13 @@ function ensure_performance_indexes(PDO $pdo): void
 
 function ensure_app_schema(PDO $pdo, bool $force = false): void
 {
+    $lockFile = sys_get_temp_dir() . '/asetconnect_schema_v20.lock';
     if (!$force && empty($_GET['force_schema'])) {
-        $lockFile = sys_get_temp_dir() . '/asetconnect_schema_v19.lock';
-        if (file_exists($lockFile) && (time() - filemtime($lockFile) < 1800) && db_table_exists($pdo, 'pcs')) {
+        if (file_exists($lockFile) && db_table_exists($pdo, 'pcs') && db_table_exists($pdo, 'role_regulations')) {
+            return;
+        }
+        if (db_table_exists($pdo, 'pcs') && db_table_exists($pdo, 'asset_items') && db_table_exists($pdo, 'role_regulations')) {
+            @touch($lockFile);
             return;
         }
     }
@@ -1089,7 +1103,7 @@ function ensure_app_schema(PDO $pdo, bool $force = false): void
     ensure_role_regulations_schema($pdo);
     ensure_performance_indexes($pdo);
 
-    @touch(sys_get_temp_dir() . '/asetconnect_schema_v19.lock');
+    @touch($lockFile);
 }
 
 function ensure_user_roles_schema(PDO $pdo): void
