@@ -615,8 +615,8 @@ function pc_form_html(array $pc, bool $editing): string
         ? current_host_url('download_runner_cmd', ['pc_id' => $effectivePcId, 'token' => $agentToken])
         : absolute_route_url('download_runner_cmd', ['pc_id' => $effectivePcId, 'token' => $agentToken]);
 
-    $cmdExec = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "$u=\'' . $agentDownloadUrl . '\'; $f=\\"$env:TEMP\\PcNalisa-' . $effectivePcId . '.ps1\\"; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; (New-Object System.Net.WebClient).DownloadFile($u,$f); & $f"';
-    $pyExec = 'python -c "import urllib.request, os; u=\'' . $agentDownloadUrl . '\'; f=os.path.expandvars(r\'%%TEMP%%\\PcNalisa-' . $effectivePcId . '.ps1\'); urllib.request.urlretrieve(u, f); os.system(f\'powershell -ExecutionPolicy Bypass -File \\\"{f}\\\"\')"';
+    $cmdExec = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "$u=\'' . $agentDownloadUrl . '\'; $f=\\"$env:TEMP\\PcNalisa-' . $effectivePcId . '.ps1\\"; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; [Net.ServicePointManager]::ServerCertificateValidationCallback={$true}; (New-Object System.Net.WebClient).DownloadFile($u,$f); & $f"';
+    $pyExec = 'python -c "import urllib.request, ssl, os; ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE; u=\'' . $agentDownloadUrl . '\'; f=os.path.expandvars(r\'%%TEMP%%\\PcNalisa-' . $effectivePcId . '.ps1\'); open(f, \'wb\').write(urllib.request.urlopen(u, context=ctx).read()); os.system(f\'powershell -ExecutionPolicy Bypass -File \\\"{f}\\\"\')"';
 
     $html .= '<section class="panel" style="border:1px solid #bae6fd;background:#f0f9ff;border-radius:8px;">'
         . '<div class="split">'
@@ -1610,7 +1610,7 @@ function handle_route_download_runner_cmd(): void
     $cmd .= 'echo [*] Mengunduh script telemetri untuk ' . $pcId . '...' . "\r\n";
     $cmd .= 'set "TARGET_PS1=%TEMP%\\PcNalisa-' . $pcId . '.ps1"' . "\r\n";
     $cmd .= 'set "AGENT_URL=' . $downloadUrl . '"' . "\r\n";
-    $cmd .= 'powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object System.Net.WebClient).DownloadFile(\'%AGENT_URL%\', \'%TARGET_PS1%\')"' . "\r\n";
+    $cmd .= 'powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; [Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}; (New-Object System.Net.WebClient).DownloadFile(\'%AGENT_URL%\', \'%TARGET_PS1%\')"' . "\r\n";
     $cmd .= 'if not exist "%TARGET_PS1%" (' . "\r\n";
     $cmd .= '    echo [ERROR] Gagal mengunduh script PcNalisa dari server.' . "\r\n";
     $cmd .= '    echo URL: %AGENT_URL%' . "\r\n";

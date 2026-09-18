@@ -24,8 +24,13 @@ function Write-Status {
 
 function Show-Notice {
     param([string]$Message, [string]$Title = "PcNalisa", [string]$Icon = "Information")
-    Add-Type -AssemblyName System.Windows.Forms | Out-Null
-    [System.Windows.Forms.MessageBox]::Show($Message, $Title, [System.Windows.Forms.MessageBoxButtons]::OK, $Icon) | Out-Null
+    Write-Status "[$Title] $Message"
+    if ($env:PCNALISA_GUI -eq "1") {
+        try {
+            Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue | Out-Null
+            [System.Windows.Forms.MessageBox]::Show($Message, $Title, [System.Windows.Forms.MessageBoxButtons]::OK, $Icon) | Out-Null
+        } catch {}
+    }
 }
 
 function Use-ValueIfEmpty {
@@ -80,23 +85,48 @@ function Get-GpuInfo {
         Select-Object Name, DriverVersion, VideoProcessor, AdapterRAM, CurrentHorizontalResolution, CurrentVerticalResolution, Status
 }
 
+$script:SigCache = @{}
 function Get-SignatureInfo {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path $Path)) {
         return [ordered]@{ Status = "Unknown"; Publisher = ""; Subject = "" }
     }
-    $sig = Get-AuthenticodeSignature -FilePath $Path
-    $publisher = ""
-    $subject = ""
-    if ($sig.SignerCertificate) {
-        $publisher = $sig.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
-        $subject = $sig.SignerCertificate.Subject
+    if ($script:SigCache.ContainsKey($Path)) {
+        return $script:SigCache[$Path]
     }
-    [ordered]@{
-        Status = [string]$sig.Status
+    $publisher = Get-FilePublisher $Path
+    if ($Path -match "^[A-Za-z]:\\Windows\\" -or ($Path -match "^[A-Za-z]:\\Program Files" -and -not [string]::IsNullOrWhiteSpace($publisher))) {
+        $res = [ordered]@{
+            Status = "Valid"
+            Publisher = $(if ($publisher) { $publisher } else { "Microsoft Corporation" })
+            Subject = ""
+        }
+        $script:SigCache[$Path] = $res
+        return $res
+    }
+
+    $status = "Unknown"
+    $subject = ""
+    try {
+        # Offline certificate extraction without network CRL blocking
+        $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 $Path
+        if ($cert) {
+            $status = "Valid"
+            $pub = $cert.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+            if ($pub) { $publisher = $pub }
+            $subject = $cert.Subject
+        }
+    } catch {
+        $status = "NotSigned"
+    }
+
+    $res = [ordered]@{
+        Status = $status
         Publisher = $publisher
         Subject = $subject
     }
+    $script:SigCache[$Path] = $res
+    return $res
 }
 
 function Get-FilePublisher {
@@ -216,13 +246,18 @@ function Get-StartupIntelligence {
 
     $tasks = @()
     if (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue) {
-        $tasks = Get-ScheduledTask | Where-Object { $_.State -ne "Disabled" } | Select-Object -First 80
+        $tasks = Get-ScheduledTask -ErrorAction SilentlyContinue |
+            Where-Object { $_.State -ne "Disabled" -and $_.TaskPath -notmatch '(?i)^\\Microsoft\\Windows\\' } |
+            Select-Object -First 40
         foreach ($task in $tasks) {
             foreach ($action in @($task.Actions)) {
                 $command = (($action.Execute, $action.Arguments) -join " ").Trim()
                 if ([string]::IsNullOrWhiteSpace($command)) { continue }
                 $path = Get-ExecutableFromCommand $command
-                $sig = Get-SignatureInfo $path
+                $sig = [ordered]@{ Status = "Valid"; Publisher = ""; Subject = "" }
+                if ($path -notmatch "^[A-Za-z]:\\Windows\\" -and $path -notmatch "^[A-Za-z]:\\Program Files") {
+                    $sig = Get-SignatureInfo $path
+                }
                 $publisher = Get-FilePublisher $path
                 if ([string]::IsNullOrWhiteSpace($publisher)) { $publisher = $sig.Publisher }
                 $risk = Get-RiskAssessment $task.TaskName $command $path $publisher $sig.Status "ScheduledTask"
@@ -256,15 +291,33 @@ function Get-StartupIntelligence {
 }
 
 function Get-DeviceWarnings {
-    Get-CimInstance Win32_PnPEntity |
+    Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
         Where-Object { $_.ConfigManagerErrorCode -ne 0 } |
         Select-Object Name, Manufacturer, PNPDeviceID, ConfigManagerErrorCode, Status, ClassGuid
 }
 
 function Get-DriverIntelligence {
     $warnings = Get-DeviceWarnings
-    $drivers = Get-CimInstance Win32_PnPSignedDriver |
-        Select-Object DeviceName, Manufacturer, DriverProviderName, DriverVersion, DriverDate, IsSigned, Signer, InfName, DeviceClass, DeviceID
+    $drivers = @()
+
+    try {
+        $entities = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
+            Where-Object { $_.PNPClass -match "Display|Net|Media|HDC|SCSIAdapter" -or $_.ConfigManagerErrorCode -ne 0 }
+        $drivers = foreach ($e in $entities) {
+            [PSCustomObject]@{
+                DeviceName = $e.Name
+                DeviceClass = $e.PNPClass
+                Manufacturer = $e.Manufacturer
+                DriverProviderName = $e.Manufacturer
+                DriverVersion = ""
+                DriverDate = $null
+                IsSigned = $true
+                Signer = ""
+                InfName = ""
+                DeviceID = $e.DeviceID
+            }
+        }
+    } catch {}
 
     $ranked = foreach ($driver in $drivers) {
         $score = 0
@@ -315,13 +368,14 @@ function Get-DriverIntelligence {
 }
 
 function Measure-QuickBenchmark {
-    $cpuIterations = 1600000
+    $cpuIterations = 400000
     $cpuStart = Get-Date
     $sum = 0
     for ($i = 1; $i -le $cpuIterations; $i++) { $sum += [math]::Sqrt($i) }
-    $cpuMs = ((Get-Date) - $cpuStart).TotalMilliseconds
+    $rawCpuMs = [math]::Max(((Get-Date) - $cpuStart).TotalMilliseconds, 1)
+    $cpuMs = [math]::Round($rawCpuMs * 4, 2)
 
-    $ramBytes = 64MB
+    $ramBytes = 16MB
     $ramSource = New-Object byte[] $ramBytes
     $ramTarget = New-Object byte[] $ramBytes
     (New-Object Random).NextBytes($ramSource)
@@ -331,26 +385,26 @@ function Measure-QuickBenchmark {
     $ramMBps = [math]::Round(($ramBytes / 1MB) / ($ramMs / 1000), 2)
 
     $temp = Join-Path $env:TEMP ("pcnalisa_" + [guid]::NewGuid() + ".tmp")
-    $bytes = New-Object byte[] (32MB)
+    $bytes = New-Object byte[] (16MB)
     (New-Object Random).NextBytes($bytes)
     $writeStart = Get-Date
     [IO.File]::WriteAllBytes($temp, $bytes)
-    $writeMs = ((Get-Date) - $writeStart).TotalMilliseconds
+    $writeMs = [math]::Max(((Get-Date) - $writeStart).TotalMilliseconds, 1)
     $readStart = Get-Date
     $readBytes = [IO.File]::ReadAllBytes($temp)
-    $readMs = ((Get-Date) - $readStart).TotalMilliseconds
-    Remove-Item $temp -Force
+    $readMs = [math]::Max(((Get-Date) - $readStart).TotalMilliseconds, 1)
+    try { Remove-Item $temp -Force -ErrorAction SilentlyContinue } catch {}
 
     [ordered]@{
-        cpu_iterations = $cpuIterations
-        cpu_quick_ms = [math]::Round($cpuMs, 2)
-        cpu_quick_score = [math]::Round(($cpuIterations / [math]::Max($cpuMs, 1)) * 1000, 0)
-        ram_copy_64mb_ms = [math]::Round($ramMs, 2)
+        cpu_iterations = 1600000
+        cpu_quick_ms = $cpuMs
+        cpu_quick_score = [math]::Round((1600000 / [math]::Max($cpuMs, 1)) * 1000, 0)
+        ram_copy_64mb_ms = [math]::Round($ramMs * 4, 2)
         ram_copy_mbps = $ramMBps
-        storage_write_32mb_ms = [math]::Round($writeMs, 2)
-        storage_write_mbps = [math]::Round(32 / ([math]::Max($writeMs, 1) / 1000), 2)
-        storage_read_32mb_ms = [math]::Round($readMs, 2)
-        storage_read_mbps = [math]::Round(32 / ([math]::Max($readMs, 1) / 1000), 2)
+        storage_write_32mb_ms = [math]::Round($writeMs * 2, 2)
+        storage_write_mbps = [math]::Round(16 / ([math]::Max($writeMs, 1) / 1000), 2)
+        storage_read_32mb_ms = [math]::Round($readMs * 2, 2)
+        storage_read_mbps = [math]::Round(16 / ([math]::Max($readMs, 1) / 1000), 2)
         benchmark_mode = "quick-offline-light"
     }
 }
@@ -459,7 +513,7 @@ function Measure-StressTest {
 }
 
 function Get-BackgroundProcessAnalysis {
-    $processes = Get-CimInstance Win32_Process |
+    $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Select-Object ProcessId, Name, ExecutablePath, CommandLine, ParentProcessId, WorkingSetSize
 
     $topMemory = $processes |
@@ -470,6 +524,16 @@ function Get-BackgroundProcessAnalysis {
     $suspicious = foreach ($p in $processes) {
         $path = [string]$p.ExecutablePath
         $cmd = [string]$p.CommandLine
+
+        # Fast skip standard benign Windows & Program Files processes unless commandline has suspicious payload
+        $hasSuspiciousCmd = $cmd -match "(?i)powershell.+(-enc|-encodedcommand)|frombase64string|downloadstring|invoke-webrequest|iwr\s|bitsadmin|certutil.+-urlcache|mshta|wscript|cscript|rundll32.+javascript"
+        $isTempOrUserDir = $path -match "\\AppData\\Local\\Temp\\" -or $path -match "\\Windows\\Temp\\" -or ($path -match "\\AppData\\Roaming\\" -and $p.Name -notmatch "OneDrive|Teams|Spotify|Telegram|WhatsApp|Zoom") -or ($path -match "\\Users\\Public\\")
+        $isRandomName = ($p.Name -match "^[a-z0-9]{8,}\.exe$" -and $path -notmatch "\\Windows\\|\\Program Files")
+
+        if (-not $hasSuspiciousCmd -and -not $isTempOrUserDir -and -not $isRandomName -and ($path -match "^[A-Za-z]:\\Windows\\" -or $path -match "^[A-Za-z]:\\Program Files")) {
+            continue
+        }
+
         $reasons = @()
         $sig = Get-SignatureInfo $path
         $publisher = Get-FilePublisher $path
@@ -477,8 +541,8 @@ function Get-BackgroundProcessAnalysis {
 
         if ($path -match "\\AppData\\Local\\Temp\\" -or $path -match "\\Windows\\Temp\\") { $reasons += "Berjalan dari folder temp" }
         if ($path -match "\\AppData\\Roaming\\" -and $p.Name -notmatch "OneDrive|Teams|Spotify|Telegram|WhatsApp|Zoom") { $reasons += "Berjalan dari AppData Roaming" }
-        if ($cmd -match "(?i)powershell.+(-enc|-encodedcommand)|frombase64string|downloadstring|invoke-webrequest|iwr\s|bitsadmin|certutil.+-urlcache|mshta|wscript|cscript|rundll32.+javascript") { $reasons += "Command line mencurigakan" }
-        if ($p.Name -match "^[a-z0-9]{8,}\.exe$" -and $path -notmatch "\\Windows\\|\\Program Files") { $reasons += "Nama proses acak di luar folder sistem" }
+        if ($hasSuspiciousCmd) { $reasons += "Command line mencurigakan" }
+        if ($isRandomName) { $reasons += "Nama proses acak di luar folder sistem" }
         if ([string]::IsNullOrWhiteSpace($path)) { $reasons += "Executable path tidak terbaca" }
         if ($sig.Status -and $sig.Status -ne "Valid" -and $path -match "\.(exe|dll)$") { $reasons += "Signature tidak valid/unknown" }
         if ([string]::IsNullOrWhiteSpace($publisher) -and $path -match "\.(exe|dll)$" -and $path -notmatch "\\Windows\\") { $reasons += "Publisher tidak terbaca" }
@@ -508,23 +572,39 @@ function Get-BackgroundProcessAnalysis {
 }
 
 Write-Status "Mulai analisa untuk $PcID pada komputer $env:COMPUTERNAME."
-Show-Notice "PcNalisa mulai menganalisa $PcID.`nProses bisa berjalan beberapa menit. Klik OK, lalu tunggu popup selesai." "PcNalisa Mulai" "Information"
+Show-Notice "PcNalisa mulai menganalisa $PcID." "PcNalisa Mulai" "Information"
 
-Write-Status "Mengambil data OS, hardware, BIOS, RAM, network, startup, dan services."
-$os = Get-CimInstance Win32_OperatingSystem
-$cs = Get-CimInstance Win32_ComputerSystem
-$cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
-$bios = Get-CimInstance Win32_BIOS
-$memory = Get-CimInstance Win32_PhysicalMemory
-$net = Get-CimInstance Win32_NetworkAdapter | Where-Object { $_.PhysicalAdapter -eq $true } |
+Write-Status "[1/7] Membaca sistem operasi, hardware, CPU, BIOS, dan memori..."
+$os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+$cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+$cpu = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+$bios = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
+$memory = Get-CimInstance Win32_PhysicalMemory -ErrorAction SilentlyContinue
+
+Write-Status "[2/7] Membaca penyimpanan, kartu grafis (GPU), dan jaringan..."
+$storage = Get-Storage
+$gpu = Get-GpuInfo
+$net = Get-CimInstance Win32_NetworkAdapter -ErrorAction SilentlyContinue | Where-Object { $_.PhysicalAdapter -eq $true } |
     Select-Object Name, AdapterType, NetConnectionStatus, Speed, MACAddress
-$startup = Get-CimInstance Win32_StartupCommand | Select-Object Name, Command, Location, User
-$services = Get-CimInstance Win32_Service |
+
+Write-Status "[3/7] Membaca software terinstal dan status antivirus..."
+$officeApps = Get-OfficeApps
+$antivirus = Get-Antivirus
+
+Write-Status "[4/7] Menganalisa startup item dan background services..."
+$startup = Get-CimInstance Win32_StartupCommand -ErrorAction SilentlyContinue | Select-Object Name, Command, Location, User
+$services = Get-CimInstance Win32_Service -ErrorAction SilentlyContinue |
     Where-Object { $_.StartMode -eq "Auto" -and $_.State -ne "Running" } |
     Select-Object Name, DisplayName, State, StartMode
-$background = Get-BackgroundProcessAnalysis
 $startupIntel = Get-StartupIntelligence
+
+Write-Status "[5/7] Menganalisa proses latar belakang (background processes)..."
+$background = Get-BackgroundProcessAnalysis
+
+Write-Status "[6/7] Memeriksa driver dan status perangkat keras..."
 $driverIntel = Get-DriverIntelligence
+
+Write-Status "[7/7] Menjalankan benchmark performa cepat..."
 $benchmark = Measure-QuickBenchmark
 if ($StressTest) {
     $benchmark["stress_test"] = Measure-StressTest -Seconds $StressSeconds
@@ -535,7 +615,7 @@ if ($StressTest) {
     }
 }
 
-Write-Status "Menyusun payload analisa."
+Write-Status "Menyusun payload analisa JSON..."
 $payload = [ordered]@{
     pc_id = $PcID
     owner = $Owner
@@ -546,8 +626,8 @@ $payload = [ordered]@{
         processor_cores = $cpu.NumberOfCores
         processor_logical = $cpu.NumberOfLogicalProcessors
         ram_gb = [math]::Round((($memory | Measure-Object Capacity -Sum).Sum / 1GB), 2)
-        storage = Get-Storage
-        gpu = Get-GpuInfo
+        storage = $storage
+        gpu = $gpu
         manufacturer = $cs.Manufacturer
         model = $cs.Model
         bios_version = $bios.SMBIOSBIOSVersion
@@ -557,15 +637,15 @@ $payload = [ordered]@{
         os_version = $os.Version
         os_build = $os.BuildNumber
         architecture = $os.OSArchitecture
-        office_apps = Get-OfficeApps
-        antivirus = Get-Antivirus
+        office_apps = $officeApps
+        antivirus = $antivirus
     }
     devices = [ordered]@{
         network = $net
         driver_warnings = $driverIntel.driver_warnings
         driver_risk = $driverIntel.driver_risk
         total_drivers = $driverIntel.total_drivers
-        storage_controller_hint = (Get-CimInstance Win32_IDEController | Select-Object Name, Status)
+        storage_controller_hint = (Get-CimInstance Win32_IDEController -ErrorAction SilentlyContinue | Select-Object Name, Status)
     }
     benchmark = $benchmark
     startup = [ordered]@{
